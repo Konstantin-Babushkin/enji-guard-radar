@@ -1,0 +1,44 @@
+[project]
+name = "enji-guard-radar"
+version = "0.1.0"
+description = "Polls Enji Guard, triages project health with Claude, alerts a Telegram group on problems."
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "pydantic>=2.9",
+    "pyyaml>=6.0",
+]
+
+[project.scripts]
+enji-guard-radar = "enji_guard_radar:main"
+
+[build-system]
+requires = ["uv_build>=0.8,<0.13"]
+build-backend = "uv_build"
+
+[dependency-groups]
+dev = [
+    "mypy>=1.13",
+    "pytest>=8.3",
+    "ruff>=0.8",
+    "types-pyyaml>=6.0",
+]
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "N", "UP", "B", "SIM", "C4", "PTH", "TRY", "LOG", "G", "PT", "RUF"]
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+warn_unreachable = true
+plugins = ["pydantic.mypy"]
+files = ["src", "tests"]
+
+[tool.pytest.ini_options]
+addopts = "--strict-markers --strict-config"
+testpaths = ["tests"]
+filterwarnings = ["error"]
