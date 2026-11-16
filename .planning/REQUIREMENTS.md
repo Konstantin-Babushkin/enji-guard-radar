@@ -11,33 +11,33 @@ Requirements for initial release. Each maps to roadmap phases.
 
 - [ ] **SRC-01**: The radar connects to the Enji Guard MCP non-interactively and lists the projects in scope
 - [ ] **SRC-02**: A `probe` command records real Guard responses as sanitized fixtures, so rules and tests are built on real data
-- [ ] **SRC-03**: Guard responses are parsed strictly into typed snapshots with timezone-aware UTC times and an injected clock
+- [ ] **SRC-03**: Guard responses (JSON lists and Markdown audit reports) are parsed strictly into typed snapshots with timezone-aware UTC times (fraction of 3, 4 or 6 digits) and an injected clock. Only runs with `status == completed` and `report_status == ready` count. Reports are read page by page until `has_more` is false. An unparseable report is "unknown", never "no findings"
 - [ ] **SRC-04**: A failed, empty or partial Guard fetch for a project is recorded as "unknown" and never creates or resolves findings for that project
 - [ ] **SRC-05**: Each project can be paused or excluded in config, so dormant projects are never alerted on
 - [ ] **SRC-06**: A fixture-backed source lets the whole pipeline run with no network access
 
 ### Rules
 
-- [ ] **RULE-01**: A project with no Guard run for N days is flagged stale. N has a default and per-project overrides, and the rule tells "never ran" and "Guard unreachable" apart from "stale"
-- [ ] **RULE-02**: A high-risk finding that stays open past a threshold is flagged, with its age
-- [ ] **RULE-03**: A new or worsening security finding is flagged, and the alert never carries raw evidence such as secrets
-- [ ] **RULE-04**: A weak Guard harness metric, or a project with no `GUARD.md`, is flagged
-- [ ] **RULE-05**: A weak Guard AI-readiness signal is flagged
-- [ ] **RULE-06**: A weak Guard tests signal is flagged
-- [ ] **RULE-07**: A project missing a dead-code finder, duplicate detector, security scanner or dependency scanner is flagged, as a digest item only
-- [ ] **RULE-08**: A finding that stays open across N consecutive Guard runs is flagged as recurring. N is configurable, and runs are counted by Guard run id, not by radar polls
-- [ ] **RULE-09**: A finding is considered resolved only after M clean Guard runs, so a flapping metric does not flip alerts on and off
+- [ ] **RULE-01**: A project whose newest completed Guard run (any audit type, any of its repos) is older than N days is flagged stale. N has a default and per-project overrides, and the rule tells "never ran" and "Guard unreachable" apart from "stale"
+- [ ] **RULE-02**: A `(repo, audit type)` that has had at least one High finding in every completed run for longer than a threshold is flagged, with its age (days since the first such run)
+- [ ] **RULE-03**: A rise in the number of High findings in `audit.security` (or `audit.public-api-access-safety`) between two completed runs is flagged, and the alert never carries raw evidence such as secrets
+- [ ] ~~**RULE-04**~~: Dropped 2026-11-16. Guard has no harness metric and no file-presence check (the guidance file is `ENJI_GUARD.md`); the AI-readiness score (RULE-05) is the signal
+- [ ] **RULE-05**: The `audit.ai-readiness` score (0 to 100) below a threshold is flagged
+- [ ] **RULE-06**: The `audit.tests` score (0 to 100) below a threshold is flagged
+- [ ] **RULE-07**: A repo with no recent completed run of `audit.dead-code`, `audit.implementation-unification`, `audit.security` or `audit.dependency-hygiene` is flagged, as a digest item only (mapping of "duplicate detector" to `audit.implementation-unification` is unconfirmed)
+- [ ] **RULE-08**: A `(repo, audit type)` whose High count has not reached zero across N consecutive completed runs is flagged as recurring. N is configurable, and runs are counted by Guard `task_id`, not by radar polls
+- [ ] **RULE-09**: A `(repo, audit type)` is considered clear only after M consecutive completed runs with zero High findings, so a flapping result does not flip alerts on and off
 - [ ] **RULE-10**: Every threshold lives in validated config with defaults and per-project overrides, and unknown config keys are rejected
 
 ### State and Dedup
 
-- [ ] **STATE-01**: A finding already alerted and still open is not re-sent. Its identity is stable and independent of severity, counts or titles
+- [ ] **STATE-01**: A condition already alerted and still true is not re-sent. Guard finding ids are not stable between runs (`F-006` in one run, a slug in another), so the radar tracks the number of High findings per `(repo, audit type)` and does not match individual findings. The dedup key is `(repo, audit type, level)`. Decided 2026-11-16; per-finding matching is a possible later addition (see `docs/guard-data-notes.md`)
 - [ ] **STATE-02**: Unaddressed high-risk findings are re-sent as a reminder at a configurable interval in days
 - [ ] **STATE-03**: State is saved atomically with a backup, and a corrupt state file halts the run and notifies the operator instead of resetting
 - [ ] **STATE-04**: An alert is recorded as sent only after Telegram acknowledges it, so a failed send retries on the next run
 - [ ] **STATE-05**: The first run for a project records a baseline and does not flood the group with historical findings
 - [ ] **STATE-06**: Two overlapping runs cannot both send. A second instance exits cleanly
-- [ ] **STATE-07**: A worsening finding (higher severity) re-arms its alert
+- [ ] **STATE-07**: A rise in the High count for a `(repo, audit type)` re-arms its alert
 
 ### Alerts
 
@@ -111,9 +111,9 @@ Which phases cover which requirements. Updated during roadmap creation.
 | (filled in by the roadmapper) | | Pending |
 
 **Coverage:**
-- v1 requirements: 42 total
+- v1 requirements: 41 total (RULE-04 dropped)
 - Mapped to phases: 0
-- Unmapped: 42 ⚠️
+- Unmapped: 41 ⚠️
 
 ---
 *Requirements defined: 2026-11-16*
