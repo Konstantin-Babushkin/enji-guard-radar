@@ -1,0 +1,8 @@
+{
+  "projects": [
+    {"id": "00000000-0000-4000-8000-00000000a001", "name": "Project A"},
+    {"id": "00000000-0000-4000-8000-00000000a002", "name": "Project B"},
+    {"id": "00000000-0000-4000-8000-00000000a003", "name": "Project C (no repositories)"}
+  ],
+  "has_more": false
+}

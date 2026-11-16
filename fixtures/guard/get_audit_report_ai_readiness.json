@@ -1,0 +1,7 @@
+{
+  "task_id": "00000000-0000-4000-8000-00000000c004",
+  "report_status": "ready",
+  "content": "# Mostly ready for agent-led engineering\n\n## Executive summary\n\nResult: 81/100 (previous audit: 84). <summary prose placeholder>\n\n## How ready is this repository for low-friction agent-led engineering?\n\n<answer prose placeholder>\n\n**Score: 81 / 100** · Mostly ready · Confidence: High\n\n`acme/service-a` · `main` · `0000000000000000000000000000000000000000`\n\nhttps://git.example/acme/service-a\n\n## Findings\n\nOne medium and one low-severity defect.\n\n### `F-003` — Placeholder medium finding\n\n**Severity:** Medium · **Confidence:** High\n\n**Why it matters**\n\n<placeholder>\n\n**What was found**\n\n<placeholder>\n\n**What to do**\n\n<placeholder>\n\n**Related recommendations:**\n\n- Placeholder recommendation\n\n**Affected:**\n\n- docs/example.md:45\n\n**Evidence:**\n\n- `docs/example.md:45`\n\n### `F-001` — Placeholder low finding\n\n**Severity:** Low · **Confidence:** High\n\n**Why it matters**\n\n<placeholder>\n",
+  "content_version": "0000000000000000000000000000000000000000000000000000000000000002",
+  "has_more": false
+}

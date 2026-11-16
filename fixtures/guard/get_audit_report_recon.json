@@ -1,0 +1,7 @@
+{
+  "task_id": "00000000-0000-4000-8000-00000000c006",
+  "report_status": "ready",
+  "content": "# Repository Overview\n\n## Executive Summary\n\n- <placeholder bullet>\n\n## Audited Target and Revision\n\n- Repository: `acme/service-a`\n- Default branch: [`main`](https://git.example/acme/service-a/tree/main)\n- Audited commit: [`0000000000000000000000000000000000000000`](https://git.example/acme/service-a/commit/0000000000000000000000000000000000000000)\n\n## What Was Checked\n\n- <placeholder>\n\n## Main Findings\n\n### What Looks Good\n\n- <placeholder>\n\n### What Needs Checking\n\n- <placeholder>\n\n### Project Map\n\n- Type: <placeholder>\n\n## Limitations\n\n- <placeholder>\n\n## What to Do Next\n\n- <placeholder>\n",
+  "content_version": "0000000000000000000000000000000000000000000000000000000000000004",
+  "has_more": false
+}
