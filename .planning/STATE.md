@@ -49,7 +49,7 @@ Progress: [░░░░░░░░░░] 0%
 Decisions are logged in PROJECT.md Key Decisions table.
 Recent decisions affecting current work:
 
-- [Roadmap]: 4 phases (fixtures pipeline, Guard + core alerts, remaining rules + digest, Claude triage). MVP phase not chosen.
+- [Roadmap]: 4 phases (fixtures pipeline, Guard + core alerts, remaining rules + digest, Claude triage). MVP = Phases 1 and 2 (defined 2026-11-16, see ROADMAP.md "MVP").
 - [Roadmap]: High findings are tracked as counts per (repo, audit type), not per finding id (Guard ids are unstable).
 - [Roadmap]: RULE-04 (harness / GUARD.md) dropped; Guard has no such metric or file check.
 - [Roadmap]: RULE-09 (debounced clear) and STATE-07 (re-arm on rise) sit in Phase 2 with the High-count rules, so alerts do not flap.

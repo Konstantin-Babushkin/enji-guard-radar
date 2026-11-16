@@ -6,7 +6,23 @@ A scheduled, one-shot radar that reads Enji Guard, applies deterministic rules, 
 
 Scope: 41 v1 requirements in 4 phases (granularity: coarse). RULE-04 was dropped on 2026-11-16 and is not mapped.
 
-**MVP phase: undecided.** No phase is marked as the MVP. Decide with the operator before the first phase is planned.
+## MVP
+
+**MVP = Phases 1 and 2 (27 of 41 requirements).** Defined 2026-11-16. Phase 1 alone is not an MVP: it runs only on synthetic fixtures and tells nobody anything real. The MVP is done at the end of Phase 2.
+
+**What the group gets:** on a timer, with no operator action, the Telegram group receives a short alert when (a) the number of High findings rises in a repo's audit, or (b) a project has had no completed Guard run for N days. The operator gets a message in a separate ops chat when the radar itself breaks and when it recovers.
+
+**Acceptance test (all must hold, on real Guard data):**
+1. A real run against the radar's own read-only Guard login sends one real alert to a test chat, and an identical second run sends nothing.
+2. The timer runs unattended for 7 days across at least one Guard access-token expiry without the operator logging in again. If the token cannot be refreshed unattended, the MVP is not met, and the ops chat must report it.
+3. Breaking Guard access on purpose produces exactly one ops message, and fixing it produces exactly one recovery message.
+4. `doctor` passes on the production host.
+
+**In the MVP:** Guard source and parser, stale rule, High-count rules (rise and recurring clear), state and dedup, Telegram send with error classes and dry-run, `probe`, timer, `doctor`, ops chat, secret handling.
+
+**Not in the MVP (Phases 3 and 4):** weekly digest and its always-sent all-clear, AI-readiness, tests and tooling rules, recurring-N flag, reminders, Claude triage, and all v2 items.
+
+**Known gap of the MVP:** without the digest there is no heartbeat, so silence is ambiguous for up to a week between a healthy radar and a dead one that failed to notice. The ops chat (OPS-02) and `doctor` cover most of this but not a dead timer. Phase 3 closes it. Accepted for the MVP, because it is the cheapest way to get real alerts to the group.
 
 ## Phases
 
