@@ -22,6 +22,7 @@ Stakeholders learn about a real problem in Telegram, in a few lines and without 
 - [ ] Rule: **unaddressed high risk.** Alert when a high-risk finding stays open past a threshold, with its age
 - [ ] Rule: **security.** Alert on new or worsening security findings
 - [ ] Rule: **harness.** Alert when Guard's harness metric is weak, or when the repo has no `GUARD.md`
+- [ ] Rule: **analysis tooling.** Guard finds issues more easily when the scanned project ships dead-code finders, duplicate detectors, security scanners and dependency scanners (инструменты поиска мертвого кода, дубликатов, сканеров безопасности и зависимостей). Flag projects missing any of these, as a digest item rather than an immediate alert. How presence is detected (Guard data vs repo files) depends on Guard MCP data
 - [ ] Rule: **AI readiness.** Alert on a weak Guard AI-readiness signal
 - [ ] Rule: **tests.** Alert on a weak Guard test signal
 - [ ] Claude triages findings (short per-project summary, probable cause, priority) and returns typed, schema-validated output. If the output is invalid, the alert falls back to the rule-only text
@@ -44,6 +45,7 @@ Stakeholders learn about a real problem in Telegram, in a few lines and without 
 - Audience: a Telegram group of executives and stakeholders who care about tech quality. They tolerate very little noise; an alert that proves false costs trust.
 - Problems today: Guard scans go long stretches without running, the same problems recur, and high-risk findings sit unaddressed with no one chasing them.
 - The Guard MCP is connected to Claude on the operator's side but is **not configured in this environment**. Its tool names, auth and data shape are unknown. The rules and the snapshot model must be drafted against real Guard data, not guessed.
+- Guard works better on projects that already run dead-code, duplicate, security and dependency scanning tools, so the radar nudges teams to add them.
 - "Harness" means Guard's own harness metric plus the presence of a `GUARD.md` in the project. The exact metric name and shape come from Guard data.
 - Poller is deterministic code. Claude is used only for triage and explanation (decision made with the operator).
 - Built through code-factory: tasks queued with `code-factory add`, implemented in worktrees, verified with `make verify`, handed back as draft PRs. The repo is scaffolded (Python + uv, verify gate, `AGENTS.md`, `docs/design/v0.md`) and registered as a target at `/factory/tasks/enji-guard-radar`.
