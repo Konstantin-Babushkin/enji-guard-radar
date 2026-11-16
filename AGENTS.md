@@ -9,7 +9,9 @@ A radar over Enji Guard. On a schedule it pulls project data from Guard,
 applies deterministic rules to spot problems, asks Claude to triage and explain
 what it found, and alerts a Telegram group through a bot when something is wrong.
 
-Design: `docs/design/v0.md`.
+Design: `docs/design/v0.md`. Plan: `.planning/ROADMAP.md` (4 phases),
+`.planning/REQUIREMENTS.md`, `.planning/STATE.md`. What Guard really returns:
+`docs/guard-data-notes.md` (read before touching the Guard parser or rules).
 
 ## Stack
 
