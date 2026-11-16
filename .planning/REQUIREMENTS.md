@@ -12,7 +12,7 @@ Requirements for initial release. Each maps to roadmap phases.
 - [ ] **SRC-01**: The radar connects to the Enji Guard MCP non-interactively and lists the projects in scope
 - [ ] **SRC-02**: A `probe` command records real Guard responses as sanitized fixtures, so rules and tests are built on real data
 - [ ] **SRC-03**: Guard responses (JSON lists and Markdown audit reports) are parsed strictly into typed snapshots with timezone-aware UTC times (fraction of 3, 4 or 6 digits) and an injected clock. Only runs with `status == completed` and `report_status == ready` count. Reports are read page by page until `has_more` is false. An unparseable report is "unknown", never "no findings"
-- [ ] **SRC-04**: A failed, empty or partial Guard fetch for a project is recorded as "unknown" and never creates or resolves findings for that project
+- [ ] **SRC-04**: A failed, empty or partial Guard fetch for a project is recorded as "unknown" and never creates or resolves findings for that project. "Empty" means a blank, truncated or malformed response, or a page that was not fetched. A well-formed answer with zero items (for example a project with no repositories) is a real answer: it is reported as "never ran" (RULE-01), not "unknown". Clarified 2026-11-16
 - [ ] **SRC-05**: Each project can be paused or excluded in config, so dormant projects are never alerted on
 - [ ] **SRC-06**: A fixture-backed source lets the whole pipeline run with no network access
 
