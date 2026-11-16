@@ -27,6 +27,8 @@ dev = [
 [tool.ruff]
 target-version = "py312"
 line-length = 100
+# Planning notes hold illustrative code blocks; they are not shipped code.
+extend-exclude = [".planning"]
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "N", "UP", "B", "SIM", "C4", "PTH", "TRY", "LOG", "G", "PT", "RUF"]
