@@ -1,0 +1,104 @@
+# Roadmap: Enji Guard Radar
+
+## Overview
+
+A scheduled, one-shot radar that reads Enji Guard, applies deterministic rules, and alerts a Telegram group of executives only when something is really wrong. Silence means healthy. The journey: first prove the whole pipeline on synthetic fixtures with no network access (Phase 1), then connect it to real Guard on the radar's own read-only login and switch on the core alerts and the timer (Phase 2), then widen the rule set and add the always-sent weekly digest (Phase 3), and finally let Claude explain what the rules have already decided (Phase 4). Rules decide; Claude never adds, drops or suppresses an alert.
+
+Scope: 41 v1 requirements in 4 phases (granularity: coarse). RULE-04 was dropped on 2026-11-16 and is not mapped.
+
+**MVP phase: undecided.** No phase is marked as the MVP. Decide with the operator before the first phase is planned.
+
+## Phases
+
+**Phase Numbering:**
+- Integer phases (1, 2, 3): Planned milestone work
+- Decimal phases (2.1, 2.2): Urgent insertions (marked with INSERTED)
+
+Decimal phases appear between their surrounding integers in numeric order.
+
+- [ ] **Phase 1: Working Pipeline on Fixtures** - Models, parser, stale rule, durable state and dedup, Telegram send and dry-run, all runnable on `fixtures/guard/`
+- [ ] **Phase 2: Guard Connection and Core Alerts** - Real read-only Guard adapter, `probe`, High-count rules, timer, `doctor` and ops-chat alert (gated on Guard access)
+- [ ] **Phase 3: Remaining Rules and the Digest** - AI readiness, tests, tooling and recurring rules, reminders and the always-sent weekly digest
+- [ ] **Phase 4: Claude Triage** - Summary, probable cause and priority from Claude through a swappable CLI/T3 boundary, with rule-only fallback
+
+## Phase Details
+
+### Phase 1: Working Pipeline on Fixtures
+**Goal**: The operator can run the whole pipeline end to end on the committed synthetic fixtures, with no network access to Guard, and see a stale project turn into a concise, deduplicated Telegram alert (or a dry-run print), with state that survives crashes and restarts.
+**Depends on**: Nothing (first phase). Dry-run and fake-Telegram tests need nothing from the operator. The live-send check needs a Telegram bot token and a private test chat from the operator (`.env`, never in git).
+**Requirements**: SRC-03, SRC-04, SRC-05, SRC-06, RULE-01, RULE-10, STATE-01, STATE-03, STATE-04, STATE-05, STATE-06, ALERT-02, ALERT-03, ALERT-04, ALERT-05, ALERT-06, OPS-04
+**Success Criteria** (what must be TRUE):
+  1. The pipeline reads everything from `fixtures/guard/` with no network: JSON lists and Markdown reports parse into typed snapshots with timezone-aware UTC times (3, 4 and 6 digit fractions) and an injected clock; only runs with `status == completed` and `report_status == ready` count; an unparseable report, or a failed, empty or partial fetch, becomes "unknown" and never creates or resolves a finding.
+  2. A dry-run with a fixed clock prints one concise alert (project, what is wrong, how long, severity) for each stale project, tells "never ran" and "Guard unreachable" apart from "stale", skips paused or excluded projects, writes no state and sends nothing. N has a default and per-project overrides in validated config, and an unknown config key is rejected with a clear error.
+  3. A live run against a private test chat sends the alert; an identical second run sends nothing; a send that fails is retried on the next run because an alert is recorded only after Telegram acknowledges it; the first run for a project records a baseline instead of flooding; many alerts collapse into one summary; messages are escaped and split at item boundaries under the Telegram length limit; rate limit, migrated chat id and bad token are each handled as their own error class.
+  4. State is saved atomically with a backup; a corrupt state file halts the run with a non-zero exit and an operator-visible error and nothing is reset; a second overlapping run exits cleanly without sending.
+  5. The bot token comes only from env or `.env` and never appears in logs, errors or alert text, and a message containing a secret-looking string is blocked before it is sent.
+**Plans**: TBD
+
+### Phase 2: Guard Connection and Core Alerts
+**Goal**: The radar reads real Guard data on its own read-only login and, on a timer, alerts the group about new or worsening High findings and newly stale projects, and the operator hears about it when the radar itself stops working.
+**Depends on**: Phase 1. **Gated on Guard access:** the radar needs its own read-only Guard login with `projects:read` and `audits:read` scopes, never `audits:run`. This login is separate from the one Claude Code uses and is created once by the operator (codes and tokens never pasted into chat). Until it exists, only the parts that need no live Guard can be built. Token lifetime and refresh behaviour are unknown (`docs/guard-data-notes.md`, Auth) and are the main risk to "unattended".
+**Requirements**: SRC-01, SRC-02, RULE-02, RULE-03, RULE-09, STATE-07, ALERT-01, OPS-01, OPS-02, OPS-03
+**Success Criteria** (what must be TRUE):
+  1. With the radar's own login, the radar connects to Guard without any interactive prompt, lists the projects in scope using only the read tools (never `run_audit`), and `probe` records sanitized real responses as fixtures (no real names, secrets or finding evidence committed). The recorded fixtures parse through the Phase 1 parser, and any mismatch with the synthetic fixtures is fixed there.
+  2. A dry-run on real Guard data prints what would be sent: a High-count alert for a `(repo, audit type)` with its age, and a rise of High findings in `audit.security` or `audit.public-api-access-safety` with no raw evidence in the text. Only a new high-risk finding or a newly stale project is immediate. The operator reviews this output before the executive group is enabled.
+  3. An alerted, still-true High condition is not re-sent; a rise in the High count re-arms its alert; a flapping result does not flip alerts on and off, because a `(repo, audit type)` is clear only after M consecutive completed runs with zero High findings.
+  4. After the poll cost is measured and logged, a timer runs the one-shot command unattended. After K consecutive failed polls one message goes to a separate ops chat, and one more when the radar recovers.
+  5. `doctor` reports pass or fail for Guard reachability, the Telegram token, and the bot's membership in the group chat.
+**Plans**: TBD
+
+### Phase 3: Remaining Rules and the Digest
+**Goal**: The group also hears about weak AI readiness, weak tests, missing analysis tooling and High findings that keep coming back, in one weekly digest that is always sent, worst first, plus reminders for what stays unaddressed.
+**Depends on**: Phase 2 (real data, High-count history and the alert lifecycle). Thresholds are set from the distribution seen in real Guard data, not guessed.
+**Requirements**: RULE-05, RULE-06, RULE-07, RULE-08, STATE-02, DIG-01, DIG-02, DIG-03, DIG-04
+**Success Criteria** (what must be TRUE):
+  1. A repo whose `audit.ai-readiness` score or `audit.tests` score (0 to 100) is below its configured threshold appears in the digest with the score, and never as an immediate alert.
+  2. A `(repo, audit type)` whose High count has not reached zero across N consecutive completed runs, counted by Guard `task_id` and not by radar polls, is flagged as recurring with N configurable.
+  3. A repo with no recent completed run of `audit.dead-code`, `audit.implementation-unification`, `audit.security` or `audit.dependency-hygiene` shows up as a tooling gap in the digest only.
+  4. One weekly digest reaches the group even when nothing is open (a one-line all-clear), lists open items worst first with each item's age and a "+N more" cap, shows the time of the last successful Guard poll, and carries resolved items and tooling gaps.
+  5. An unaddressed high-risk finding is re-sent as a reminder at the configured interval in days, and not before.
+**Plans**: TBD
+
+### Phase 4: Claude Triage
+**Goal**: Every message that will be sent carries a short Claude-written summary, probable cause and priority, and the set of alerts is exactly what the rules alone would have sent.
+**Depends on**: Phase 2 (real alerts to enrich), plus Phase 3 for digest items. Claude is reached through the CLI or T3 with no API key; the mechanism is unverified (see Gates and Open Items), so verifying it is the first piece of work in this phase.
+**Requirements**: TRI-01, TRI-02, TRI-03, TRI-04, TRI-05
+**Success Criteria** (what must be TRUE):
+  1. Each alert and digest item that will be sent shows a short summary, probable cause and priority, and the Claude output is validated against a typed schema before use.
+  2. Turning triage on or off sends the same alerts. Counts, ages and names in every message come from code, and invalid, refused, timed-out or failed Claude output falls back to the rule-only message.
+  3. Raw security evidence never reaches Claude, and hostile text planted in a finding fixture is delimited as data and cannot steer the output.
+  4. The triage boundary is swappable and needs no API key, and the daily cost is logged.
+**Plans**: TBD
+
+## Gates and Open Items
+
+**Phase 2 gate.** Needs the radar's own read-only Guard login (`projects:read`, `audits:read`; never `audits:run`). Not created yet.
+
+**Flagged from `docs/guard-data-notes.md` (ASSUMPTION or open there, not settled here):**
+- Run statuses other than `completed` and `report_status` other than `ready` were never observed. "Completed and ready" is a proposal, and which statuses count as a run is an open item (Phases 1 and 2).
+- `audit.ai-readiness` standing in for the dropped harness metric needs operator confirmation (Phase 3, RULE-05).
+- `audit.implementation-unification` as the "duplicate detector" is unconfirmed (Phase 3, RULE-07).
+- Severity words above High or below Low were never observed. Unknown words must be parsed as "unknown", not crash and not dropped (Phases 1 and 2).
+- Rate limits are undocumented and the poll cost is unmeasured. Measure before the timer is enabled (Phase 2).
+- Whether the stale threshold is per repo or per project is open. RULE-01 as approved uses the project's newest completed run of any type.
+- Radar login, token lifetime and refresh behaviour are unknown (Phase 2).
+
+**Questions for the phase planners:**
+- First-run baseline vs stale: a project already stale on the first run is not "newly" stale, so it would stay silent until the Phase 3 digest. Decide whether that is acceptable (Phase 1).
+- Source of history for RULE-02 age and RULE-08/09 run counts: Guard run history is returned a few runs per call, so decide between reading older reports and accumulating history in state from the first poll (Phase 2).
+- RULE-02 (age in days) and RULE-08 (run count) measure the same streak of runs with High findings. Both are kept as approved.
+- STATE-03 "notifies the operator" before the Phase 2 ops chat exists: Phase 1 uses the ops chat id if configured, otherwise a non-zero exit and an error log.
+
+**Operator inputs still needed:** Telegram bot token and a private test chat (Phase 1 live check), group chat id and ops chat id (Phase 2), deployment host for the timer, systemd or cron (Phase 2), digest day and timezone and the reminder interval (Phase 3), whether every group member may see security summaries (Phase 2), and how Claude is reached with no API key (Phase 4).
+
+## Progress
+
+**Execution Order:**
+Phases execute in numeric order: 1 → 2 → 3 → 4 (Phase 4 may be planned in parallel with Phase 3 once Phase 2 is complete)
+
+| Phase | Plans Complete | Status | Completed |
+|-------|----------------|--------|-----------|
+| 1. Working Pipeline on Fixtures | 0/TBD | Not started | - |
+| 2. Guard Connection and Core Alerts | 0/TBD | Not started | - |
+| 3. Remaining Rules and the Digest | 0/TBD | Not started | - |
+| 4. Claude Triage | 0/TBD | Not started | - |

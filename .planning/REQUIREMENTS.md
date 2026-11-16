@@ -108,13 +108,53 @@ Which phases cover which requirements. Updated during roadmap creation.
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| (filled in by the roadmapper) | | Pending |
+| SRC-01 | Phase 2 | Pending |
+| SRC-02 | Phase 2 | Pending |
+| SRC-03 | Phase 1 | Pending |
+| SRC-04 | Phase 1 | Pending |
+| SRC-05 | Phase 1 | Pending |
+| SRC-06 | Phase 1 | Pending |
+| RULE-01 | Phase 1 | Pending |
+| RULE-02 | Phase 2 | Pending |
+| RULE-03 | Phase 2 | Pending |
+| RULE-05 | Phase 3 | Pending |
+| RULE-06 | Phase 3 | Pending |
+| RULE-07 | Phase 3 | Pending |
+| RULE-08 | Phase 3 | Pending |
+| RULE-09 | Phase 2 | Pending |
+| RULE-10 | Phase 1 | Pending |
+| STATE-01 | Phase 1 | Pending |
+| STATE-02 | Phase 3 | Pending |
+| STATE-03 | Phase 1 | Pending |
+| STATE-04 | Phase 1 | Pending |
+| STATE-05 | Phase 1 | Pending |
+| STATE-06 | Phase 1 | Pending |
+| STATE-07 | Phase 2 | Pending |
+| ALERT-01 | Phase 2 | Pending |
+| ALERT-02 | Phase 1 | Pending |
+| ALERT-03 | Phase 1 | Pending |
+| ALERT-04 | Phase 1 | Pending |
+| ALERT-05 | Phase 1 | Pending |
+| ALERT-06 | Phase 1 | Pending |
+| DIG-01 | Phase 3 | Pending |
+| DIG-02 | Phase 3 | Pending |
+| DIG-03 | Phase 3 | Pending |
+| DIG-04 | Phase 3 | Pending |
+| TRI-01 | Phase 4 | Pending |
+| TRI-02 | Phase 4 | Pending |
+| TRI-03 | Phase 4 | Pending |
+| TRI-04 | Phase 4 | Pending |
+| TRI-05 | Phase 4 | Pending |
+| OPS-01 | Phase 2 | Pending |
+| OPS-02 | Phase 2 | Pending |
+| OPS-03 | Phase 2 | Pending |
+| OPS-04 | Phase 1 | Pending |
 
 **Coverage:**
 - v1 requirements: 41 total (RULE-04 dropped)
-- Mapped to phases: 0
-- Unmapped: 41 ⚠️
+- Mapped to phases: 41 (Phase 1: 17, Phase 2: 10, Phase 3: 9, Phase 4: 5)
+- Unmapped: 0
 
 ---
 *Requirements defined: 2026-11-16*
-*Last updated: 2026-11-16 after initial definition*
+*Last updated: 2026-11-16 after roadmap creation*
