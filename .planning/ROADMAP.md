@@ -49,15 +49,16 @@ Decimal phases appear between their surrounding integers in numeric order.
   3. A live run against a private test chat sends the alert; an identical second run sends nothing; a send that fails is retried on the next run because an alert is recorded only after Telegram acknowledges it; the first run for a project records a baseline instead of flooding; many alerts collapse into one summary; messages are escaped and split at item boundaries under the Telegram length limit; rate limit, migrated chat id and bad token are each handled as their own error class.
   4. State is saved atomically with a backup; a corrupt state file halts the run with a non-zero exit and an operator-visible error and nothing is reset; a second overlapping run exits cleanly without sending.
   5. The bot token comes only from env or `.env` and never appears in logs, errors or alert text, and a message containing a secret-looking string is blocked before it is sent.
-**Plans**: 6 plans
+**Plans**: 7 plans
 
 Plans:
-- [ ] 01-01-PLAN.md — Wave 1: tracer skeleton, dry-run on fixtures end to end (models, ports, Guard reader, fixture source, stale rule, render, pipeline, CLI, six-project scenario, architecture guard)
-- [ ] 01-02-PLAN.md — Wave 2: strict Guard parsing, Markdown reports page by page, unknown on failed/empty/partial fetch, read-only fixture source
-- [ ] 01-03-PLAN.md — Wave 2: Telegram sender with error classes, secret gate, token redaction, secrets from env/.env
-- [ ] 01-04-PLAN.md — Wave 2: strict config with pause/exclude and per-project N, stale boundaries, concise escaped alerts with collapse and split
-- [ ] 01-05-PLAN.md — Wave 2: ledger (dedup, baseline, retry, freeze) and atomic file state with backup, corrupt halt and lock
-- [ ] 01-06-PLAN.md — Wave 3: live run wiring, failure paths, dry-run with state, and the human live check against a private test chat
+- [ ] 01-01-PLAN.md — Wave 1: synthetic six-project fixture scenario and call manifest, with a standard-library consistency test
+- [ ] 01-02-PLAN.md — Wave 2: tracer skeleton, dry-run on fixtures end to end (models, ports, Guard reader with run-paging bound, fixture source, stale rule, render, pipeline, CLI, architecture guard)
+- [ ] 01-03-PLAN.md — Wave 3: strict Guard parsing, Markdown reports page by page, unknown on failed/empty/partial fetch (zero items stays a real answer), read-only fixture source
+- [ ] 01-04-PLAN.md — Wave 3: Telegram sender with error classes, secret gate, token redaction, secrets from env/.env
+- [ ] 01-05-PLAN.md — Wave 3: strict config with pause/exclude and per-project N, stale boundaries, concise escaped alerts with collapse and split
+- [ ] 01-06-PLAN.md — Wave 3: ledger (dedup, baseline, retry, freeze, optional count in schema 1) and atomic file state with backup, corrupt halt and lock
+- [ ] 01-07-PLAN.md — Wave 4: live run wiring, failure paths, dry-run with state, and the human live check against a private test chat
 
 ### Phase 2: Guard Connection and Core Alerts
 **Goal**: The radar reads real Guard data on its own read-only login and, on a timer, alerts the group about new or worsening High findings and newly stale projects, and the operator hears about it when the radar itself stops working.
@@ -122,7 +123,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 (Phase 4 may be planned in 
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. Working Pipeline on Fixtures | 0/6 | Planned | - |
+| 1. Working Pipeline on Fixtures | 0/7 | Planned | - |
 | 2. Guard Connection and Core Alerts | 0/TBD | Not started | - |
 | 3. Remaining Rules and the Digest | 0/TBD | Not started | - |
 | 4. Claude Triage | 0/TBD | Not started | - |

@@ -1,7 +1,7 @@
 # API Coverage - Phase 1 (Telegram Bot API, Guard MCP read tools via fixture replay)
 
 > Full coverage by default. Opt-outs are explicit, reasoned decisions.
-> Phase 1 sends Telegram messages for real (plan 01-03 and 01-06) and replays the Guard read tools from fixtures (plans 01-01 and 01-02). The real Guard MCP adapter is Phase 2.
+> Phase 1 sends Telegram messages for real (plan 01-04 and 01-07) and replays the Guard read tools from fixtures (plans 01-02 and 01-03). The real Guard MCP adapter is Phase 2.
 
 | capability | decision | reason |
 |---|---|---|
