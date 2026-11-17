@@ -8,8 +8,11 @@ import pytest
 from enji_guard_radar.ledger import (
     ConditionRecord,
     EvaluationOutcome,
+    PollHealth,
     ProjectEvaluation,
     ProjectRecord,
+    Reconciliation,
+    SeriesHistory,
     State,
     StateFormatError,
     apply_delivery,
@@ -203,7 +206,7 @@ def test_reconcile_never_sets_alerted_at() -> None:
     assert all(c.alerted_at is None for c in result.state.conditions)
 
 
-def test_count_round_trips_and_does_not_rearm() -> None:
+def test_count_round_trips_and_rise_rearms() -> None:
     plain = record("a")
     counted = record("b", count=2)
     state = known_state(plain, counted, projects=("a", "b"))
@@ -217,7 +220,8 @@ def test_count_round_trips_and_does_not_rearm() -> None:
 
     alerted = known_state(record("a", alerted=True, count=2))
     again = reconcile(alerted, [ev("a", alert("a", count=3))], T1)
-    assert again.to_send == ()
+    assert again.to_send == (alert("a", count=3),)
+    assert again.rearmed == (alert("a").key,)
     assert again.state.conditions[0].count == 3
 
     unalerted = known_state(record("a", count=2))
@@ -267,7 +271,7 @@ def _with(**changes: object) -> bytes:
     [
         b"{",
         b"[]",
-        _with(schema_version=2),
+        _with(schema_version=3),
         _with(schema_version="1"),
         _with(schema_version=True),
         _with(**{CANARY: 1}),
@@ -293,8 +297,128 @@ def test_deserialize_rejects_bad_input_without_echoing_content(data: bytes) -> N
 
 def test_unsupported_version_reason_names_the_version_or_its_type() -> None:
     with pytest.raises(
-        StateFormatError, match=r"unsupported schema_version 2 \(this radar reads 1\)"
+        StateFormatError, match=r"unsupported schema_version 3 \(this radar reads 1 and 2\)"
     ):
-        deserialize_state(_with(schema_version=2))
+        deserialize_state(_with(schema_version=3))
     with pytest.raises(StateFormatError, match=r"unsupported schema_version str"):
         deserialize_state(_with(schema_version="1"))
+
+
+def test_schema_1_document_without_other_fields_reads_as_empty_schema_2() -> None:
+    restored = deserialize_state(json.dumps({"schema_version": 1}).encode())
+    assert restored == State.empty()
+    assert restored.schema_version == 2
+
+
+def _run(state: State, *counts: int | None) -> list[Reconciliation]:
+    """Reconcile one count per run, keeping the state; the alert is never delivered here."""
+    results: list[Reconciliation] = []
+    for count in counts:
+        result = reconcile(state, [ev("a", alert("a", count=count))], T1)
+        results.append(result)
+        state = result.state
+    return results
+
+
+REARM_ROWS = {
+    "alerted-same-count-never-again": (record("a", alerted=True, count=3), [3], [False], None),
+    "alerted-rise-plans-once": (record("a", alerted=True, count=3), [4], [True], 4),
+    "alerted-3-2-3-plans-at-second-3": (
+        record("a", alerted=True, count=3),
+        [2, 3],
+        [False, True],
+        3,
+    ),
+    "alerted-3-0-3-inside-debounce": (record("a", alerted=True, count=3), [0, 3], [False, True], 3),
+    "baselined-rise-plans-once": (record("a", baseline=True, count=1), [3], [True], 3),
+    "baselined-same-count-silent": (record("a", baseline=True, count=1), [1], [False], None),
+    "unknown-newest-report-keeps-last-count": (
+        record("a", alerted=True, count=3),
+        [3],
+        [False],
+        None,
+    ),
+    "count-less-stale-never-rearms": (record("a", alerted=True), [None], [False], None),
+    "stored-count-none-never-rearms": (record("a", alerted=True), [5], [False], None),
+    "alert-count-none-never-rearms": (record("a", alerted=True, count=2), [None], [False], None),
+}
+
+
+@pytest.mark.parametrize(
+    ("start", "counts", "rearmed_each_run", "final_count"),
+    list(REARM_ROWS.values()),
+    ids=list(REARM_ROWS),
+)
+def test_rearm_per_run(
+    start: ConditionRecord,
+    counts: list[int | None],
+    rearmed_each_run: list[bool],
+    final_count: int | None,
+) -> None:
+    results = _run(known_state(start), *counts)
+    assert [bool(r.rearmed) for r in results] == rearmed_each_run
+    for result, was_rearmed in zip(results, rearmed_each_run, strict=True):
+        assert (result.to_send != ()) is was_rearmed
+        assert result.retried == ()
+        if was_rearmed:
+            (stored,) = result.state.conditions
+            assert stored.alerted_at is None
+            assert stored.baseline is False
+            assert result.rearmed == (alert("a").key,)
+    if final_count is not None:
+        assert results[-1].state.conditions[0].count == final_count
+    assert results[-1].resolved == ()
+
+
+def test_rearm_per_run_zero_to_n_on_a_known_project_is_new_not_rearmed() -> None:
+    result = reconcile(known_state(), [ev("a", alert("a", count=3))], T1)
+    assert result.to_send == (alert("a", count=3),)
+    assert result.rearmed == ()
+
+
+@pytest.mark.parametrize("second_count", [3, 4], ids=["same-count", "rose-again"])
+def test_rearm_per_run_undelivered_rearm_is_a_retry_once_per_run(second_count: int) -> None:
+    first, second = _run(known_state(record("a", alerted=True, count=3)), 4, second_count)
+    assert first.rearmed != ()
+    assert second.rearmed == ()
+    assert second.retried == (alert("a").key,)
+    assert second.to_send == (alert("a", count=second_count),)
+
+
+@pytest.mark.parametrize("outcome", [EvaluationOutcome.unknown, EvaluationOutcome.skipped])
+def test_rearm_per_run_partial_fetch_leaves_conditions_untouched(
+    outcome: EvaluationOutcome,
+) -> None:
+    state = known_state(record("a", alerted=True, count=3))
+    result = reconcile(state, [ev("a", alert("a", count=9), outcome=outcome)], T1)
+    assert result.state == state
+    assert result.to_send == ()
+    assert result.rearmed == ()
+    assert result.resolved == ()
+
+
+def test_rearm_per_run_apply_delivery_sets_only_the_acknowledged_keys() -> None:
+    state = known_state(
+        record("a", alerted=True, count=3), record("b", count=1), projects=("a", "b")
+    )
+    rearmed = reconcile(state, [ev("a", alert("a", count=4)), ev("b", alert("b", count=1))], T1)
+    assert rearmed.state.conditions[0].alerted_at is None
+    delivered = apply_delivery(rearmed.state, [alert("a").key], T2)
+    by_project = {c.key.project_id: c for c in delivered.conditions}
+    assert by_project["a"].alerted_at == T2
+    assert by_project["a"].count == 4
+    assert by_project["b"].alerted_at is None
+    assert by_project["b"].count == 1
+
+
+def test_histories_and_health_pass_through_reconcile_and_apply_delivery() -> None:
+    history = SeriesHistory(project_id="a", repo_id="r", action_key="x")
+    health = PollHealth(consecutive_failures=2)
+    base = known_state(record("a", alerted=True, count=3))
+    state = base.model_copy(update={"histories": (history,), "health": health})
+    result = reconcile(state, [ev("a", alert("a", count=4))], T1)
+    assert result.state.histories == (history,)
+    assert result.state.health == health
+    delivered = apply_delivery(result.state, [alert("a").key], T2)
+    assert delivered.histories == (history,)
+    assert delivered.health == health
