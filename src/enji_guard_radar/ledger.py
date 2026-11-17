@@ -10,13 +10,26 @@ from contextlib import AbstractContextManager
 from dataclasses import dataclass
 from datetime import datetime
 from enum import StrEnum
-from typing import Protocol
+from typing import Literal, Protocol
 
-from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, StrictInt, ValidationError
+from pydantic import (
+    AwareDatetime,
+    BaseModel,
+    ConfigDict,
+    Field,
+    StrictInt,
+    ValidationError,
+    model_validator,
+)
 
 from enji_guard_radar.model import Alert, AlertKey
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
+READABLE_SCHEMA_VERSIONS = (1, 2)
+
+# (project_id, repo_id, action_key): one audit type of one repo.
+SeriesKey = tuple[str, str, str]
+FailureCause = Literal["auth", "unavailable", "data"]
 
 
 class _Frozen(BaseModel):
@@ -39,10 +52,58 @@ class ProjectRecord(_Frozen):
     last_evaluated_at: AwareDatetime
 
 
+class RunPoint(_Frozen):
+    """One completed Guard run of a series: its task id, when it finished, its High count."""
+
+    task_id: str = Field(min_length=1)
+    completed_at: AwareDatetime
+    high: StrictInt = Field(ge=0)
+
+
+class SeriesHistory(_Frozen):
+    """High history of one (project, repo, audit type), counted by Guard task_id (D-01)."""
+
+    project_id: str = Field(min_length=1)
+    repo_id: str = Field(min_length=1)
+    action_key: str = Field(min_length=1)
+    points: tuple[RunPoint, ...] = ()
+    open: bool = False
+    opened_at: AwareDatetime | None = None
+    clean_runs: StrictInt = Field(default=0, ge=0)
+
+    @model_validator(mode="after")
+    def _consistent_flags(self) -> "SeriesHistory":
+        if self.open and self.opened_at is None:
+            message = "an open series needs opened_at"
+            raise ValueError(message)
+        if not self.open and self.opened_at is not None:
+            message = "a closed series has no opened_at"
+            raise ValueError(message)
+        if not self.open and self.clean_runs > 0:
+            message = "a closed series has no clean runs"
+            raise ValueError(message)
+        return self
+
+    def key(self) -> SeriesKey:
+        return (self.project_id, self.repo_id, self.action_key)
+
+
+class PollHealth(_Frozen):
+    """Poll failure bookkeeping. Data only here; plan 02-07 fills it."""
+
+    consecutive_failures: StrictInt = Field(default=0, ge=0)
+    first_failure_at: AwareDatetime | None = None
+    last_failure_cause: FailureCause | None = None
+    last_success_at: AwareDatetime | None = None
+    outage_reported_at: AwareDatetime | None = None
+
+
 class State(_Frozen):
     schema_version: int = SCHEMA_VERSION
     projects: tuple[ProjectRecord, ...] = ()
     conditions: tuple[ConditionRecord, ...] = ()
+    histories: tuple[SeriesHistory, ...] = ()
+    health: PollHealth = Field(default_factory=PollHealth)
 
     @classmethod
     def empty(cls) -> "State":
@@ -116,10 +177,17 @@ def _key_order(key: AlertKey) -> tuple[str, str, str, str]:
     return (key.project_id, key.repo_id, key.action_key, key.level)
 
 
-def _normalized(projects: Iterable[ProjectRecord], conditions: Iterable[ConditionRecord]) -> State:
+def _normalized(
+    projects: Iterable[ProjectRecord],
+    conditions: Iterable[ConditionRecord],
+    histories: Iterable[SeriesHistory],
+    health: PollHealth,
+) -> State:
     return State(
         projects=tuple(sorted(projects, key=lambda p: p.project_id)),
         conditions=tuple(sorted(conditions, key=lambda c: _key_order(c.key))),
+        histories=tuple(sorted(histories, key=lambda h: h.key())),
+        health=health,
     )
 
 
@@ -175,7 +243,7 @@ def reconcile(
             resolved.append(key)
 
     return Reconciliation(
-        state=_normalized(projects.values(), conditions.values()),
+        state=_normalized(projects.values(), conditions.values(), state.histories, state.health),
         to_send=tuple(sorted(to_send, key=lambda a: _key_order(a.key))),
         baselined=tuple(sorted(baselined, key=lambda a: _key_order(a.key))),
         resolved=tuple(sorted(resolved, key=_key_order)),
@@ -193,14 +261,21 @@ def apply_delivery(state: State, keys: Iterable[AlertKey], now: datetime) -> Sta
             c.model_copy(update={"alerted_at": now}) if c.key in acknowledged else c
             for c in state.conditions
         ),
+        state.histories,
+        state.health,
     )
 
 
 def serialize_state(state: State) -> bytes:
-    normalized = _normalized(state.projects, state.conditions).model_copy(
-        update={"schema_version": state.schema_version}
-    )
+    normalized = _normalized(
+        state.projects, state.conditions, state.histories, state.health
+    ).model_copy(update={"schema_version": state.schema_version})
     return (normalized.model_dump_json(indent=2) + "\n").encode("utf-8")
+
+
+def migrate_state_v1(raw: dict[str, object]) -> dict[str, object]:
+    """Pure 1 -> 2 upgrade: records are copied as they are, histories and health start empty."""
+    return {**raw, "schema_version": 2, "histories": [], "health": {}}
 
 
 def deserialize_state(data: bytes) -> State:
@@ -217,10 +292,12 @@ def deserialize_state(data: bytes) -> State:
         raise StateFormatError(reason)
     if "schema_version" in raw:
         version = raw["schema_version"]
-        if type(version) is not int or version != SCHEMA_VERSION:
+        if type(version) is not int or version not in READABLE_SCHEMA_VERSIONS:
             shown = version if type(version) is int else type(version).__name__
-            reason = f"unsupported schema_version {shown} (this radar reads {SCHEMA_VERSION})"
+            reason = f"unsupported schema_version {shown} (this radar reads 1 and 2)"
             raise StateFormatError(reason)
+        if version == 1:
+            raw = migrate_state_v1(raw)
     try:
         return State.model_validate(raw)
     except ValidationError as exc:
