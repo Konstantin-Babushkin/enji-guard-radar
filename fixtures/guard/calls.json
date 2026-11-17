@@ -64,6 +64,74 @@
         "project_id": "00000000-0000-4000-8000-00000000a003"
       },
       "response": "list_repositories_a003.json"
+    },
+    {
+      "tool": "list_repositories",
+      "args": {
+        "project_id": "00000000-0000-4000-8000-00000000a004"
+      },
+      "error": "simulated Guard outage",
+      "note": "Project D: Guard is unreachable for this project"
+    },
+    {
+      "tool": "list_repositories",
+      "args": {
+        "project_id": "00000000-0000-4000-8000-00000000a005"
+      },
+      "response": "list_repositories_a005.json"
+    },
+    {
+      "tool": "list_audit_runs",
+      "args": {
+        "repository_id": "repo_00000000-0000-4000-8000-00000000b004"
+      },
+      "response": "list_audit_runs_b004.json"
+    },
+    {
+      "tool": "list_repositories",
+      "args": {
+        "project_id": "00000000-0000-4000-8000-00000000a006"
+      },
+      "response": "list_repositories_a006.json"
+    },
+    {
+      "tool": "list_audit_runs",
+      "args": {
+        "repository_id": "repo_00000000-0000-4000-8000-00000000b005"
+      },
+      "response": "list_audit_runs_b005.json"
+    },
+    {
+      "tool": "get_audit_report",
+      "args": {
+        "task_id": "00000000-0000-4000-8000-00000000c001"
+      },
+      "response": "get_audit_report_security.json",
+      "note": "report fixture"
+    },
+    {
+      "tool": "get_audit_report",
+      "args": {
+        "task_id": "00000000-0000-4000-8000-00000000c004"
+      },
+      "response": "get_audit_report_ai_readiness.json",
+      "note": "report fixture"
+    },
+    {
+      "tool": "get_audit_report",
+      "args": {
+        "task_id": "00000000-0000-4000-8000-00000000c005"
+      },
+      "response": "get_audit_report_tests_slug_ids.json",
+      "note": "report fixture"
+    },
+    {
+      "tool": "get_audit_report",
+      "args": {
+        "task_id": "00000000-0000-4000-8000-00000000c006"
+      },
+      "response": "get_audit_report_recon.json",
+      "note": "report fixture"
     }
   ]
 }

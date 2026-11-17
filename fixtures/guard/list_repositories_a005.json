@@ -1,0 +1,12 @@
+{
+  "repositories": [
+    {
+      "id": "repo_00000000-0000-4000-8000-00000000b004",
+      "project_id": "00000000-0000-4000-8000-00000000a005",
+      "name": "acme/legacy-e",
+      "provider": "gitlab",
+      "connected": true
+    }
+  ],
+  "has_more": false
+}

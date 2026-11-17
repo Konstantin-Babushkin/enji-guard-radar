@@ -1,6 +1,7 @@
 """Consistency of the synthetic Guard scenario in fixtures/guard (standard library only)."""
 
 import json
+import re
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -17,7 +18,11 @@ EXPECTED_NEWEST: dict[str, str | None] = {
     "00000000-0000-4000-8000-00000000a001": "2026-11-10T15:12:40.004417Z",
     "00000000-0000-4000-8000-00000000a002": "2026-10-20T09:47:09.330000Z",
     "00000000-0000-4000-8000-00000000a003": None,
+    "00000000-0000-4000-8000-00000000a005": "2026-08-04T07:12:45.000001Z",
+    "00000000-0000-4000-8000-00000000a006": "2026-11-14T16:30:00.250Z",
 }
+# Project D: its list_repositories call is a recorded error ("unknown", no data).
+ERROR_PROJECT = "00000000-0000-4000-8000-00000000a004"
 
 Json = dict[str, Any]
 
@@ -101,6 +106,11 @@ def test_manifest_entries_are_well_formed() -> None:
         else:
             assert isinstance(call["error"], str)
             assert call["error"]
+    reports = [c for c in _calls() if c["tool"] == "get_audit_report"]
+    assert len(reports) == 4
+    for call in reports:
+        assert list(call["args"]) == ["task_id"]
+        assert _load(FIXTURES / call["response"])["task_id"] == call["args"]["task_id"]
 
 
 def test_manifest_has_no_duplicate_calls() -> None:
@@ -138,6 +148,8 @@ def _counts(run: Json) -> bool:
 
 def test_scenario_newest_completed_runs() -> None:
     assert {p["id"] for p in _projects() if not _is_error_project(p["id"])} == set(EXPECTED_NEWEST)
+    assert _is_error_project(ERROR_PROJECT)
+    assert ERROR_PROJECT not in EXPECTED_NEWEST
     for project_id, expected in EXPECTED_NEWEST.items():
         repos = _repositories(project_id)
         completed = [
@@ -157,3 +169,31 @@ def test_scenario_newest_completed_runs() -> None:
     assert max(_ts(r["completed_at"]) for r in page2["runs"]) > max(
         _ts(r["completed_at"]) for r in page1["runs"]
     )
+
+
+_SYNTHETIC_ID = re.compile(r"(repo_)?00000000-0000-4000-8000-0000000[0-9a-f]{5}")
+
+
+def _check_synthetic(node: Any, source: str) -> None:
+    if isinstance(node, dict):
+        for key, value in node.items():
+            if key in ("id", "project_id", "task_id", "repository_id"):
+                assert _SYNTHETIC_ID.fullmatch(value), (source, key, value)
+            if key == "name" and "/" in value:
+                assert value.startswith("acme/"), (source, value)
+            if key == "report_url":
+                assert value.startswith("https://guard.example/"), (source, value)
+            _check_synthetic(value, source)
+    elif isinstance(node, list):
+        for item in node:
+            _check_synthetic(item, source)
+
+
+def test_fixture_values_are_synthetic() -> None:
+    files = sorted(FIXTURES.glob("*.json"))
+    assert files
+    for path in files:
+        _check_synthetic(_load(path), path.name)
+    calls = _load(FIXTURES / "calls.json")["calls"]
+    for call in calls:
+        _check_synthetic(call["args"], "calls.json")
