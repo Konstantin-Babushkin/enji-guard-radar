@@ -156,6 +156,6 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 (Phase 4 may be planned in 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 1. Working Pipeline on Fixtures | 7/7 | Complete | 2026-11-17 |
-| 2. Guard Connection and Core Alerts | 0/11 | Planned | - |
+| 2. Guard Connection and Core Alerts | 0/12 | Planned | - |
 | 3. Remaining Rules and the Digest | 0/TBD | Not started | - |
 | 4. Claude Triage | 0/TBD | Not started | - |
