@@ -65,20 +65,27 @@ def test_v1_state_file_upgrades_through_a_live_run(tmp_path: Path) -> None:
     state_dir.mkdir()
     (state_dir / "state.json").write_text(json.dumps(_v1_document()), encoding="utf-8")
 
-    transport = FakeTransport([ok_response(7)])
+    transport = FakeTransport([ok_response(7), ok_response(8)])
     code, _ = run_live(tmp_path, STALE_NOW, transport)
 
     assert code == 0
-    assert len(transport.requests) == 1
+    # A is a known project in the migrated state: its stale alert and its first-seen High series
+    # are both sent immediately.
+    texts = {str(request[1]["text"]) for request in transport.requests}
+    assert len(transport.requests) == 2
+    assert sum("Stale Guard scans: <b>Project A" in text for text in texts) == 1
+    assert sum("1 High finding in audit.security (acme/service-a)." in text for text in texts) == 1
     state = load_state(tmp_path)
     assert state.schema_version == 2
-    assert state.histories == ()
+    assert {h.project_id for h in state.histories} == {A_ID}
+    assert any(h.action_key == "audit.security" and h.open for h in state.histories)
     assert state.health == PollHealth()
     for project_id, level in ((B_ID, "stale"), (C_ID, "never_ran")):
         record = condition(state, project_id, level)
         assert record.baseline is True
         assert record.first_seen_at == datetime(2026, 11, 16, 12, tzinfo=UTC)
     assert condition(state, A_ID, "stale").alerted_at is not None
+    assert condition(state, A_ID, "high").alerted_at is not None
 
 
 def test_migrate_state_v1_adds_histories_and_health() -> None:

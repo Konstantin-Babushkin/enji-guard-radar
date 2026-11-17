@@ -75,7 +75,7 @@ def test_first_live_run_baselines_and_sends_nothing(tmp_path: Path) -> None:
     assert code == 0
     assert transport.requests == []
     assert load_state(tmp_path).schema_version == 2
-    assert "2 baselined" in out
+    assert "3 baselined" in out
 
 
 def test_newly_stale_project_is_sent_once(tmp_path: Path) -> None:
