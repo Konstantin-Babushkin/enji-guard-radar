@@ -32,6 +32,9 @@ ARG_PROJECT_ID = "project_id"
 ARG_REPOSITORY_ID = "repository_id"
 ARG_CURSOR = "cursor"
 MAX_PAGES = 50
+
+# (repository id, action key, task id) -> True when that run's report must not be read.
+SkipReport = Callable[[str, str, str], bool]
 # ASSUMPTION: no run takes longer than 24 h from link to completion (OBSERVED 5 min to about 2 h)
 MAX_RUN_DURATION = timedelta(hours=24)
 
@@ -353,23 +356,33 @@ def _read_runs(tools: GuardTools, repository: GuardRepository) -> tuple[AuditRun
     return tuple(runs)
 
 
-def _repo_runs(tools: GuardTools, repository: GuardRepository) -> RepoRuns:
+def _repo_runs(
+    tools: GuardTools, repository: GuardRepository, *, skip_report: SkipReport | None = None
+) -> RepoRuns:
     runs = _read_runs(tools, repository)
-    # A report failure is local to that report (ReportUnknown); it never makes the project unknown.
-    reports = tuple(
-        read_report(tools, run.task_id, run.action_key)
-        for run in newest_counting_runs_by_action_key(runs)
-    )
-    return RepoRuns(repository=repository, runs=runs, reports=reports)
+    reports: list[ReportResult] = []
+    for run in newest_counting_runs_by_action_key(runs):
+        if skip_report is not None and skip_report(repository.id, run.action_key, run.task_id):
+            logger.debug(
+                "report %s (%s) not read: already known or not tracked", run.task_id, run.action_key
+            )
+            continue
+        # A report failure is local to that report (ReportUnknown); it never makes the project
+        # unknown.
+        reports.append(read_report(tools, run.task_id, run.action_key))
+    return RepoRuns(repository=repository, runs=runs, reports=tuple(reports))
 
 
-def fetch_project(tools: GuardTools, project: GuardProject) -> ProjectData:
+def fetch_project(
+    tools: GuardTools, project: GuardProject, *, skip_report: SkipReport | None = None
+) -> ProjectData:
     """Read a project's repositories, runs and newest reports; any list failure is unknown.
 
     SRC-04: a well-formed answer with zero items (a project with no repositories, a repository
     with no runs) is real. A blank, truncated or malformed page, a failed call or a page that was
     not fetched is unknown and never becomes a partial ProjectOk. A failed report only makes that
-    report unknown (RepoRuns.reports); the project stays evaluable.
+    report unknown (RepoRuns.reports); the project stays evaluable. A report that skip_report
+    (repo id, action key, task id) accepts is not read and has no entry in RepoRuns.reports.
     """
     try:
         repositories: list[GuardRepository] = []
@@ -377,7 +390,9 @@ def fetch_project(tools: GuardTools, project: GuardProject) -> ProjectData:
             tools, TOOL_LIST_REPOSITORIES, {ARG_PROJECT_ID: project.id}, parse_repositories_page
         ):
             repositories.extend(page.items)
-        repo_runs = tuple(_repo_runs(tools, repository) for repository in repositories)
+        repo_runs = tuple(
+            _repo_runs(tools, repository, skip_report=skip_report) for repository in repositories
+        )
     except GuardDataError as error:
         logger.warning("project %s is unknown: %s", project.id, error)
         return ProjectUnknown(project=project, reason=str(error))

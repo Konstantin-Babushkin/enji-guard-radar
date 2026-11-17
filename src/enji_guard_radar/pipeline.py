@@ -20,7 +20,7 @@ from enji_guard_radar.guard import (
     fetch_project,
     list_projects,
 )
-from enji_guard_radar.high_rules import evaluate_high
+from enji_guard_radar.high_rules import evaluate_high, skip_report_for
 from enji_guard_radar.ledger import (
     Corrupt,
     EvaluationOutcome,
@@ -290,7 +290,11 @@ def _evaluate_projects(
                 ProjectEvaluation(project_id=project.id, outcome=EvaluationOutcome.skipped)
             )
             continue
-        data = fetch_project(deps.guard, project)
+        data = fetch_project(
+            deps.guard,
+            project,
+            skip_report=skip_report_for(project.id, histories, deps.config.high.audit_types),
+        )
         threshold = deps.config.thresholds_for(project.id).stale_after_days
         stale = evaluate_stale(data, threshold, now)
         if stale.future_run:
