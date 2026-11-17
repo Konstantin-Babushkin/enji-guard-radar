@@ -4,6 +4,7 @@ import argparse
 import logging
 import sys
 from collections.abc import Sequence
+from importlib.metadata import version
 from pathlib import Path
 
 from enji_guard_radar.env_file import EnvFileError, read_env_file
@@ -13,6 +14,11 @@ logger = logging.getLogger(__name__)
 
 def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="enji-guard-radar")
+    parser.add_argument(
+        "--version",
+        action="version",
+        version=f"%(prog)s {version('enji-guard-radar')}",
+    )
     parser.add_argument(
         "--env-file",
         type=Path,
