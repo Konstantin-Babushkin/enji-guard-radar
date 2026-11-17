@@ -13,7 +13,7 @@ from enum import StrEnum
 
 from pydantic import AwareDatetime, BaseModel, ConfigDict
 
-from enji_guard_radar.guard_report import ReportResult, read_report
+from enji_guard_radar.guard_report import TOOL_GET_AUDIT_REPORT, ReportResult, read_report
 from enji_guard_radar.ports import GuardCallError, GuardTools
 
 logger = logging.getLogger(__name__)
@@ -21,6 +21,11 @@ logger = logging.getLogger(__name__)
 TOOL_LIST_PROJECTS = "list_projects"
 TOOL_LIST_REPOSITORIES = "list_repositories"
 TOOL_LIST_AUDIT_RUNS = "list_audit_runs"
+# The Guard tools the radar may call. `run_audit` (scope audits:run) starts work, is never used
+# and is deliberately absent; list_audits and get_audit are opted out until a rule needs them.
+GUARD_READ_TOOLS = frozenset(
+    {TOOL_LIST_PROJECTS, TOOL_LIST_REPOSITORIES, TOOL_LIST_AUDIT_RUNS, TOOL_GET_AUDIT_REPORT}
+)
 # ASSUMPTION: argument names are not recorded in docs/guard-data-notes.md; Phase 2 confirms
 # them against the real tool schemas
 ARG_PROJECT_ID = "project_id"
@@ -359,7 +364,13 @@ def _repo_runs(tools: GuardTools, repository: GuardRepository) -> RepoRuns:
 
 
 def fetch_project(tools: GuardTools, project: GuardProject) -> ProjectData:
-    """Read a project's repositories and runs; any failure is unknown, never a partial result."""
+    """Read a project's repositories, runs and newest reports; any list failure is unknown.
+
+    SRC-04: a well-formed answer with zero items (a project with no repositories, a repository
+    with no runs) is real. A blank, truncated or malformed page, a failed call or a page that was
+    not fetched is unknown and never becomes a partial ProjectOk. A failed report only makes that
+    report unknown (RepoRuns.reports); the project stays evaluable.
+    """
     try:
         repositories: list[GuardRepository] = []
         for page in _pages(
