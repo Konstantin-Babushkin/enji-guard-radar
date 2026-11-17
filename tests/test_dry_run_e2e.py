@@ -65,3 +65,42 @@ def test_dry_run_is_repeatable_and_leaves_fixtures_unchanged() -> None:
     second = run_dry()
     assert first == second
     assert fixture_digests() == before
+
+
+def test_dry_run_lists_unreachable_project_d_as_not_checked() -> None:
+    code, out = run_dry()
+    assert code == 0
+    lines = out.splitlines()
+    assert "--- not checked (1) ---" in lines
+    assert (
+        "Project D (Guard unreachable): Guard data unavailable "
+        "(list_repositories failed: simulated Guard outage)"
+    ) in lines
+    assert "Project D" not in "\n".join(line for line in lines if line.endswith("</b>"))
+
+
+def test_dry_run_alerts_long_stale_project_e() -> None:
+    _, out = run_dry()
+    assert "No completed Guard run for 104 days (last: 2026-08-04)." in out.splitlines()
+
+
+def test_dry_run_summary_counts() -> None:
+    _, out = run_dry()
+    assert (
+        "summary: 5 evaluated, 2 stale, 1 never ran, 1 not checked, 3 message(s) would be sent"
+        in out.splitlines()
+    )
+
+
+def test_dry_run_orders_alerts_worst_first() -> None:
+    _, out = run_dry()
+    headlines = [
+        line
+        for line in out.splitlines()
+        if line.startswith(("Stale Guard scans:", "No Guard runs:"))
+    ]
+    assert headlines == [
+        "Stale Guard scans: <b>Project E (paused in config)</b>",
+        "Stale Guard scans: <b>Project B</b>",
+        "No Guard runs: <b>Project C (no repositories)</b>",
+    ]
