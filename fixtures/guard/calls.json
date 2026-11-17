@@ -1,0 +1,69 @@
+{
+  "calls": [
+    {
+      "tool": "list_projects",
+      "args": {},
+      "response": "list_projects.json"
+    },
+    {
+      "tool": "list_repositories",
+      "args": {
+        "project_id": "00000000-0000-4000-8000-00000000a001"
+      },
+      "response": "list_repositories.json"
+    },
+    {
+      "tool": "list_repositories",
+      "args": {
+        "project_id": "00000000-0000-4000-8000-00000000a001",
+        "cursor": "<opaque-cursor>"
+      },
+      "response": "list_repositories_a001_page2.json"
+    },
+    {
+      "tool": "list_audit_runs",
+      "args": {
+        "repository_id": "repo_00000000-0000-4000-8000-00000000b001"
+      },
+      "response": "list_audit_runs.json"
+    },
+    {
+      "tool": "list_audit_runs",
+      "args": {
+        "repository_id": "repo_00000000-0000-4000-8000-00000000b001",
+        "cursor": "<opaque-cursor>"
+      },
+      "response": "list_audit_runs_b001_page2.json",
+      "note": "page 2 holds the newest completion (c012, linked before page 1 runs); page 3 is deliberately unrecorded: the 24 h run-paging bound means it is never requested"
+    },
+    {
+      "tool": "list_audit_runs",
+      "args": {
+        "repository_id": "repo_00000000-0000-4000-8000-00000000b002"
+      },
+      "response": "list_audit_runs_b002.json",
+      "note": "c011 status running, report_status pending and completed_at null are ASSUMPTION values; only completed was OBSERVED"
+    },
+    {
+      "tool": "list_repositories",
+      "args": {
+        "project_id": "00000000-0000-4000-8000-00000000a002"
+      },
+      "response": "list_repositories_a002.json"
+    },
+    {
+      "tool": "list_audit_runs",
+      "args": {
+        "repository_id": "repo_00000000-0000-4000-8000-00000000b003"
+      },
+      "response": "list_audit_runs_b003.json"
+    },
+    {
+      "tool": "list_repositories",
+      "args": {
+        "project_id": "00000000-0000-4000-8000-00000000a003"
+      },
+      "response": "list_repositories_a003.json"
+    }
+  ]
+}

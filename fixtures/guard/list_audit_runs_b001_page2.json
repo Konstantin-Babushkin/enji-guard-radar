@@ -1,0 +1,28 @@
+{
+  "runs": [
+    {
+      "task_id": "00000000-0000-4000-8000-00000000c012",
+      "action_key": "audit.tests",
+      "linked_at": "2026-11-09T22:10:05.120Z",
+      "task_available": true,
+      "status": "completed",
+      "created_at": "2026-11-09T22:10:04.981230Z",
+      "completed_at": "2026-11-10T15:12:40.004417Z",
+      "report_status": "ready",
+      "report_url": "https://guard.example/app/projects/00000000-0000-4000-8000-00000000a001/repos/repo_00000000-0000-4000-8000-00000000b001/tests?run=00000000-0000-4000-8000-00000000c012"
+    },
+    {
+      "task_id": "00000000-0000-4000-8000-00000000c013",
+      "action_key": "audit.ai-readiness",
+      "linked_at": "2026-11-02T08:00:00.000Z",
+      "task_available": true,
+      "status": "completed",
+      "created_at": "2026-11-02T07:59:59.512000Z",
+      "completed_at": "2026-11-02T09:58:31.250000Z",
+      "report_status": "ready",
+      "report_url": "https://guard.example/app/projects/00000000-0000-4000-8000-00000000a001/repos/repo_00000000-0000-4000-8000-00000000b001/ai-readiness?run=00000000-0000-4000-8000-00000000c013"
+    }
+  ],
+  "has_more": true,
+  "next_cursor": "<opaque-cursor-2>"
+}

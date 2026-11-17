@@ -1,0 +1,12 @@
+{
+  "repositories": [
+    {
+      "id": "repo_00000000-0000-4000-8000-00000000b003",
+      "project_id": "00000000-0000-4000-8000-00000000a002",
+      "name": "acme/service-b",
+      "provider": "github",
+      "connected": true
+    }
+  ],
+  "has_more": false
+}
