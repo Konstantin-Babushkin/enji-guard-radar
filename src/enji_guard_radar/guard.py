@@ -195,10 +195,13 @@ def _optional_flag(item: Mapping[str, object], key: str) -> bool | None:
 
 
 def _page[T](
-    payload: Mapping[str, object],
+    payload: object,
     list_key: str,
     parse_item: Callable[[Mapping[str, object]], T],
 ) -> Page[T]:
+    if not isinstance(payload, Mapping):
+        message = "response is not an object"
+        raise GuardDataError(message)
     raw_items = payload.get(list_key)
     if not isinstance(raw_items, list):
         message = f"list {list_key} is missing or not a list"
