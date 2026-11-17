@@ -19,6 +19,7 @@ from pathlib import Path
 from typing import Protocol
 
 from enji_guard_radar.guard_auth import (
+    AUTH_COMMAND,
     AUTH_FAILURE_TEXT,
     REFRESH_MARGIN,
     AuthRejected,
@@ -26,10 +27,12 @@ from enji_guard_radar.guard_auth import (
     GuardCredentials,
     Refreshed,
     access_valid,
+    auth_failure_text,
     classify_token_response,
     deserialize_credentials,
     merge_refreshed,
     refresh_form,
+    scope_ok,
     serialize_credentials,
 )
 from enji_guard_radar.ports import AuthFailureKind, Clock, GuardAuthError, GuardCallError
@@ -173,7 +176,7 @@ class RefreshingTokenSource:
         with self._store.lock():
             # Another process may have refreshed while we waited: look at the file again.
             stored = self._store.load()
-            if not force_refresh and self._usable(stored):
+            if self._reusable(stored, force_refresh):
                 self._current = stored
                 return stored.access_token.get_secret_value()
             refreshed = self._refresh(stored)
@@ -182,6 +185,15 @@ class RefreshingTokenSource:
 
     def _usable(self, credentials: GuardCredentials) -> bool:
         return access_valid(credentials, self._clock(), self._margin)
+
+    def _reusable(self, stored: GuardCredentials, force_refresh: bool) -> bool:
+        """Use the file's token unless it is the very one the caller just had rejected."""
+        if not self._usable(stored):
+            return False
+        if not force_refresh:
+            return True
+        # Forced, but another process already replaced the token we handed out: use theirs.
+        return self._current is not None and stored.access_token != self._current.access_token
 
     def _refresh(self, stored: GuardCredentials) -> GuardCredentials:
         try:
@@ -194,12 +206,29 @@ class RefreshingTokenSource:
         now = self._clock()
         outcome = classify_token_response(response.status, response.body, now)
         if isinstance(outcome, AuthRejected):
-            raise GuardAuthError(outcome.kind, AUTH_FAILURE_TEXT[outcome.kind])
+            logger.warning("Guard login refresh refused: %s", outcome.kind.value)
+            text = auth_failure_text(outcome.kind, outcome.error_code)
+            raise GuardAuthError(outcome.kind, text)
         if not isinstance(outcome, Refreshed):
             message = f"Guard login service unavailable (HTTP {outcome.status})"
+            logger.warning("Guard login service gave no usable answer (HTTP %d)", outcome.status)
             raise GuardCallError(message)
+        if not scope_ok(outcome.scope):
+            logger.error("Guard login refresh granted a scope outside read-only; nothing stored")
+            kind = AuthFailureKind.AUTH_REJECTED
+            raise GuardAuthError(kind, AUTH_FAILURE_TEXT[kind])
         merged = merge_refreshed(stored, outcome, now)
-        self._store.save(merged)
+        try:
+            self._store.save(merged)
+        except OSError as exc:
+            # The old refresh token may be dead already: keep going on the new access token and
+            # tell the operator. Never fall back to an older copy of the login.
+            logger.error(  # noqa: TRY400 - no traceback, it could name the file
+                "rotated Guard login could not be saved (%s); this run continues, "
+                "the next one may need `%s`",
+                type(exc).__name__,
+                AUTH_COMMAND,
+            )
         logger.info(
             "Guard access token refreshed (valid until %s, refresh token rotated: %s)",
             merged.expires_at.isoformat(),
