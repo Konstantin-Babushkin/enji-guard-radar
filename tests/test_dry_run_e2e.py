@@ -193,3 +193,14 @@ def test_config_naming_an_unlisted_project_is_logged_and_changes_nothing(
     assert code == 0
     assert f"config names project id {ghost}, which Guard did not list" in caplog.text
     assert "summary: 5 evaluated, 2 stale, 1 never ran, 1 not checked" in out
+
+
+def test_future_newest_run_is_treated_as_fresh_with_a_warning(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    with caplog.at_level(logging.WARNING):
+        code, out = run_dry(now="2026-01-01T00:00:00Z")
+    assert code == 0
+    assert "is in the future" in caplog.text
+    assert "treated as fresh" in caplog.text
+    assert "Stale Guard scans" not in out

@@ -121,6 +121,12 @@ def run_once(deps: Deps) -> RunReport:
         data = fetch_project(deps.guard, project)
         threshold = deps.config.thresholds_for(project.id).stale_after_days
         stale = evaluate_stale(data, threshold, now)
+        if stale.future_run:
+            logger.warning(
+                "newest Guard run of project %s is in the future (%s); treated as fresh",
+                project.id,
+                stale.newest_run_at,
+            )
         if isinstance(data, ProjectUnknown):
             status, note = ProjectStatus.UNKNOWN, f"Guard data unavailable ({data.reason})"
         else:
