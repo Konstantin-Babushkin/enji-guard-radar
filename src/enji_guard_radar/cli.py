@@ -13,10 +13,12 @@ from typing import TextIO
 
 from pydantic import SecretStr
 
+from enji_guard_radar import cli_auth
 from enji_guard_radar.config import ConfigError, RadarConfig, parse_config
 from enji_guard_radar.env_file import EnvFileError, read_env_file
 from enji_guard_radar.fixture_source import FixtureGuardTools
 from enji_guard_radar.guard import GuardDataError, parse_guard_time
+from enji_guard_radar.guard_credentials import LoginTransport, UrllibOAuthTransport
 from enji_guard_radar.ledger import StateStore
 from enji_guard_radar.messages import render_alert
 from enji_guard_radar.model import Audience, OutboundMessage
@@ -152,6 +154,7 @@ def _build_parser() -> argparse.ArgumentParser:
     run.add_argument(
         "--now", metavar="ISO8601", help="fixed clock, for example 2026-11-16T12:00:00Z"
     )
+    cli_auth.add_parser(commands)
     return parser
 
 
@@ -273,6 +276,8 @@ def main(
     transport: HttpTransport | None = None,
     sleep: Callable[[float], None] | None = None,
     stdout: TextIO | None = None,
+    oauth_transport: LoginTransport | None = None,
+    prompt: Callable[[str], str] | None = None,
 ) -> int:
     out = stdout if stdout is not None else sys.stdout
     args = _build_parser().parse_args(argv)
@@ -284,6 +289,16 @@ def main(
             environ=environ if environ is not None else os.environ,
             transport=transport,
             sleep=sleep,
+        )
+
+    if args.command == "auth":
+        return cli_auth.run_auth(
+            args,
+            out=out,
+            transport=oauth_transport or UrllibOAuthTransport(),
+            prompt=prompt,
+            clock=system_clock,
+            new_secret=None,
         )
 
     if args.env_file is not None:
