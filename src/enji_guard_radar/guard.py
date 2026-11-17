@@ -235,18 +235,21 @@ def _repository(item: Mapping[str, object]) -> GuardRepository:
 
 
 def _run(item: Mapping[str, object]) -> AuditRun:
+    task_id = _text(item, "task_id")
     status_raw = _text(item, "status")
     report_status_raw = _text(item, "report_status")
     try:
         status = RunStatus(status_raw.strip().casefold())
     except ValueError:
         status = RunStatus.UNKNOWN
+        logger.warning("run status unknown: task_id=%s raw=%r", task_id, status_raw)
     try:
         report_status = ReportStatus(report_status_raw.strip().casefold())
     except ValueError:
         report_status = ReportStatus.UNKNOWN
-    return AuditRun(
-        task_id=_text(item, "task_id"),
+        logger.warning("report status unknown: task_id=%s raw=%r", task_id, report_status_raw)
+    run = AuditRun(
+        task_id=task_id,
         action_key=_text(item, "action_key"),
         status=status,
         status_raw=status_raw,
@@ -257,6 +260,9 @@ def _run(item: Mapping[str, object]) -> AuditRun:
         completed_at=_optional_time(item, "completed_at"),
         task_available=_optional_flag(item, "task_available"),
     )
+    if status is RunStatus.COMPLETED and run.completed_at is None:
+        logger.warning("completed run has no completed_at: task_id=%s", task_id)
+    return run
 
 
 def parse_projects_page(payload: Mapping[str, object]) -> Page[GuardProject]:
