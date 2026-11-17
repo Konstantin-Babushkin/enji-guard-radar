@@ -29,6 +29,32 @@ FILE_MODE = 0o600
 DIR_MODE = 0o700
 
 
+def atomic_write(directory: Path, path: Path, data: bytes, mode: int = FILE_MODE) -> None:
+    """Write `data` to `path` (inside `directory`) so a reader sees the old or the new file."""
+    fd, tmp_name = tempfile.mkstemp(dir=directory, prefix=f".{path.name}.", suffix=".tmp")
+    tmp = Path(tmp_name)
+    try:
+        with os.fdopen(fd, "wb") as handle:
+            handle.write(data)
+            handle.flush()
+            os.fsync(handle.fileno())
+        tmp.chmod(mode)
+        os.replace(tmp, path)  # noqa: PTH105
+        _fsync_directory(directory)
+    except BaseException:
+        with contextlib.suppress(FileNotFoundError):
+            tmp.unlink()
+        raise
+
+
+def _fsync_directory(directory: Path) -> None:
+    fd = os.open(directory, os.O_RDONLY)
+    try:
+        os.fsync(fd)
+    finally:
+        os.close(fd)
+
+
 class FileStateStore:
     def __init__(self, directory: Path) -> None:
         self._directory = directory
@@ -56,8 +82,8 @@ class FileStateStore:
             raise CorruptStateError(current.reason, current.backup_valid)
         self._make_directory()
         if isinstance(current, Loaded):
-            self._atomic_write(self.backup_path, serialize_state(current.state))
-        self._atomic_write(self.state_path, serialize_state(state))
+            atomic_write(self._directory, self.backup_path, serialize_state(current.state))
+        atomic_write(self._directory, self.state_path, serialize_state(state))
         logger.info("state saved: %s (%d conditions)", self.state_path, len(state.conditions))
 
     @contextlib.contextmanager
@@ -105,29 +131,6 @@ class FileStateStore:
         except (OSError, StateFormatError):
             return False
         return True
-
-    def _atomic_write(self, path: Path, data: bytes) -> None:
-        fd, tmp_name = tempfile.mkstemp(dir=self._directory, prefix=f".{path.name}.", suffix=".tmp")
-        tmp = Path(tmp_name)
-        try:
-            with os.fdopen(fd, "wb") as handle:
-                handle.write(data)
-                handle.flush()
-                os.fsync(handle.fileno())
-            tmp.chmod(FILE_MODE)
-            os.replace(tmp, path)  # noqa: PTH105
-            self._fsync_directory()
-        except BaseException:
-            with contextlib.suppress(FileNotFoundError):
-                tmp.unlink()
-            raise
-
-    def _fsync_directory(self) -> None:
-        fd = os.open(self._directory, os.O_RDONLY)
-        try:
-            os.fsync(fd)
-        finally:
-            os.close(fd)
 
 
 class DryRunStateStore:
