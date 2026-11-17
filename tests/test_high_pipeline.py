@@ -236,6 +236,7 @@ class Sim:
         self.failures: dict[Key, Response] = {}
         self.paused = False
         self.counter = 0
+        self.last_guard: InMemoryGuardTools | None = None
         # A recent overview run keeps the project fresh, so no stale alert gets in the way.
         self.add_run("audit.recon", day=0, report=False)
 
@@ -278,6 +279,7 @@ class Sim:
                 self.failures,
             )
         )
+        self.last_guard = guard
         now = BASE + timedelta(days=day, hours=2)
         deps = Deps(
             guard=guard,
@@ -287,6 +289,15 @@ class Sim:
             store=FileStateStore(self.state_dir),
         )
         return run_once(deps)
+
+    def report_reads(self) -> list[str]:
+        """The task ids of every get_audit_report call of the last poll, in order."""
+        assert self.last_guard is not None
+        return [
+            args[ARG_TASK_ID]
+            for tool, args in self.last_guard.calls
+            if tool == TOOL_GET_AUDIT_REPORT
+        ]
 
     def state(self) -> State:
         load = FileStateStore(self.state_dir).load()
@@ -603,3 +614,17 @@ def test_failed_send_retries_next_poll(tmp_path: Path, caplog: pytest.LogCapture
 
 def test_history_window_covers_m() -> None:
     assert HISTORY_WINDOW >= CLEAR_AFTER_MAX
+
+
+def test_unchanged_run_is_not_read_again(tmp_path: Path) -> None:
+    sim = Sim(tmp_path)
+    sim.poll(0)
+    assert sim.report_reads() == []  # the overview run is never read
+    task_id = sim.add_run(high=2, day=1)
+    (first,) = texts(sim.poll(1))
+    assert "2 High findings in audit.security (acme/svc)." in first
+    assert sim.report_reads() == [task_id]
+    after_first = sim.state().histories
+    assert_quiet(sim.poll(2))
+    assert sim.report_reads() == []
+    assert sim.state().histories == after_first

@@ -10,7 +10,7 @@ from datetime import datetime, timedelta
 
 from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, StrictInt
 
-from enji_guard_radar.guard import ProjectOk, newest_counting_runs_by_action_key
+from enji_guard_radar.guard import ProjectOk, SkipReport, newest_counting_runs_by_action_key
 from enji_guard_radar.guard_report import OVERVIEW_ACTION_KEYS, AuditReport
 from enji_guard_radar.high_history import (
     Known,
@@ -51,6 +51,25 @@ def in_scope(action_key: str, audit_types: Collection[str] | None) -> bool:
     if action_key in OVERVIEW_ACTION_KEYS:
         return False
     return audit_types is None or action_key in audit_types
+
+
+def skip_report_for(
+    project_id: str,
+    histories: Mapping[SeriesKey, SeriesHistory],
+    audit_types: Collection[str] | None,
+) -> SkipReport:
+    """Reports that need no read: untracked audit types and runs the series already counted.
+
+    RULE-09 counts by task_id, so only a task_id already in the stored history is skipped; a run
+    whose report failed or was never read is not in history and is requested again.
+    """
+
+    def skip(repo_id: str, action_key: str, task_id: str) -> bool:
+        if not in_scope(action_key, audit_types):
+            return True
+        return has_task(histories.get((project_id, repo_id, action_key)), task_id)
+
+    return skip
 
 
 def high_alert(series: HighSeries, *, aged_after_days: int, now: datetime) -> Alert:
