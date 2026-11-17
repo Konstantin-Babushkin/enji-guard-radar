@@ -19,6 +19,7 @@ SEVERITY_ORDER = (Severity.HIGH, Severity.UNKNOWN, Severity.MEDIUM, Severity.LOW
 class AlertKind(StrEnum):
     STALE = "stale"
     NEVER_RAN = "never_ran"
+    HIGH_FINDINGS = "high_findings"
 
 
 class Audience(StrEnum):
@@ -53,6 +54,11 @@ class Alert(BaseModel):
     repo_count: int
     # Last observed count of a count-based condition; None for stale and never ran.
     count: int | None = Field(default=None, ge=0)
+    # High findings only: counts, never finding titles, ids, paths or evidence (D-05).
+    repo_name: str | None = None
+    previous_count: int | None = Field(default=None, ge=0)
+    seen_since: AwareDatetime | None = None
+    aged: bool = False
 
 
 class OutboundMessage(BaseModel):
