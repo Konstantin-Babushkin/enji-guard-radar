@@ -77,24 +77,25 @@ Plans:
   3. An alerted, still-true High condition is not re-sent; a rise in the High count re-arms its alert; a flapping result does not flip alerts on and off, because a `(repo, audit type)` is clear only after M consecutive completed runs with zero High findings.
   4. After the poll cost is measured and logged, a timer runs the one-shot command unattended. After K consecutive failed polls one message goes to a separate ops chat, and one more when the radar recovers.
   5. `doctor` reports pass or fail for Guard reachability, the Telegram token, and the bot's membership in the group chat.
-**Plans**: 11 plans
+**Plans**: 12 plans
 
 Plans:
 **Wave 1**
-- [ ] 02-01-PLAN.md — Wave 1: State schema 2 (High history by task_id, poll health, alerted_count, v1 migration), history fold with M-clean-run clear, peak re-arm
+- [ ] 02-01-PLAN.md — Wave 1: State schema 2 (High history by task_id, poll health, v1 migration), history fold with M-clean-run clear, per-run re-arm (D-06)
 - [ ] 02-02-PLAN.md — Wave 1: High-count alert rule, counts-only alert text, strict `high` config and the age threshold with per-project override
 - [ ] 02-03-PLAN.md — Wave 1: Guard token layer (auth error contracts, credential file, refresh with rotation persisted before use, failure classification, lock)
 
 **Wave 2** *(blocked on Wave 1 completion)*
-- [ ] 02-04-PLAN.md — Wave 2: High-count alerts in the run (fold per project, alerts from stored history, skip known reports, updated baselines)
+- [ ] 02-04-PLAN.md — Wave 2: High-count alerts in the run (fold per project, alerts from stored history, per-run rise edge table, updated baselines)
 - [ ] 02-05-PLAN.md — Wave 2: `auth` command (discovery, client registration, PKCE, hidden paste, read-only grant validation)
 - [ ] 02-06-PLAN.md — Wave 2: MCP adapter over the official SDK, behind the operator's dependency decision and package check (not autonomous)
 
 **Wave 3** *(blocked on Wave 2 completion)*
-- [ ] 02-07-PLAN.md — Wave 3: Poll health and the ops chat (K failures, one outage, one recovery, save on failed polls)
-- [ ] 02-08-PLAN.md — Wave 3: `doctor` (Telegram token, chat membership, Guard reachability, local setup)
+- [ ] 02-08-PLAN.md — Wave 3: `doctor` (Telegram token, chat membership, Guard reachability, unevaluated projects, local setup)
+- [ ] 02-12-PLAN.md — Wave 3: Do not re-read known reports (skip predicate in fetch_project; poll cost)
 
 **Wave 4** *(blocked on Wave 3 completion)*
+- [ ] 02-07-PLAN.md — Wave 4: Poll health and the ops chat (K failures, one outage, one recovery, save on failed polls)
 - [ ] 02-09-PLAN.md — Wave 4: `probe` with allowlist sanitizer, round-trip and leak checks, recorded-fixture contract test
 
 **Wave 5** *(blocked on Wave 4 completion)*
