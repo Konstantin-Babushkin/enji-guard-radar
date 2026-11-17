@@ -591,23 +591,33 @@ def advance_health(health: PollHealth, poll: PollResult, now: datetime, k: int) 
 | A14 | `member` in a group can post unless default permissions forbid it | Pattern 8 | `doctor` passes while the bot cannot post; optional `getChat` WARN mitigates |
 | A15 | Production runs Python 3.12 (dev `.venv` is 3.14) | Standard Stack | A 3.14-only change could slip in; pin `.python-version` |
 
-## Open Questions
+## Open Questions (RESOLVED)
 
 1. **Re-arm semantics: peak vs per-run rise**
+   - **RESOLVED 2026-11-17 (operator): per-run rise re-arms (CONTEXT D-06); the peak rule is dropped.**
    - Known: STATE-07 "a rise ... re-arms", RULE-03 "a rise ... between two completed runs".
    - Unclear: whether 3→2→3 should alert again.
    - Recommendation: peak-based (`alerted_count` high-water, reset when the episode closes); confirm with the operator, wording in the alert says "rose from X to Y".
 2. **Does an aged baselined High alert immediately?**
+   - **RESOLVED (default, config-changeable): no immediate alert for age alone; age shown in open/rise alerts and dry-run; digest carries the aged list in Phase 3.**
    - Known: ALERT-01 limits immediate alerts to new high-risk or newly stale; RULE-02 wants a flag with age; success criterion 2 shows "a High-count alert with its age".
    - Recommendation: no immediate alert for age alone; age appears in open/rise alerts and the dry-run report; Phase 3 digest/reminders carry the aged list.
 3. **Which audit types raise immediate High alerts?** RULE-03 names two; ALERT-01 says "new high-risk finding". Recommendation: every audit type with scored findings opens/re-arms (config `high.rise_audit_types` for the two security types controls wording only); operator may narrow with `high.audit_types`.
+   - **RESOLVED (default): every audit type with scored findings opens/re-arms; `high.audit_types: null` tracks all; two security types only change wording.**
 4. **Age origin.** Recommendation: `completed_at` of the first observed High run, labelled "seen by radar since"; a refinement of D-02 that is never later than the first poll.
+   - **RESOLVED 2026-11-17 (operator): origin is `completed_at` of the first observed High run (CONTEXT D-02 amended).**
 5. **K, M and cadence.** Defaults above; finalise after the first real poll and cost measurement.
+   - **RESOLVED (defaults, in config): K=3, M=2, aged after 14 days, poll every 3 hours; finalised from real data in 02-11.**
 6. **Refresh-token behaviour (lifetime, rotation, reuse detection).** Only the first real `auth` and a 7-day soak answer it; plan the verification plan around that.
+   - **RESOLVED (deferred with owner): answered only by the first real `auth` and the 7-day soak, owned by plan 02-11 Tasks 1 and 6.**
 7. **Severity words and zero-finding layout.** `probe` summary must list severity words and any report without a findings heading before the High rule is trusted.
+   - **RESOLVED (deferred with owner): the `probe` summary in plan 02-09/02-11 lists severity words and reports without a findings heading; any parser change goes through a gap-closure plan (ROADMAP SC1 amended).**
 8. **Dependency weight.** `mcp` 2.x brings 28 packages (cryptography, starlette, uvicorn, opentelemetry-api, ...) into a one-shot client. Acceptable? If vetoed, the fallback is a hand-rolled client with its test risk (Alternatives).
+   - **RESOLVED (deferred with owner): operator decision and package check in plan 02-06 Tasks 1 and 2 before `uv add`.**
 9. **Per-project persistent "unknown".** One project permanently unknown is not a failed poll and stays invisible. Add a log line and a `doctor` line in Phase 2; ops-chat alerting for it is not in the requirements.
+   - **RESOLVED (default): log line and a `doctor` line only; no ops-chat message for a project that stays unknown.**
 10. **Where does the radar run, and where does `state/guard-auth.json` live?** Host unknown; this container has neither `systemctl` nor `crontab`. Credentials must live on the production host's persistent disk (not a code-factory worktree).
+   - **RESOLVED (deferred with owner): host and credential location chosen by the operator in plan 02-11 Task 1; plans assume /opt, /etc and /var/lib paths.**
 
 ## Environment Availability
 

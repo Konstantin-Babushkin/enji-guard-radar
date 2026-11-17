@@ -39,7 +39,9 @@ Nothing is "done" until it passes; state the command and the result line.
   explains and prioritises. Its output is parsed into a typed model; invalid
   output falls back to the rule-only message.
 - Secrets (`TELEGRAM_BOT_TOKEN`, Guard credentials) come from env / `.env`, never
-  from git, logs or alert text.
+  from git, logs or alert text. One exception: the rotating Guard refresh token
+  lives in git-ignored `state/guard-auth.json` (mode 0600), since it changes on
+  every refresh.
 - Unverified claim about Guard MCP tools, Telegram API or Claude CLI flags:
   check for real or flag it as `ASSUMPTION:` and ask.
 - New behavior ships with tests and a log line on the important branches.

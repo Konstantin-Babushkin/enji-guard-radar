@@ -17,10 +17,13 @@ The radar reads real Guard data on its own read-only login and, on a timer, aler
 
 ### High-count history (RULE-02, RULE-09)
 - **D-01:** The radar accumulates history in its own state. Each poll records the High count and the Guard `task_id` per `(repo, audit type)`. It does not read older Guard reports to reconstruct history. Age ("days since the first High run") and the M-clean-runs clear rule are computed from this accumulated history, counted by Guard `task_id`, not by radar polls. — **Reversibility:** costly — the state schema (schema 1 already has an optional `ConditionRecord.count`) and every rule that reads history depend on it; changing to backfill later needs a state migration.
-- **D-02:** Consequence accepted: age starts at the first poll, so a long-standing High finding shows as young. Keep that visible in the alert wording or docs rather than hiding it. Backfill from older reports is a possible later improvement (see Deferred).
+- **D-02 (amended 2026-11-17):** Age starts at the `completed_at` of the first High run the radar observed for the series (not the poll time), shown as "Seen by the radar since". This is never later than the first poll. Consequence accepted: a long-standing High finding still shows as young, because the radar only sees runs from its first poll on. Keep that visible in the alert wording or docs rather than hiding it. Backfill from older reports is a possible later improvement (see Deferred).
+
+- **D-06 (2026-11-17):** A rise re-arms per run: any increase in the High count between two consecutive completed runs of a `(repo, audit type)` re-arms and sends the alert, so 3 -> 2 -> 3 alerts again. This follows RULE-03 and STATE-07 literally. RULE-09's M-clean-runs debounce handles flapping between 0 and N.
 
 ### Radar login failure
 - **D-03:** If the radar's Guard token cannot be refreshed unattended (expired, revoked, dead refresh token), treat it like any failed Guard fetch: the poll is "unknown" and never creates or resolves findings. After K consecutive failed polls the ops chat gets one message saying the login needs re-auth (naming the `auth` command, never a token or code). One recovery message follows after re-auth (OPS-02).
+- **D-07 (2026-11-17):** The rotating Guard refresh token is stored in git-ignored `state/guard-auth.json` (mode 0600), not in `.env`, because it changes on every refresh. AGENTS.md carries this one exception; all other secrets stay in env / `.env`.
 - **D-04:** The radar requests read scopes only. It has its own login, separate from Claude Code's, created once by the operator. OAuth codes, tokens and callback URLs are never pasted into chat or logs.
 
 ### Group visibility of security findings
