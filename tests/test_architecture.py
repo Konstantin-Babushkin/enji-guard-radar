@@ -12,10 +12,24 @@ SRC = Path(__file__).resolve().parents[1] / "src" / PACKAGE
 
 # Modules that may do I/O. telegram, state_store and settings arrive in plans 01-04 and 01-06.
 # env_file reads a file, so it is a shell module even though the plan's list omits it.
-SHELL_MODULES = {"cli", "env_file", "fixture_source", "telegram", "state_store", "settings"}
+SHELL_MODULES = {
+    "cli",
+    "env_file",
+    "fixture_source",
+    "telegram",
+    "state_store",
+    "settings",
+    "guard_credentials",
+    # cli_auth and mcp_guard arrive in plans 02-05 and 02-06; listing them early keeps those
+    # two plans from both editing this file. A name with no module has no effect on the checks.
+    "cli_auth",
+    "mcp_guard",
+}
 # `__init__` only imports `cli` lazily inside main(), so the package import stays light.
 EXEMPT_MODULES = {"__init__"}
 FORBIDDEN_CORE_IMPORTS = {"socket", "urllib", "http", "fcntl", "subprocess", "ssl", "time"}
+# Pure string work: URL building and parsing do no I/O, so core may use exactly this one.
+ALLOWED_CORE_IMPORTS = {"urllib.parse"}
 CLOCK_CALLS = {"now", "utcnow", "today"}
 FILE_IO_CALLS = {
     "read_text",
@@ -61,16 +75,34 @@ def called_names(tree: ast.Module) -> Iterator[str]:
                 yield node.func.attr
 
 
+def forbidden_imports(tree: ast.Module) -> Iterator[str]:
+    """Imports a core module may not have: I/O libraries and shell modules."""
+    for imported in imported_names(tree):
+        if any(imported == ok or imported.startswith(f"{ok}.") for ok in ALLOWED_CORE_IMPORTS):
+            continue
+        parts = imported.split(".")
+        if parts[0] in FORBIDDEN_CORE_IMPORTS:
+            yield imported
+        elif parts[0] == PACKAGE and len(parts) > 1 and parts[1] in SHELL_MODULES:
+            yield f"shell module {imported}"
+
+
 def test_core_modules_do_not_import_io_or_shell_modules() -> None:
-    violations = []
-    for name, tree in core_modules():
-        for imported in imported_names(tree):
-            parts = imported.split(".")
-            if parts[0] in FORBIDDEN_CORE_IMPORTS:
-                violations.append(f"{name} imports {imported}")
-            if parts[0] == PACKAGE and len(parts) > 1 and parts[1] in SHELL_MODULES:
-                violations.append(f"{name} imports shell module {imported}")
+    violations = [
+        f"{name} imports {imported}"
+        for name, tree in core_modules()
+        for imported in forbidden_imports(tree)
+    ]
     assert violations == []
+
+
+def test_only_urllib_parse_is_allowed_in_core() -> None:
+    request = ast.parse("import urllib.request")
+    parse = ast.parse("from urllib.parse import urlencode")
+    bare = ast.parse("import urllib")
+    assert "urllib.request" in set(forbidden_imports(request))
+    assert set(forbidden_imports(bare)) == {"urllib"}
+    assert list(forbidden_imports(parse)) == []
 
 
 def test_core_modules_do_not_read_the_system_clock() -> None:

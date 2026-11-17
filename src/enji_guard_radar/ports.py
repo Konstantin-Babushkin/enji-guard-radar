@@ -10,8 +10,42 @@ from pydantic import BaseModel, ConfigDict
 from enji_guard_radar.model import OutboundMessage
 
 
+class GuardFailure(StrEnum):
+    """Why a Guard call failed: login problem, Guard or network trouble, or a bad answer."""
+
+    AUTH = "auth"
+    UNAVAILABLE = "unavailable"
+    DATA = "data"
+
+
 class GuardCallError(Exception):
     """Message is sanitized text written by the adapter: never a URL, header or credential."""
+
+    def __init__(self, message: str, *, cause: GuardFailure = GuardFailure.UNAVAILABLE) -> None:
+        super().__init__(message)
+        self.cause = cause
+
+
+class AuthFailureKind(StrEnum):
+    NOT_AUTHENTICATED = "not_authenticated"
+    AUTH_EXPIRED = "auth_expired"
+    AUTH_CLIENT_GONE = "auth_client_gone"
+    AUTH_REJECTED = "auth_rejected"
+    AUTH_FORBIDDEN = "auth_forbidden"
+
+
+class GuardAuthError(GuardCallError):
+    """The Guard login cannot be used; the operator must run `enji-guard-radar auth`."""
+
+    def __init__(self, kind: AuthFailureKind, message: str) -> None:
+        super().__init__(message, cause=GuardFailure.AUTH)
+        self.kind = kind
+
+
+class AccessTokenSource(Protocol):
+    def access_token(self, *, force_refresh: bool = False) -> str:
+        """Return a bearer token. Raise GuardAuthError or GuardCallError, never leak a secret."""
+        ...
 
 
 class GuardTools(Protocol):
