@@ -2,18 +2,18 @@
 gsd_state_version: "1.0"
 current_phase: 1
 current_phase_name: Working Pipeline on Fixtures
-status: ready_to_execute
-stopped_at: Phase 1 planned (7 plans, 4 waves); plan check overridden by operator; next is execution
-last_updated: "2026-11-16T12:43:41.589Z"
-last_activity: 2026-11-16
-last_activity_desc: Phase 1 planned (7 plans in 4 waves, 17/17 requirements covered)
-state_head: b1c1cd372a38d379c4192f04ab13fd49285c1839
+status: phase_complete
+stopped_at: Phase 1 complete (7/7 plans merged, live Telegram check passed); next is Phase 2 planning
+last_updated: "2026-11-17T10:00:00.000Z"
+last_activity: 2026-11-17
+last_activity_desc: Phase 1 live check on fixtures passed (baseline, one alert delivered, identical rerun silent); make verify 420 passed
+state_head: 23ce702
 progress:
   total_phases: 4
-  completed_phases: 0
+  completed_phases: 1
   total_plans: 7
-  completed_plans: 0
-  percent: 0
+  completed_plans: 7
+  percent: 25
 ---
 
 # Project State
@@ -27,12 +27,12 @@ See: .planning/PROJECT.md (updated 2026-11-16)
 
 ## Current Position
 
-Phase: 1 (Working Pipeline on Fixtures) — READY TO EXECUTE
-Plan: 0 of 7 in current phase
-Status: Ready to execute
-Last activity: 2026-11-16 - Phase 1 planned (7 plans in 4 waves, 17/17 requirements covered)
+Phase: 1 (Working Pipeline on Fixtures) — COMPLETE
+Plan: 7 of 7 in current phase
+Status: Complete; Phase 2 is next (gated on the radar's read-only Guard login)
+Last activity: 2026-11-17 - live check on fixtures: first run baselined, second run delivered one escaped alert to the test chat, identical rerun sent nothing
 
-Progress: [░░░░░░░░░░] 0%
+Progress: [██░░░░░░░░] 25%
 
 ## Performance Metrics
 
@@ -86,6 +86,6 @@ Items acknowledged and deferred at milestone close, most recent first:
 
 ## Session Continuity
 
-Last session: 2026-11-16
-Stopped at: Phase 1 planned (7 plans, 4 waves); next is execution
+Last session: 2026-11-17
+Stopped at: Phase 1 complete; next is Phase 2 planning. Phase 1 open points above (boundary wording, zero-project listing, never-ran immediate alert, STATE-01 count part) are carried forward, not closed.
 Resume file: .planning/HANDOVER.md

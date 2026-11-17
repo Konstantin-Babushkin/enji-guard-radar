@@ -32,7 +32,7 @@ Scope: 41 v1 requirements in 4 phases (granularity: coarse). RULE-04 was dropped
 
 Decimal phases appear between their surrounding integers in numeric order.
 
-- [ ] **Phase 1: Working Pipeline on Fixtures** - Models, parser, stale rule, durable state and dedup, Telegram send and dry-run, all runnable on `fixtures/guard/`
+- [x] **Phase 1: Working Pipeline on Fixtures** - Models, parser, stale rule, durable state and dedup, Telegram send and dry-run, all runnable on `fixtures/guard/`
 - [ ] **Phase 2: Guard Connection and Core Alerts** - Real read-only Guard adapter, `probe`, High-count rules, timer, `doctor` and ops-chat alert (gated on Guard access)
 - [ ] **Phase 3: Remaining Rules and the Digest** - AI readiness, tests, tooling and recurring rules, reminders and the always-sent weekly digest
 - [ ] **Phase 4: Claude Triage** - Summary, probable cause and priority from Claude through a swappable CLI/T3 boundary, with rule-only fallback
@@ -53,19 +53,19 @@ Decimal phases appear between their surrounding integers in numeric order.
 
 Plans:
 **Wave 1**
-- [ ] 01-01-PLAN.md — Wave 1: synthetic six-project fixture scenario and call manifest, with a standard-library consistency test
+- [x] 01-01-PLAN.md — Wave 1: synthetic six-project fixture scenario and call manifest, with a standard-library consistency test
 
 **Wave 2** *(blocked on Wave 1 completion)*
-- [ ] 01-02-PLAN.md — Wave 2: tracer skeleton, dry-run on fixtures end to end (models, ports, Guard reader with run-paging bound, fixture source, stale rule, render, pipeline, CLI, architecture guard)
+- [x] 01-02-PLAN.md — Wave 2: tracer skeleton, dry-run on fixtures end to end (models, ports, Guard reader with run-paging bound, fixture source, stale rule, render, pipeline, CLI, architecture guard)
 
 **Wave 3** *(blocked on Wave 2 completion)*
-- [ ] 01-03-PLAN.md — Wave 3: strict Guard parsing, Markdown reports page by page, unknown on failed/empty/partial fetch (zero items stays a real answer), read-only fixture source
-- [ ] 01-04-PLAN.md — Wave 3: Telegram sender with error classes, secret gate, token redaction, secrets from env/.env
-- [ ] 01-05-PLAN.md — Wave 3: strict config with pause/exclude and per-project N, stale boundaries, concise escaped alerts with collapse and split
-- [ ] 01-06-PLAN.md — Wave 3: ledger (dedup, baseline, retry, freeze, optional count in schema 1) and atomic file state with backup, corrupt halt and lock
+- [x] 01-03-PLAN.md — Wave 3: strict Guard parsing, Markdown reports page by page, unknown on failed/empty/partial fetch (zero items stays a real answer), read-only fixture source
+- [x] 01-04-PLAN.md — Wave 3: Telegram sender with error classes, secret gate, token redaction, secrets from env/.env
+- [x] 01-05-PLAN.md — Wave 3: strict config with pause/exclude and per-project N, stale boundaries, concise escaped alerts with collapse and split
+- [x] 01-06-PLAN.md — Wave 3: ledger (dedup, baseline, retry, freeze, optional count in schema 1) and atomic file state with backup, corrupt halt and lock
 
 **Wave 4** *(blocked on Wave 3 completion)*
-- [ ] 01-07-PLAN.md — Wave 4: live run wiring, failure paths, dry-run with state, and the human live check against a private test chat
+- [x] 01-07-PLAN.md — Wave 4: live run wiring, failure paths, dry-run with state, and the human live check against a private test chat
 
 ### Phase 2: Guard Connection and Core Alerts
 **Goal**: The radar reads real Guard data on its own read-only login and, on a timer, alerts the group about new or worsening High findings and newly stale projects, and the operator hears about it when the radar itself stops working.
@@ -130,7 +130,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 (Phase 4 may be planned in 
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. Working Pipeline on Fixtures | 0/7 | Planned | - |
+| 1. Working Pipeline on Fixtures | 7/7 | Complete | 2026-11-17 |
 | 2. Guard Connection and Core Alerts | 0/TBD | Not started | - |
 | 3. Remaining Rules and the Digest | 0/TBD | Not started | - |
 | 4. Claude Triage | 0/TBD | Not started | - |
