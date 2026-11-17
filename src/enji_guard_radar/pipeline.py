@@ -37,6 +37,7 @@ class Deps:
 class ProjectStatus(StrEnum):
     EVALUATED = "evaluated"
     UNKNOWN = "unknown"
+    PAUSED = "paused"
 
 
 class ProjectResult(BaseModel):
@@ -93,9 +94,30 @@ def run_once(deps: Deps) -> RunReport:
             not_delivered=0,
         )
 
+    listed_ids = {project.id for project in listing.projects}
+    for configured_id in deps.config.projects:
+        if configured_id not in listed_ids:
+            logger.warning("config names project id %s, which Guard did not list", configured_id)
+
     results: list[ProjectResult] = []
     alerts: list[Alert] = []
     for project in sorted(listing.projects, key=lambda p: (p.name.casefold(), p.id)):
+        mode = deps.config.mode_for(project.id)
+        if mode == "excluded":
+            logger.debug("project %s excluded in config", project.id)
+            continue
+        if mode == "paused":
+            logger.info("project %s paused in config; not checked", project.id)
+            results.append(
+                ProjectResult(
+                    project_id=project.id,
+                    project_name=project.name,
+                    status=ProjectStatus.PAUSED,
+                    stale=None,
+                    note="paused in config",
+                )
+            )
+            continue
         data = fetch_project(deps.guard, project)
         threshold = deps.config.thresholds_for(project.id).stale_after_days
         stale = evaluate_stale(data, threshold, now)

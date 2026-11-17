@@ -4,6 +4,7 @@ Pure: the shell reads the file and passes the text in (AGENTS.md).
 """
 
 import logging
+from typing import Literal
 
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
@@ -21,10 +22,14 @@ class Thresholds(BaseModel):
     stale_after_days: int = Field(default=14, ge=1)
 
 
+ProjectMode = Literal["active", "paused", "excluded"]
+
+
 class ProjectSettings(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     stale_after_days: int | None = Field(default=None, ge=1)
+    mode: ProjectMode = "active"
 
 
 class RadarConfig(BaseModel):
@@ -32,6 +37,11 @@ class RadarConfig(BaseModel):
 
     defaults: Thresholds = Field(default_factory=Thresholds)
     projects: dict[str, ProjectSettings] = Field(default_factory=dict)
+
+    def mode_for(self, project_id: str) -> ProjectMode:
+        """SRC-05: paused and excluded projects are never read from Guard."""
+        entry = self.projects.get(project_id)
+        return "active" if entry is None else entry.mode
 
     def thresholds_for(self, project_id: str) -> Thresholds:
         """The project override merged over the defaults."""
