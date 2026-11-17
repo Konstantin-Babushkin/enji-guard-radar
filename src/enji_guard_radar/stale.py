@@ -32,6 +32,8 @@ class StaleResult(BaseModel):
     newest_run_at: AwareDatetime | None
     repo_count: int
     reason: str | None
+    # The newest run is later than `now` (clock skew): judged fresh, the caller warns.
+    future_run: bool = False
 
 
 def evaluate_stale(data: ProjectData, threshold_days: int, now: datetime) -> StaleResult:
@@ -84,6 +86,7 @@ def evaluate_stale(data: ProjectData, threshold_days: int, now: datetime) -> Sta
         newest_run_at=newest,
         repo_count=repo_count,
         reason=None,
+        future_run=newest > now,
     )
 
 

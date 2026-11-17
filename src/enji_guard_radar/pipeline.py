@@ -37,6 +37,7 @@ class Deps:
 class ProjectStatus(StrEnum):
     EVALUATED = "evaluated"
     UNKNOWN = "unknown"
+    PAUSED = "paused"
 
 
 class ProjectResult(BaseModel):
@@ -93,12 +94,39 @@ def run_once(deps: Deps) -> RunReport:
             not_delivered=0,
         )
 
+    listed_ids = {project.id for project in listing.projects}
+    for configured_id in deps.config.projects:
+        if configured_id not in listed_ids:
+            logger.warning("config names project id %s, which Guard did not list", configured_id)
+
     results: list[ProjectResult] = []
     alerts: list[Alert] = []
     for project in sorted(listing.projects, key=lambda p: (p.name.casefold(), p.id)):
+        mode = deps.config.mode_for(project.id)
+        if mode == "excluded":
+            logger.debug("project %s excluded in config", project.id)
+            continue
+        if mode == "paused":
+            logger.info("project %s paused in config; not checked", project.id)
+            results.append(
+                ProjectResult(
+                    project_id=project.id,
+                    project_name=project.name,
+                    status=ProjectStatus.PAUSED,
+                    stale=None,
+                    note="paused in config",
+                )
+            )
+            continue
         data = fetch_project(deps.guard, project)
         threshold = deps.config.thresholds_for(project.id).stale_after_days
         stale = evaluate_stale(data, threshold, now)
+        if stale.future_run:
+            logger.warning(
+                "newest Guard run of project %s is in the future (%s); treated as fresh",
+                project.id,
+                stale.newest_run_at,
+            )
         if isinstance(data, ProjectUnknown):
             status, note = ProjectStatus.UNKNOWN, f"Guard data unavailable ({data.reason})"
         else:
@@ -116,7 +144,7 @@ def run_once(deps: Deps) -> RunReport:
         if alert is not None:
             alerts.append(alert)
 
-    messages = render_messages(alerts)
+    messages = render_messages(alerts, collapse_above=deps.config.alerts.collapse_above)
     delivered = printed = not_delivered = 0
     for message in messages:
         outcome = deps.notifier.send(message)

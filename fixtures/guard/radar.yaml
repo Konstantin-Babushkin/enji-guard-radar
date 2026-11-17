@@ -1,0 +1,6 @@
+# Config for the synthetic fixture scenario (fixtures/guard). Not a production config.
+projects:
+  "00000000-0000-4000-8000-00000000a005":
+    mode: paused
+  "00000000-0000-4000-8000-00000000a006":
+    mode: excluded

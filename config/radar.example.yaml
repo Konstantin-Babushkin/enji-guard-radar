@@ -1,0 +1,24 @@
+# enji-guard-radar example config: every key with its default.
+# Unknown keys, duplicated keys and out-of-range values stop the run (exit 2).
+# Secrets (TELEGRAM_BOT_TOKEN, Guard credentials) never go in this file:
+# they come from the environment or .env.
+
+defaults:
+  # A project is stale when its newest completed Guard run is at least this many days old (1..365).
+  stale_after_days: 14
+
+alerts:
+  # More alerts than this are sent as one summary message (1..50).
+  collapse_above: 3
+
+# Per-project settings, keyed by Guard project id. Override beats defaults.
+# mode: active (default) | paused (listed as "not checked", no Guard calls) | excluded (ignored).
+#
+# projects:
+#   "00000000-0000-4000-8000-00000000a002":
+#     stale_after_days: 30
+#   "00000000-0000-4000-8000-00000000a005":
+#     mode: paused
+#   "00000000-0000-4000-8000-00000000a006":
+#     mode: excluded
+projects: {}
