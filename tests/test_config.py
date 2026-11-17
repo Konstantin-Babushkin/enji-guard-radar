@@ -137,3 +137,82 @@ def test_read_config_empty_file_gives_defaults(tmp_path: Path) -> None:
 def test_read_config_missing_file_is_an_error(tmp_path: Path) -> None:
     with pytest.raises(ConfigError, match="config file not found"):
         read_config(tmp_path / "missing.yaml")
+
+
+# --- high section and high_aged_after_days ---
+
+
+def test_high_defaults() -> None:
+    config = RadarConfig()
+    assert config.high.clear_after_clean_runs == 2
+    assert config.high.audit_types is None
+    assert config.thresholds_for("any").high_aged_after_days == 14
+
+
+@pytest.mark.parametrize("value", [1, 2, 10])
+def test_high_clear_after_clean_runs_accepts_range(value: int) -> None:
+    assert parse(f"high: {{clear_after_clean_runs: {value}}}").high.clear_after_clean_runs == value
+
+
+@pytest.mark.parametrize("value", ["0", "11", "true", "'2'", "2.5"])
+def test_high_clear_after_clean_runs_rejects(value: str) -> None:
+    with pytest.raises(ConfigError, match=r"c\.yaml: high\.clear_after_clean_runs"):
+        parse_config(f"high: {{clear_after_clean_runs: {value}}}", source="c.yaml")
+
+
+@pytest.mark.parametrize("value", [1, 14, 365])
+def test_high_aged_after_days_accepts_range_default_and_project(value: int) -> None:
+    config = parse(
+        f"defaults: {{high_aged_after_days: {value}}}\n"
+        f"projects: {{p1: {{high_aged_after_days: {value}}}}}\n"
+    )
+    assert config.defaults.high_aged_after_days == value
+    assert config.thresholds_for("p1").high_aged_after_days == value
+
+
+@pytest.mark.parametrize("value", ["0", "366", "true", "'14'"])
+def test_high_aged_after_days_rejects(value: str) -> None:
+    with pytest.raises(ConfigError, match=r"defaults\.high_aged_after_days"):
+        parse_config(f"defaults: {{high_aged_after_days: {value}}}", source="c.yaml")
+    with pytest.raises(ConfigError, match=r"projects\.p1\.high_aged_after_days"):
+        parse_config(f"projects: {{p1: {{high_aged_after_days: {value}}}}}", source="c.yaml")
+
+
+@pytest.mark.parametrize(
+    "value",
+    ["null", "[audit.security]", "[audit.security, audit.public-api-access-safety]"],
+)
+def test_high_audit_types_accepts(value: str) -> None:
+    config = parse(f"high: {{audit_types: {value}}}")
+    expected = None if value == "null" else tuple(value.strip("[]").split(", "))
+    assert config.high.audit_types == expected
+
+
+@pytest.mark.parametrize(
+    "value",
+    ["[]", "[security]", "[audit.Security]", "[audit.security, audit.security]", "audit.security"],
+)
+def test_high_audit_types_rejects(value: str) -> None:
+    with pytest.raises(ConfigError, match=r"c\.yaml: high\.audit_types"):
+        parse_config(f"high: {{audit_types: {value}}}", source="c.yaml")
+
+
+def test_high_unknown_key_names_file_and_key() -> None:
+    with pytest.raises(ConfigError, match=r"c\.yaml: high\.rearm"):
+        parse_config("high: {rearm: 1}", source="c.yaml")
+
+
+def test_high_aged_override_is_independent_of_stale_override() -> None:
+    config = parse(
+        "defaults: {high_aged_after_days: 30, stale_after_days: 7}\n"
+        "projects: {p1: {high_aged_after_days: 3}, p2: {stale_after_days: 5}}\n"
+    )
+    got = [
+        (
+            p,
+            config.thresholds_for(p).stale_after_days,
+            config.thresholds_for(p).high_aged_after_days,
+        )
+        for p in ("p1", "p2", "p3")
+    ]
+    assert got == [("p1", 7, 3), ("p2", 5, 30), ("p3", 7, 30)]

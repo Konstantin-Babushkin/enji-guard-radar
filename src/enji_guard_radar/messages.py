@@ -19,6 +19,7 @@ DEFAULT_MAX_CHARS = 4000
 MIN_MAX_CHARS = 1000
 MAX_NAME_CHARS = 80
 UNNAMED_PROJECT = "(unnamed project)"
+LONG_STANDING_PREFIX = "Long-standing: "
 
 
 def escape(text: str) -> str:
@@ -50,6 +51,46 @@ def _days(count: int) -> str:
     return "1 day" if count == 1 else f"{count} days"
 
 
+def _high_where(alert: Alert) -> str:
+    """The shared "<audit type> (<repo>)" part; a High alert is meaningless without its repo."""
+    if alert.repo_name is None:
+        message = "a High alert needs repo_name"
+        raise ValueError(message)
+    return f"{escape(alert.key.action_key)} ({escape(clean_name(alert.repo_name))})"
+
+
+def _high_count(alert: Alert) -> int:
+    if alert.count is None:
+        message = "a High alert needs count"
+        raise ValueError(message)
+    return alert.count
+
+
+def _is_rise(alert: Alert) -> bool:
+    return alert.previous_count is not None and _high_count(alert) > alert.previous_count
+
+
+def _high_findings(count: int) -> str:
+    return "1 High finding" if count == 1 else f"{count} High findings"
+
+
+def _render_high(alert: Alert, name: str, severity: str) -> list[str]:
+    if alert.seen_since is None or alert.age_days is None:
+        message = "a High alert needs seen_since and age_days"
+        raise ValueError(message)
+    where = _high_where(alert)
+    count = _high_count(alert)
+    if _is_rise(alert):
+        what = f"High findings rose from {alert.previous_count} to {count} in {where}."
+    else:
+        what = f"{_high_findings(count)} in {where}."
+    since = alert.seen_since.astimezone(UTC).date().isoformat()
+    seen = f"Seen by the radar since {since} ({_days(alert.age_days)})."
+    if alert.aged:
+        seen = LONG_STANDING_PREFIX + seen[0].lower() + seen[1:]
+    return [f"High findings: <b>{name}</b>", what, seen, severity]
+
+
 def render_alert(alert: Alert) -> str:
     name = escape(clean_name(alert.project_name))
     severity = f"Severity: {alert.severity.value}."
@@ -63,7 +104,7 @@ def render_alert(alert: Alert) -> str:
             f"No completed Guard run for {_days(alert.age_days)} (last: {last}).",
             severity,
         ]
-    else:
+    elif alert.kind is AlertKind.NEVER_RAN:
         if alert.repo_count == 0:
             detail = "It has no repositories in Guard."
         elif alert.repo_count == 1:
@@ -71,6 +112,11 @@ def render_alert(alert: Alert) -> str:
         else:
             detail = f"No completed Guard run found in its {alert.repo_count} repositories."
         lines = [f"No Guard runs: <b>{name}</b>", detail, severity]
+    elif alert.kind is AlertKind.HIGH_FINDINGS:
+        lines = _render_high(alert, name, severity)
+    else:  # a future AlertKind must get its own text, never fall into another one's
+        message = f"unsupported alert kind {alert.kind}"  # type: ignore[unreachable]
+        raise ValueError(message)
     return "\n".join(lines)
 
 
@@ -82,6 +128,14 @@ def render_summary_item(alert: Alert) -> str:
             message = "a stale alert needs age_days"
             raise ValueError(message)
         return f"- <b>{name}</b>: no completed Guard run for {_days(alert.age_days)} ({severity})"
+    if alert.kind is AlertKind.HIGH_FINDINGS:
+        where = _high_where(alert)
+        count = _high_count(alert)
+        if _is_rise(alert):
+            what = f"High rose from {alert.previous_count} to {count} in {where}"
+        else:
+            what = f"{count} High in {where}"
+        return f"- <b>{name}</b>: {what} ({severity})"
     return f"- <b>{name}</b>: no completed Guard run found ({severity})"
 
 

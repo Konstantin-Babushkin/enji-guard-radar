@@ -4,11 +4,12 @@ Pure: the shell reads the file and passes the text in (AGENTS.md).
 """
 
 import logging
+import re
 from collections.abc import Hashable
 from typing import Any, Literal
 
 import yaml
-from pydantic import BaseModel, ConfigDict, Field, StrictInt, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, StrictInt, ValidationError, field_validator
 
 logger = logging.getLogger(__name__)
 
@@ -19,14 +20,23 @@ class ConfigError(Exception):
 
 STALE_DAYS_MIN = 1
 STALE_DAYS_MAX = 365
+HIGH_AGED_DAYS_MIN = 1
+HIGH_AGED_DAYS_MAX = 365
+CLEAR_AFTER_MIN = 1
+CLEAR_AFTER_MAX = 10
 COLLAPSE_MIN = 1
 COLLAPSE_MAX = 50
+AUDIT_TYPE_PATTERN = re.compile(r"audit\.[a-z0-9-]+")
 
 
 class Thresholds(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     stale_after_days: StrictInt = Field(default=14, ge=STALE_DAYS_MIN, le=STALE_DAYS_MAX)
+    # A High series open for longer than this many days is flagged long-standing (RULE-02).
+    high_aged_after_days: StrictInt = Field(
+        default=14, ge=HIGH_AGED_DAYS_MIN, le=HIGH_AGED_DAYS_MAX
+    )
 
 
 ProjectMode = Literal["active", "paused", "excluded"]
@@ -36,7 +46,35 @@ class ProjectSettings(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     stale_after_days: StrictInt | None = Field(default=None, ge=STALE_DAYS_MIN, le=STALE_DAYS_MAX)
+    high_aged_after_days: StrictInt | None = Field(
+        default=None, ge=HIGH_AGED_DAYS_MIN, le=HIGH_AGED_DAYS_MAX
+    )
     mode: ProjectMode = "active"
+
+
+class HighSettings(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    # A High series clears only after this many consecutive completed runs with zero High.
+    clear_after_clean_runs: StrictInt = Field(default=2, ge=CLEAR_AFTER_MIN, le=CLEAR_AFTER_MAX)
+    # None tracks every audit type with findings; a list narrows to exactly those types.
+    audit_types: tuple[str, ...] | None = None
+
+    @field_validator("audit_types")
+    @classmethod
+    def _audit_types_well_formed(cls, value: tuple[str, ...] | None) -> tuple[str, ...] | None:
+        if value is None:
+            return None
+        if not value:
+            message = "must be null or a non-empty list"
+            raise ValueError(message)
+        if any(AUDIT_TYPE_PATTERN.fullmatch(item) is None for item in value):
+            message = "every audit type must look like audit.<name> (lowercase, digits, dashes)"
+            raise ValueError(message)
+        if len(set(value)) != len(value):
+            message = "audit types must not repeat"
+            raise ValueError(message)
+        return value
 
 
 class AlertSettings(BaseModel):
@@ -50,6 +88,7 @@ class RadarConfig(BaseModel):
 
     defaults: Thresholds = Field(default_factory=Thresholds)
     alerts: AlertSettings = Field(default_factory=AlertSettings)
+    high: HighSettings = Field(default_factory=HighSettings)
     projects: dict[str, ProjectSettings] = Field(default_factory=dict)
 
     def mode_for(self, project_id: str) -> ProjectMode:
@@ -60,9 +99,17 @@ class RadarConfig(BaseModel):
     def thresholds_for(self, project_id: str) -> Thresholds:
         """The project override merged over the defaults."""
         override = self.projects.get(project_id)
-        if override is None or override.stale_after_days is None:
+        if override is None:
             return self.defaults
-        return self.defaults.model_copy(update={"stale_after_days": override.stale_after_days})
+        update = {
+            name: value
+            for name, value in (
+                ("stale_after_days", override.stale_after_days),
+                ("high_aged_after_days", override.high_aged_after_days),
+            )
+            if value is not None
+        }
+        return self.defaults.model_copy(update=update) if update else self.defaults
 
 
 class UniqueKeyLoader(yaml.SafeLoader):

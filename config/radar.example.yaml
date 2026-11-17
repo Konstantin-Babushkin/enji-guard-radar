@@ -6,10 +6,23 @@
 defaults:
   # A project is stale when its newest completed Guard run is at least this many days old (1..365).
   stale_after_days: 14
+  # A (repo, audit type) with High findings for longer than this many days is flagged
+  # long-standing (1..365). Age counts from the completed_at of the first High run the radar
+  # saw, shown as "Seen by the radar since <date>".
+  high_aged_after_days: 14
 
 alerts:
   # More alerts than this are sent as one summary message (1..50).
   collapse_above: 3
+
+high:
+  # A High series clears only after this many consecutive completed runs with zero High
+  # findings (1..10).
+  clear_after_clean_runs: 2
+  # Audit types whose High findings are tracked. null tracks every audit type with findings;
+  # audit.recon never has any. A list narrows to exactly those types.
+  # audit_types: [audit.security, audit.public-api-access-safety]
+  audit_types: null
 
 # Per-project settings, keyed by Guard project id. Override beats defaults.
 # mode: active (default) | paused (listed as "not checked", no Guard calls) | excluded (ignored).
@@ -17,6 +30,7 @@ alerts:
 # projects:
 #   "00000000-0000-4000-8000-00000000a002":
 #     stale_after_days: 30
+#     high_aged_after_days: 30
 #   "00000000-0000-4000-8000-00000000a005":
 #     mode: paused
 #   "00000000-0000-4000-8000-00000000a006":
