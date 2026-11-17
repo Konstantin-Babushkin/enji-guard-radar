@@ -42,6 +42,17 @@ AUTH_FAILURE_TEXT: dict[AuthFailureKind, str] = {
     ),
 }
 
+RFC6749_ERROR_CODES = frozenset(
+    {
+        "invalid_request",
+        "invalid_client",
+        "invalid_grant",
+        "unauthorized_client",
+        "unsupported_grant_type",
+        "invalid_scope",
+    }
+)
+
 HTTP_OK = 200
 HTTP_BAD_REQUEST = 400
 HTTP_UNAUTHORIZED = 401
@@ -181,7 +192,41 @@ def classify_token_response(status: int, body: bytes, now: datetime) -> TokenOut
     """Total over (status, body): anything that is not a clear success is a retry for now."""
     if status == HTTP_OK:
         return _parse_success(body, now.astimezone(UTC))
+    if status in (HTTP_BAD_REQUEST, HTTP_UNAUTHORIZED):
+        return _parse_error(status, body)
     return Transient(status=status)
+
+
+def _parse_error(status: int, body: bytes) -> TokenOutcome:
+    """RFC 6749 section 5.2 error codes; anything unknown or unparseable is a retry."""
+    try:
+        raw = json.loads(body)
+    except ValueError:
+        return Transient(status=status)
+    code = raw.get("error") if isinstance(raw, dict) else None
+    if code == "invalid_grant":
+        return AuthRejected(kind=AuthFailureKind.AUTH_EXPIRED, error_code=code)
+    if code == "invalid_client":
+        return AuthRejected(kind=AuthFailureKind.AUTH_CLIENT_GONE, error_code=code)
+    if isinstance(code, str) and code in RFC6749_ERROR_CODES:
+        return AuthRejected(kind=AuthFailureKind.AUTH_REJECTED, error_code=code)
+    return Transient(status=status)
+
+
+def scope_ok(scope: str | None) -> bool:
+    """Only the read scopes may be granted. None means the server did not narrow the request."""
+    if scope is None:
+        return True
+    granted = set(scope.split())
+    return granted <= set(READ_SCOPES) and granted.isdisjoint(FORBIDDEN_SCOPES)
+
+
+def auth_failure_text(kind: AuthFailureKind, error_code: str | None = None) -> str:
+    """Fixed operator text; only a known RFC 6749 error code may be added, nothing else."""
+    text = AUTH_FAILURE_TEXT[kind]
+    if kind is AuthFailureKind.AUTH_REJECTED and error_code in RFC6749_ERROR_CODES:
+        return text.replace(":", f" ({error_code}):", 1)
+    return text
 
 
 def _parse_success(body: bytes, now: datetime) -> TokenOutcome:
@@ -193,6 +238,11 @@ def _parse_success(body: bytes, now: datetime) -> TokenOutcome:
         return Transient(status=HTTP_OK)
     access = raw.get("access_token")
     if not isinstance(access, str) or not access:
+        return Transient(status=HTTP_OK)
+    token_type = raw.get("token_type")
+    if token_type is not None and not (
+        isinstance(token_type, str) and token_type.lower() == "bearer"
+    ):
         return Transient(status=HTTP_OK)
     expires_in = raw.get("expires_in")
     if expires_in is None:
