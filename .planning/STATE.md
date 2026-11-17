@@ -3,11 +3,11 @@ gsd_state_version: "1.0"
 current_phase: 1
 current_phase_name: Working Pipeline on Fixtures
 status: phase_complete
-stopped_at: Phase 1 complete (7/7 plans merged, live Telegram check passed); next is Phase 2 planning
-last_updated: "2026-11-17T10:00:00.000Z"
+stopped_at: Phase 2 context gathered
+last_updated: "2026-11-17T10:01:11.845Z"
 last_activity: 2026-11-17
 last_activity_desc: Phase 1 live check on fixtures passed (baseline, one alert delivered, identical rerun silent); make verify 420 passed
-state_head: 23ce702
+state_head: de8bf6f4105d9d5f9e41c9f87ce6c9f46eadfe04
 progress:
   total_phases: 4
   completed_phases: 1
@@ -32,7 +32,7 @@ Plan: 7 of 7 in current phase
 Status: Complete; Phase 2 is next (gated on the radar's read-only Guard login)
 Last activity: 2026-11-17 - live check on fixtures: first run baselined, second run delivered one escaped alert to the test chat, identical rerun sent nothing
 
-Progress: [██░░░░░░░░] 25%
+Progress: [███░░░░░░░] 25%
 
 ## Performance Metrics
 
@@ -86,6 +86,6 @@ Items acknowledged and deferred at milestone close, most recent first:
 
 ## Session Continuity
 
-Last session: 2026-11-17
-Stopped at: Phase 1 complete; next is Phase 2 planning. Phase 1 open points above (boundary wording, zero-project listing, never-ran immediate alert, STATE-01 count part) are carried forward, not closed.
-Resume file: .planning/HANDOVER.md
+Last session: 2026-11-17T10:01:11.811Z
+Stopped at: Phase 2 context gathered
+Resume file: .planning/phases/02-guard-connection-and-core-alerts/02-CONTEXT.md
