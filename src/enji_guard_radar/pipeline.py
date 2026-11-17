@@ -144,7 +144,7 @@ def run_once(deps: Deps) -> RunReport:
         if alert is not None:
             alerts.append(alert)
 
-    messages = render_messages(alerts)
+    messages = render_messages(alerts, collapse_above=deps.config.alerts.collapse_above)
     delivered = printed = not_delivered = 0
     for message in messages:
         outcome = deps.notifier.send(message)

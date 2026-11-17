@@ -204,3 +204,17 @@ def test_future_newest_run_is_treated_as_fresh_with_a_warning(
     assert "is in the future" in caplog.text
     assert "treated as fresh" in caplog.text
     assert "Stale Guard scans" not in out
+
+
+def test_dry_run_collapses_alerts_above_the_configured_threshold(tmp_path: Path) -> None:
+    config = tmp_path / "collapse.yaml"
+    config.write_text("alerts:\n  collapse_above: 1\n", encoding="utf-8")
+    code, out = run_dry_with_config(config)
+    lines = out.splitlines()
+    assert code == 0
+    assert lines.count("--- would send to group ---") == 1
+    assert "Guard radar: 3 problems need attention" in lines
+    assert (
+        "summary: 5 evaluated, 2 stale, 1 never ran, 1 not checked, 1 message(s) would be sent"
+        in lines
+    )
