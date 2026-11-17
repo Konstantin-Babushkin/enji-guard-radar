@@ -1,8 +1,29 @@
 {
   "projects": [
-    {"id": "00000000-0000-4000-8000-00000000a001", "name": "Project A"},
-    {"id": "00000000-0000-4000-8000-00000000a002", "name": "Project B"},
-    {"id": "00000000-0000-4000-8000-00000000a003", "name": "Project C (no repositories)"}
+    {
+      "id": "00000000-0000-4000-8000-00000000a001",
+      "name": "Project A <core> & \"tools\""
+    },
+    {
+      "id": "00000000-0000-4000-8000-00000000a002",
+      "name": "Project B"
+    },
+    {
+      "id": "00000000-0000-4000-8000-00000000a003",
+      "name": "Project C (no repositories)"
+    },
+    {
+      "id": "00000000-0000-4000-8000-00000000a004",
+      "name": "Project D (Guard unreachable)"
+    },
+    {
+      "id": "00000000-0000-4000-8000-00000000a005",
+      "name": "Project E (paused in config)"
+    },
+    {
+      "id": "00000000-0000-4000-8000-00000000a006",
+      "name": "Project F (excluded in config)"
+    }
   ],
   "has_more": false
 }

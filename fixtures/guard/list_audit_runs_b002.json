@@ -1,0 +1,49 @@
+{
+  "runs": [
+    {
+      "task_id": "00000000-0000-4000-8000-00000000c011",
+      "action_key": "audit.security",
+      "linked_at": "2026-11-15T08:00:01.123Z",
+      "task_available": true,
+      "status": "running",
+      "created_at": "2026-11-15T08:00:00.100000Z",
+      "completed_at": null,
+      "report_status": "pending",
+      "report_url": "https://guard.example/app/projects/00000000-0000-4000-8000-00000000a001/repos/repo_00000000-0000-4000-8000-00000000b002/vulns?run=00000000-0000-4000-8000-00000000c011"
+    },
+    {
+      "task_id": "00000000-0000-4000-8000-00000000c004",
+      "action_key": "audit.ai-readiness",
+      "linked_at": "2026-11-08T09:30:00.000Z",
+      "task_available": true,
+      "status": "completed",
+      "created_at": "2026-11-08T09:29:59.000000Z",
+      "completed_at": "2026-11-08T10:15:02.500000Z",
+      "report_status": "ready",
+      "report_url": "https://guard.example/app/projects/00000000-0000-4000-8000-00000000a001/repos/repo_00000000-0000-4000-8000-00000000b002/ai-readiness?run=00000000-0000-4000-8000-00000000c004"
+    },
+    {
+      "task_id": "00000000-0000-4000-8000-00000000c005",
+      "action_key": "audit.tests",
+      "linked_at": "2026-11-07T21:00:00.000Z",
+      "task_available": true,
+      "status": "completed",
+      "created_at": "2026-11-07T20:59:59.000000Z",
+      "completed_at": "2026-11-07T21:40:11.0961Z",
+      "report_status": "ready",
+      "report_url": "https://guard.example/app/projects/00000000-0000-4000-8000-00000000a001/repos/repo_00000000-0000-4000-8000-00000000b002/tests?run=00000000-0000-4000-8000-00000000c005"
+    },
+    {
+      "task_id": "00000000-0000-4000-8000-00000000c006",
+      "action_key": "audit.recon",
+      "linked_at": "2026-10-21T08:30:00.000Z",
+      "task_available": true,
+      "status": "completed",
+      "created_at": "2026-10-21T08:29:59.000000Z",
+      "completed_at": "2026-10-21T09:05:00.000Z",
+      "report_status": "ready",
+      "report_url": "https://guard.example/app/projects/00000000-0000-4000-8000-00000000a001/repos/repo_00000000-0000-4000-8000-00000000b002/map?run=00000000-0000-4000-8000-00000000c006"
+    }
+  ],
+  "has_more": false
+}

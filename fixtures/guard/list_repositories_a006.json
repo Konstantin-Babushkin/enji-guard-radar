@@ -1,0 +1,12 @@
+{
+  "repositories": [
+    {
+      "id": "repo_00000000-0000-4000-8000-00000000b005",
+      "project_id": "00000000-0000-4000-8000-00000000a006",
+      "name": "acme/tools-f",
+      "provider": "github",
+      "connected": true
+    }
+  ],
+  "has_more": false
+}
