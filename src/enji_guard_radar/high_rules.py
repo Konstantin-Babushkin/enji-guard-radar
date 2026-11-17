@@ -5,12 +5,23 @@ change the alert key, so an aged series is never a new alert (ALERT-01).
 """
 
 import logging
-from collections.abc import Collection
+from collections.abc import Collection, Mapping
 from datetime import datetime, timedelta
 
 from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, StrictInt
 
-from enji_guard_radar.guard_report import OVERVIEW_ACTION_KEYS
+from enji_guard_radar.guard import ProjectOk, newest_counting_runs_by_action_key
+from enji_guard_radar.guard_report import OVERVIEW_ACTION_KEYS, AuditReport
+from enji_guard_radar.high_history import (
+    Known,
+    Observation,
+    Unknown,
+    advance_series,
+    has_task,
+    latest_high,
+    previous_high,
+)
+from enji_guard_radar.ledger import SeriesHistory, SeriesKey
 from enji_guard_radar.model import Alert, AlertKey, AlertKind, Severity
 
 logger = logging.getLogger(__name__)
@@ -76,4 +87,97 @@ def high_alert(series: HighSeries, *, aged_after_days: int, now: datetime) -> Al
         previous_count=series.previous_high,
         seen_since=series.opened_at,
         aged=aged,
+    )
+
+
+class HighEvaluation(BaseModel):
+    """One project's High histories after this poll, the alerts of its open series and counters."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    histories: tuple[SeriesHistory, ...]
+    alerts: tuple[Alert, ...]
+    observed: StrictInt = Field(ge=0)
+    unknown_reports: StrictInt = Field(ge=0)
+    dropped: tuple[SeriesKey, ...]
+
+
+def evaluate_high(
+    project: ProjectOk,
+    histories: Mapping[SeriesKey, SeriesHistory],
+    *,
+    clear_after: int,
+    audit_types: Collection[str] | None,
+    aged_after_days: int,
+    now: datetime,
+) -> HighEvaluation:
+    """Fold the project's newest completed runs into its stored histories; alert every open one.
+
+    Unknown reports and runs missing from this poll change nothing (RULE-09). Every open series
+    is emitted on every evaluated poll, with its stored counts, so reconcile neither resolves nor
+    re-alerts it; whether to send is reconcile's decision, never made here.
+    """
+    pid = project.project.id
+    mine = {key: history for key, history in histories.items() if key[0] == pid}
+    repo_names = {repo.repository.id: repo.repository.name for repo in project.repositories}
+
+    dropped = sorted(
+        key for key in mine if key[1] not in repo_names or not in_scope(key[2], audit_types)
+    )
+    for key in dropped:
+        logger.info("high series dropped (repository removed or out of scope): %s", "|".join(key))
+        del mine[key]
+
+    observed = unknown_reports = 0
+    for repo in project.repositories:
+        reports = {report.task_id: report for report in repo.reports}
+        for run in newest_counting_runs_by_action_key(repo.runs):
+            if not in_scope(run.action_key, audit_types):
+                continue
+            key = (pid, repo.repository.id, run.action_key)
+            if has_task(mine.get(key), run.task_id):
+                continue
+            report = reports.get(run.task_id)
+            observation: Observation
+            if (
+                isinstance(report, AuditReport)
+                and report.layout == "scored"
+                and run.completed_at is not None
+            ):
+                observation = Known(
+                    task_id=run.task_id, completed_at=run.completed_at, high=report.high_count
+                )
+                observed += 1
+            else:
+                observation = Unknown()
+                unknown_reports += 1
+                logger.debug("report of run %s is unknown; series %s unchanged", run.task_id, key)
+            advanced = advance_series(mine.get(key), observation, key=key, clear_after=clear_after)
+            if advanced is not None:
+                mine[key] = advanced
+
+    alerts: list[Alert] = []
+    for key in sorted(mine):
+        history = mine[key]
+        high_now = latest_high(history)
+        if not history.open or history.opened_at is None or high_now is None:
+            continue
+        series = HighSeries(
+            project_id=pid,
+            project_name=project.project.name,
+            repo_id=key[1],
+            repo_name=repo_names[key[1]],
+            action_key=key[2],
+            high_now=high_now,
+            previous_high=previous_high(history),
+            opened_at=history.opened_at,
+            repo_count=len(project.repositories),
+        )
+        alerts.append(high_alert(series, aged_after_days=aged_after_days, now=now))
+    return HighEvaluation(
+        histories=tuple(mine[key] for key in sorted(mine)),
+        alerts=tuple(alerts),
+        observed=observed,
+        unknown_reports=unknown_reports,
+        dropped=tuple(dropped),
     )
