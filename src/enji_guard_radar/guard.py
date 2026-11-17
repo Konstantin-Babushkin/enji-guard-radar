@@ -6,13 +6,14 @@ could read as "no runs". Only a well-formed empty list is a real empty answer.
 
 import logging
 import re
-from collections.abc import Callable, Iterator, Mapping
+from collections.abc import Callable, Iterable, Iterator, Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from enum import StrEnum
 
 from pydantic import AwareDatetime, BaseModel, ConfigDict
 
+from enji_guard_radar.guard_report import TOOL_GET_AUDIT_REPORT, ReportResult, read_report
 from enji_guard_radar.ports import GuardCallError, GuardTools
 
 logger = logging.getLogger(__name__)
@@ -20,6 +21,11 @@ logger = logging.getLogger(__name__)
 TOOL_LIST_PROJECTS = "list_projects"
 TOOL_LIST_REPOSITORIES = "list_repositories"
 TOOL_LIST_AUDIT_RUNS = "list_audit_runs"
+# The Guard tools the radar may call. `run_audit` (scope audits:run) starts work, is never used
+# and is deliberately absent; list_audits and get_audit are opted out until a rule needs them.
+GUARD_READ_TOOLS = frozenset(
+    {TOOL_LIST_PROJECTS, TOOL_LIST_REPOSITORIES, TOOL_LIST_AUDIT_RUNS, TOOL_GET_AUDIT_REPORT}
+)
 # ASSUMPTION: argument names are not recorded in docs/guard-data-notes.md; Phase 2 confirms
 # them against the real tool schemas
 ARG_PROJECT_ID = "project_id"
@@ -91,6 +97,7 @@ class AuditRun(_Frozen):
 class RepoRuns(_Frozen):
     repository: GuardRepository
     runs: tuple[AuditRun, ...]
+    reports: tuple[ReportResult, ...] = ()
 
 
 class ProjectOk(_Frozen):
@@ -130,6 +137,23 @@ class Page[T]:
     items: tuple[T, ...]
     has_more: bool
     next_cursor: str | None
+
+
+def newest_counting_runs_by_action_key(runs: Iterable[AuditRun]) -> tuple[AuditRun, ...]:
+    """The counting run with the latest completion per audit type, sorted by action_key.
+
+    On equal completion times the run that comes first in Guard's order stays.
+    """
+    newest: dict[str, AuditRun] = {}
+    for run in runs:
+        if not run.counts or run.completed_at is None:
+            continue
+        current = newest.get(run.action_key)
+        if current is None or (
+            current.completed_at is not None and run.completed_at > current.completed_at
+        ):
+            newest[run.action_key] = run
+    return tuple(newest[key] for key in sorted(newest))
 
 
 def parse_guard_time(value: str) -> datetime:
@@ -176,10 +200,13 @@ def _optional_flag(item: Mapping[str, object], key: str) -> bool | None:
 
 
 def _page[T](
-    payload: Mapping[str, object],
+    payload: object,
     list_key: str,
     parse_item: Callable[[Mapping[str, object]], T],
 ) -> Page[T]:
+    if not isinstance(payload, Mapping):
+        message = "response is not an object"
+        raise GuardDataError(message)
     raw_items = payload.get(list_key)
     if not isinstance(raw_items, list):
         message = f"list {list_key} is missing or not a list"
@@ -213,18 +240,21 @@ def _repository(item: Mapping[str, object]) -> GuardRepository:
 
 
 def _run(item: Mapping[str, object]) -> AuditRun:
+    task_id = _text(item, "task_id")
     status_raw = _text(item, "status")
     report_status_raw = _text(item, "report_status")
     try:
         status = RunStatus(status_raw.strip().casefold())
     except ValueError:
         status = RunStatus.UNKNOWN
+        logger.warning("run status unknown: task_id=%s raw=%r", task_id, status_raw)
     try:
         report_status = ReportStatus(report_status_raw.strip().casefold())
     except ValueError:
         report_status = ReportStatus.UNKNOWN
-    return AuditRun(
-        task_id=_text(item, "task_id"),
+        logger.warning("report status unknown: task_id=%s raw=%r", task_id, report_status_raw)
+    run = AuditRun(
+        task_id=task_id,
         action_key=_text(item, "action_key"),
         status=status,
         status_raw=status_raw,
@@ -235,6 +265,9 @@ def _run(item: Mapping[str, object]) -> AuditRun:
         completed_at=_optional_time(item, "completed_at"),
         task_available=_optional_flag(item, "task_available"),
     )
+    if status is RunStatus.COMPLETED and run.completed_at is None:
+        logger.warning("completed run has no completed_at: task_id=%s", task_id)
+    return run
 
 
 def parse_projects_page(payload: Mapping[str, object]) -> Page[GuardProject]:
@@ -320,18 +353,31 @@ def _read_runs(tools: GuardTools, repository: GuardRepository) -> tuple[AuditRun
     return tuple(runs)
 
 
+def _repo_runs(tools: GuardTools, repository: GuardRepository) -> RepoRuns:
+    runs = _read_runs(tools, repository)
+    # A report failure is local to that report (ReportUnknown); it never makes the project unknown.
+    reports = tuple(
+        read_report(tools, run.task_id, run.action_key)
+        for run in newest_counting_runs_by_action_key(runs)
+    )
+    return RepoRuns(repository=repository, runs=runs, reports=reports)
+
+
 def fetch_project(tools: GuardTools, project: GuardProject) -> ProjectData:
-    """Read a project's repositories and runs; any failure is unknown, never a partial result."""
+    """Read a project's repositories, runs and newest reports; any list failure is unknown.
+
+    SRC-04: a well-formed answer with zero items (a project with no repositories, a repository
+    with no runs) is real. A blank, truncated or malformed page, a failed call or a page that was
+    not fetched is unknown and never becomes a partial ProjectOk. A failed report only makes that
+    report unknown (RepoRuns.reports); the project stays evaluable.
+    """
     try:
         repositories: list[GuardRepository] = []
         for page in _pages(
             tools, TOOL_LIST_REPOSITORIES, {ARG_PROJECT_ID: project.id}, parse_repositories_page
         ):
             repositories.extend(page.items)
-        repo_runs = tuple(
-            RepoRuns(repository=repository, runs=_read_runs(tools, repository))
-            for repository in repositories
-        )
+        repo_runs = tuple(_repo_runs(tools, repository) for repository in repositories)
     except GuardDataError as error:
         logger.warning("project %s is unknown: %s", project.id, error)
         return ProjectUnknown(project=project, reason=str(error))

@@ -8,6 +8,7 @@ from typing import Self
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
+from enji_guard_radar.guard import GUARD_READ_TOOLS
 from enji_guard_radar.ports import GuardCallError
 
 logger = logging.getLogger(__name__)
@@ -42,6 +43,7 @@ class FixtureGuardTools:
     def __init__(self, directory: Path) -> None:
         self._directory = directory
         self._manifest = self._load_manifest()
+        self._check_manifest()
 
     def _load_manifest(self) -> FixtureManifest:
         path = self._directory / MANIFEST_FILE
@@ -56,7 +58,25 @@ class FixtureGuardTools:
             message = f"fixture manifest {MANIFEST_FILE} is invalid"
             raise GuardCallError(message) from None
 
+    def _check_manifest(self) -> None:
+        """Only read tools, and one recording per (tool, args): nothing can shadow another."""
+        seen: set[tuple[str, tuple[tuple[str, str], ...]]] = set()
+        for entry in self._manifest.calls:
+            if entry.tool not in GUARD_READ_TOOLS:
+                logger.error("fixture manifest names a tool outside the read set: %s", entry.tool)
+                message = f"fixture manifest names a tool that is not allowed: {entry.tool}"
+                raise GuardCallError(message)
+            key = (entry.tool, tuple(sorted(entry.args.items())))
+            if key in seen:
+                logger.error("fixture manifest records %s twice for the same arguments", entry.tool)
+                message = f"fixture manifest records {entry.tool} twice for the same arguments"
+                raise GuardCallError(message)
+            seen.add(key)
+
     def call(self, tool: str, args: Mapping[str, str]) -> Mapping[str, object]:
+        if tool not in GUARD_READ_TOOLS:
+            message = f"tool not allowed: {tool}"
+            raise GuardCallError(message)
         wanted = dict(args)
         for entry in self._manifest.calls:
             if entry.tool == tool and entry.args == wanted:
