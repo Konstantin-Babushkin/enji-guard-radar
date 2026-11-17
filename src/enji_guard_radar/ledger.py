@@ -1,7 +1,8 @@
 """The radar's memory: what was seen, alerted, baselined or resolved. Pure, no I/O.
 
 State holds ids, levels, flags and timestamps only (STATE-01): never names, report text
-or evidence. Whether to send is decided on the key and the flags, never on age or count.
+or evidence. Whether to send is decided on the key, the flags and, for a counted condition,
+a rise of its count over the previous evaluation (STATE-07, D-06); never on age.
 """
 
 import json
@@ -42,7 +43,8 @@ class ConditionRecord(_Frozen):
     last_seen_at: AwareDatetime
     baseline: bool
     alerted_at: AwareDatetime | None = None
-    # Last observed count; None for stale and never-ran. Never used to decide whether to send.
+    # Last observed count; None for stale and never-ran. A rise above it re-arms an alerted or
+    # baselined condition (STATE-07, D-06).
     count: StrictInt | None = Field(default=None, ge=0)
 
 
@@ -128,6 +130,7 @@ class Reconciliation(_Frozen):
     baselined: tuple[Alert, ...] = ()
     resolved: tuple[AlertKey, ...] = ()
     retried: tuple[AlertKey, ...] = ()
+    rearmed: tuple[AlertKey, ...] = ()
     first_seen_projects: tuple[str, ...] = ()
 
 
@@ -205,6 +208,7 @@ def reconcile(
     baselined: list[Alert] = []
     resolved: list[AlertKey] = []
     retried: list[AlertKey] = []
+    rearmed: list[AlertKey] = []
     first_seen: list[str] = []
 
     for evaluation in evaluations:
@@ -231,6 +235,23 @@ def reconcile(
                     key=key, first_seen_at=now, last_seen_at=now, baseline=False, count=alert.count
                 )
                 to_send.append(alert)
+            elif (
+                alert.count is not None
+                and record.count is not None
+                and alert.count > record.count
+                and (record.alerted_at is not None or record.baseline)
+            ):
+                # Per-run rise (D-06): plan it again; apply_delivery sets alerted_at on success.
+                conditions[key] = record.model_copy(
+                    update={
+                        "last_seen_at": now,
+                        "count": alert.count,
+                        "alerted_at": None,
+                        "baseline": False,
+                    }
+                )
+                to_send.append(alert)
+                rearmed.append(key)
             else:
                 conditions[key] = record.model_copy(
                     update={"last_seen_at": now, "count": alert.count}
@@ -248,6 +269,7 @@ def reconcile(
         baselined=tuple(sorted(baselined, key=lambda a: _key_order(a.key))),
         resolved=tuple(sorted(resolved, key=_key_order)),
         retried=tuple(sorted(retried, key=_key_order)),
+        rearmed=tuple(sorted(rearmed, key=_key_order)),
         first_seen_projects=tuple(sorted(first_seen)),
     )
 
