@@ -7,6 +7,7 @@ The credential file `state/guard-auth.json` is the one place a Guard secret live
 
 import contextlib
 import fcntl
+import json
 import logging
 import os
 import time
@@ -120,8 +121,20 @@ class FormTransport(Protocol):
         ...
 
 
+class LoginTransport(FormTransport, Protocol):
+    """What the one-time `auth` command needs: discovery, registration and the code exchange."""
+
+    def get_json(self, url: str, timeout_s: float) -> HttpResponse:
+        """Raise TransportFailure when there is no HTTP answer."""
+        ...
+
+    def post_json(self, url: str, payload: Mapping[str, object], timeout_s: float) -> HttpResponse:
+        """Raise TransportFailure when there is no HTTP answer."""
+        ...
+
+
 class UrllibOAuthTransport:
-    """stdlib form POST; default TLS verification, and no URL in any error it raises."""
+    """stdlib requests; default TLS verification, and no URL in any error it raises."""
 
     def post_form(self, url: str, form: Mapping[str, str], timeout_s: float) -> HttpResponse:
         request = urllib.request.Request(
@@ -133,6 +146,23 @@ class UrllibOAuthTransport:
             },
             method="POST",
         )
+        return self._send(request, timeout_s)
+
+    def get_json(self, url: str, timeout_s: float) -> HttpResponse:
+        request = urllib.request.Request(url, headers={"Accept": "application/json"}, method="GET")
+        return self._send(request, timeout_s)
+
+    def post_json(self, url: str, payload: Mapping[str, object], timeout_s: float) -> HttpResponse:
+        request = urllib.request.Request(
+            url,
+            data=json.dumps(payload).encode("utf-8"),
+            headers={"Content-Type": "application/json", "Accept": "application/json"},
+            method="POST",
+        )
+        return self._send(request, timeout_s)
+
+    @staticmethod
+    def _send(request: urllib.request.Request, timeout_s: float) -> HttpResponse:
         try:
             with urllib.request.urlopen(request, timeout=timeout_s) as response:
                 return HttpResponse(status=int(response.status), body=response.read())
