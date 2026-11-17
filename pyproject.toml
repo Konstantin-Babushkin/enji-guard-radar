@@ -31,7 +31,7 @@ line-length = 100
 extend-exclude = [".planning"]
 
 [tool.ruff.lint]
-select = ["E", "F", "W", "I", "N", "UP", "B", "SIM", "C4", "PTH", "TRY", "LOG", "G", "PT", "RUF"]
+select = ["E", "F", "W", "I", "N", "UP", "B", "SIM", "C4", "PTH", "TRY", "LOG", "G", "PT", "RUF", "DTZ"]
 
 [tool.mypy]
 python_version = "3.12"
