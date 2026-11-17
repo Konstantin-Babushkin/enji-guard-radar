@@ -77,7 +77,31 @@ Plans:
   3. An alerted, still-true High condition is not re-sent; a rise in the High count re-arms its alert; a flapping result does not flip alerts on and off, because a `(repo, audit type)` is clear only after M consecutive completed runs with zero High findings.
   4. After the poll cost is measured and logged, a timer runs the one-shot command unattended. After K consecutive failed polls one message goes to a separate ops chat, and one more when the radar recovers.
   5. `doctor` reports pass or fail for Guard reachability, the Telegram token, and the bot's membership in the group chat.
-**Plans**: TBD
+**Plans**: 11 plans
+
+Plans:
+**Wave 1**
+- [ ] 02-01-PLAN.md — Wave 1: State schema 2 (High history by task_id, poll health, alerted_count, v1 migration), history fold with M-clean-run clear, peak re-arm
+- [ ] 02-02-PLAN.md — Wave 1: High-count alert rule, counts-only alert text, strict `high` config and the age threshold with per-project override
+- [ ] 02-03-PLAN.md — Wave 1: Guard token layer (auth error contracts, credential file, refresh with rotation persisted before use, failure classification, lock)
+
+**Wave 2** *(blocked on Wave 1 completion)*
+- [ ] 02-04-PLAN.md — Wave 2: High-count alerts in the run (fold per project, alerts from stored history, skip known reports, updated baselines)
+- [ ] 02-05-PLAN.md — Wave 2: `auth` command (discovery, client registration, PKCE, hidden paste, read-only grant validation)
+- [ ] 02-06-PLAN.md — Wave 2: MCP adapter over the official SDK, behind the operator's dependency decision and package check (not autonomous)
+
+**Wave 3** *(blocked on Wave 2 completion)*
+- [ ] 02-07-PLAN.md — Wave 3: Poll health and the ops chat (K failures, one outage, one recovery, save on failed polls)
+- [ ] 02-08-PLAN.md — Wave 3: `doctor` (Telegram token, chat membership, Guard reachability, local setup)
+
+**Wave 4** *(blocked on Wave 3 completion)*
+- [ ] 02-09-PLAN.md — Wave 4: `probe` with allowlist sanitizer, round-trip and leak checks, recorded-fixture contract test
+
+**Wave 5** *(blocked on Wave 4 completion)*
+- [ ] 02-10-PLAN.md — Wave 5: Unattended live run (real Guard by default, lazy connect inside the lock, poll cost), systemd units, cron fallback, runbook
+
+**Wave 6** *(gated on the operator and the production host)*
+- [ ] 02-11-PLAN.md — Wave 6: Human live verification (auth, first probe, real dry-run review, test-chat check, 7-day soak, failure drill, doctor on the host)
 
 ### Phase 3: Remaining Rules and the Digest
 **Goal**: The group also hears about weak AI readiness, weak tests, missing analysis tooling and High findings that keep coming back, in one weekly digest that is always sent, worst first, plus reminders for what stays unaddressed.
@@ -131,6 +155,6 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 (Phase 4 may be planned in 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 1. Working Pipeline on Fixtures | 7/7 | Complete | 2026-11-17 |
-| 2. Guard Connection and Core Alerts | 0/TBD | Not started | - |
+| 2. Guard Connection and Core Alerts | 0/11 | Planned | - |
 | 3. Remaining Rules and the Digest | 0/TBD | Not started | - |
 | 4. Claude Triage | 0/TBD | Not started | - |
