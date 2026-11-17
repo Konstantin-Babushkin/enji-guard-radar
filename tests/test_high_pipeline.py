@@ -37,10 +37,13 @@ from enji_guard_radar.guard import (
 )
 from enji_guard_radar.guard_report import ARG_TASK_ID, TOOL_GET_AUDIT_REPORT
 from enji_guard_radar.high_history import HISTORY_WINDOW
+from enji_guard_radar.high_rules import skip_report_for
 from enji_guard_radar.ledger import (
     ConditionRecord,
     Loaded,
+    RunPoint,
     SeriesHistory,
+    SeriesKey,
     State,
     serialize_state,
 )
@@ -628,3 +631,101 @@ def test_unchanged_run_is_not_read_again(tmp_path: Path) -> None:
     assert_quiet(sim.poll(2))
     assert sim.report_reads() == []
     assert sim.state().histories == after_first
+
+
+def _history(pid: str, rid: str, action_key: str, *task_ids: str) -> SeriesHistory:
+    points = tuple(RunPoint(task_id=t, completed_at=BASE, high=1) for t in task_ids)
+    return SeriesHistory(project_id=pid, repo_id=rid, action_key=action_key, points=points)
+
+
+SKIP_HISTORIES: dict[SeriesKey, SeriesHistory] = {
+    (PID, RID, SECURITY): _history(PID, RID, SECURITY, "t-known"),
+    (PID, RID2, SECURITY): _history(PID, RID2, SECURITY, "t-other-repo"),
+    ("other-project", RID, SECURITY): _history("other-project", RID, SECURITY, "t-other-project"),
+}
+
+
+@pytest.mark.parametrize(
+    ("audit_types", "repo_id", "action_key", "task_id", "expected"),
+    [
+        (None, RID, "audit.recon", "t-new", True),
+        (None, RID, "audit.recon", "t-known", True),
+        (("audit.tests",), RID, SECURITY, "t-new", True),
+        (None, RID, SECURITY, "t-known", True),
+        (("audit.security",), RID, SECURITY, "t-known", True),
+        (None, RID, SECURITY, "t-new", False),
+        (None, RID, SECURITY, "t-other-repo", False),
+        (None, RID, SECURITY, "t-other-project", False),
+        (None, RID, "audit.tests", "t-known", False),
+    ],
+)
+def test_skip_report_for_table(
+    audit_types: tuple[str, ...] | None,
+    repo_id: str,
+    action_key: str,
+    task_id: str,
+    expected: bool,
+) -> None:
+    skip = skip_report_for(PID, SKIP_HISTORIES, audit_types)
+    assert skip(repo_id, action_key, task_id) is expected
+
+
+def test_reread_unknown_report_is_requested_again(tmp_path: Path) -> None:
+    sim = Sim(tmp_path)
+    sim.poll(0)
+    task_id = sim.add_run(day=1, report=False)
+    assert texts(sim.poll(1)) == []
+    assert sim.report_reads() == [task_id]
+    assert [h for h in sim.state().histories if h.action_key == SECURITY] == []
+    sim.reports[task_id] = report_page(task_id, high=2)
+    assert len(texts(sim.poll(2))) == 1
+    assert sim.report_reads() == [task_id]
+    assert [p.task_id for p in sim.history().points] == [task_id]
+    assert_quiet(sim.poll(3))
+    assert sim.report_reads() == []
+
+
+def test_new_run_read_once_then_skipped(tmp_path: Path) -> None:
+    sim = Sim(tmp_path)
+    sim.poll(0)
+    sim.add_run(high=3, day=1)
+    sim.poll(1)
+    newer = sim.add_run(high=3, day=2)
+    assert texts(sim.poll(2)) == []
+    assert sim.report_reads() == [newer]
+    assert len(sim.history().points) == 2
+    assert texts(sim.poll(3)) == []
+    assert sim.report_reads() == []
+    assert len(sim.history().points) == 2
+
+
+def sim_security_task(sim: Sim) -> str:
+    (task_id,) = [r["task_id"] for r in sim.runs[RID] if r["action_key"] == SECURITY]
+    assert isinstance(task_id, str)
+    return task_id
+
+
+def test_skip_idempotent_open_alert_unchanged(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def build(name: str) -> Sim:
+        sim = Sim(tmp_path / name)
+        sim.poll(0)
+        sim.add_run(high=3, day=1)
+        assert len(texts(sim.poll(1))) == 1
+        return sim
+
+    skipping = build("skip")
+    assert_quiet(skipping.poll(2))
+    assert skipping.report_reads() == []
+
+    rereading = build("reread")
+    with monkeypatch.context() as patch:
+        patch.setattr("enji_guard_radar.pipeline.skip_report_for", lambda *_args: None)
+        assert_quiet(rereading.poll(2))
+    assert sim_security_task(rereading) in rereading.report_reads()
+
+    assert skipping.high_record() == rereading.high_record()
+    assert skipping.high_record().alerted_at is not None
+    assert skipping.high_record().count == 3
+    assert skipping.state().histories == rereading.state().histories
