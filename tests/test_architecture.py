@@ -1,0 +1,93 @@
+"""Core modules stay pure: no I/O imports, no shell imports, no clock reads, no file I/O.
+
+Everything not listed in SHELL_MODULES is core, so new modules are covered without edits.
+"""
+
+import ast
+from collections.abc import Iterator
+from pathlib import Path
+
+PACKAGE = "enji_guard_radar"
+SRC = Path(__file__).resolve().parents[1] / "src" / PACKAGE
+
+# Modules that may do I/O. telegram, state_store and settings arrive in plans 01-04 and 01-06.
+# env_file reads a file, so it is a shell module even though the plan's list omits it.
+SHELL_MODULES = {"cli", "env_file", "fixture_source", "telegram", "state_store", "settings"}
+# `__init__` only imports `cli` lazily inside main(), so the package import stays light.
+EXEMPT_MODULES = {"__init__"}
+FORBIDDEN_CORE_IMPORTS = {"socket", "urllib", "http", "fcntl", "subprocess", "ssl", "time"}
+CLOCK_CALLS = {"now", "utcnow", "today"}
+FILE_IO_CALLS = {
+    "read_text",
+    "read_bytes",
+    "write_text",
+    "write_bytes",
+    "mkdir",
+    "unlink",
+    "touch",
+    "open",
+}
+
+
+def core_modules() -> Iterator[tuple[str, ast.Module]]:
+    for path in sorted(SRC.glob("*.py")):
+        if path.stem in SHELL_MODULES or path.stem in EXEMPT_MODULES:
+            continue
+        yield path.stem, ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+
+
+def imported_names(tree: ast.Module) -> Iterator[str]:
+    """Every dotted name a module imports, relative imports resolved against the package."""
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                yield alias.name
+        elif isinstance(node, ast.ImportFrom):
+            base = node.module or ""
+            if node.level > 0:
+                base = f"{PACKAGE}.{base}" if base else PACKAGE
+            yield base
+            for alias in node.names:
+                yield f"{base}.{alias.name}"
+
+
+def called_names(tree: ast.Module) -> Iterator[str]:
+    """Names of called functions and methods, e.g. `open` and `read_text`."""
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Call):
+            if isinstance(node.func, ast.Name):
+                yield node.func.id
+            elif isinstance(node.func, ast.Attribute):
+                yield node.func.attr
+
+
+def test_core_modules_do_not_import_io_or_shell_modules() -> None:
+    violations = []
+    for name, tree in core_modules():
+        for imported in imported_names(tree):
+            parts = imported.split(".")
+            if parts[0] in FORBIDDEN_CORE_IMPORTS:
+                violations.append(f"{name} imports {imported}")
+            if parts[0] == PACKAGE and len(parts) > 1 and parts[1] in SHELL_MODULES:
+                violations.append(f"{name} imports shell module {imported}")
+    assert violations == []
+
+
+def test_core_modules_do_not_read_the_system_clock() -> None:
+    violations = [
+        f"{name} calls {called}()"
+        for name, tree in core_modules()
+        for called in called_names(tree)
+        if called in CLOCK_CALLS
+    ]
+    assert violations == []
+
+
+def test_core_modules_do_no_file_io() -> None:
+    violations = [
+        f"{name} calls {called}()"
+        for name, tree in core_modules()
+        for called in called_names(tree)
+        if called in FILE_IO_CALLS
+    ]
+    assert violations == []
