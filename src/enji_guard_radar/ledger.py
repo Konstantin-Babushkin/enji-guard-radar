@@ -225,7 +225,9 @@ def deserialize_state(data: bytes) -> State:
         return State.model_validate(raw)
     except ValidationError as exc:
         first = exc.errors()[0]
-        where = ".".join(str(part) for part in first["loc"]) or "<root>"
+        loc = first["loc"][:-1] if first["type"] == "extra_forbidden" else first["loc"]
+        # An unexpected field's name comes from the file, so it is left out of the reason.
+        where = ".".join(str(part) for part in loc) or "<root>"
         reason = (
             f"does not match the state schema: {exc.error_count()} error(s), "
             f"first at {where} ({first['type']})"
