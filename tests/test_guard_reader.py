@@ -212,6 +212,43 @@ def test_only_the_newest_counting_run_per_audit_type_gets_a_report() -> None:
     ]  # sorted by action_key
 
 
+def _skip_world() -> InMemoryGuardTools:
+    linked = NOW - timedelta(days=5)
+    done = linked + timedelta(minutes=5)
+    runs = [
+        _run("t1", linked, done, action_key="audit.security"),
+        _run("t2", linked, done, action_key="audit.tests"),
+    ]
+    return _project_tools(_runs(runs))
+
+
+def _report_reads(tools: InMemoryGuardTools) -> list[str]:
+    return [args["task_id"] for tool, args in tools.calls if tool == "get_audit_report"]
+
+
+def test_skip_report_true_makes_no_read_for_that_task() -> None:
+    tools = _skip_world()
+    asked: list[tuple[str, str, str]] = []
+
+    def skip(repo_id: str, action_key: str, task_id: str) -> bool:
+        asked.append((repo_id, action_key, task_id))
+        return task_id == "t1"
+
+    result = fetch_project(tools, PROJECT, skip_report=skip)
+    assert isinstance(result, ProjectOk)
+    assert _report_reads(tools) == ["t2"]
+    assert [r.task_id for r in result.repositories[0].reports] == ["t2"]
+    assert ("r1", "audit.security", "t1") in asked
+
+
+def test_skip_report_absent_reads_every_newest_report() -> None:
+    tools = _skip_world()
+    result = fetch_project(tools, PROJECT)
+    assert isinstance(result, ProjectOk)
+    assert _report_reads(tools) == ["t1", "t2"]
+    assert [r.task_id for r in result.repositories[0].reports] == ["t1", "t2"]
+
+
 def test_equal_completion_times_pick_the_first_run_in_guard_order() -> None:
     linked = NOW - timedelta(days=5)
     done = linked + timedelta(minutes=5)
