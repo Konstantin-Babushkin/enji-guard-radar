@@ -12,7 +12,19 @@ SRC = Path(__file__).resolve().parents[1] / "src" / PACKAGE
 
 # Modules that may do I/O. telegram, state_store and settings arrive in plans 01-04 and 01-06.
 # env_file reads a file, so it is a shell module even though the plan's list omits it.
-SHELL_MODULES = {"cli", "env_file", "fixture_source", "telegram", "state_store", "settings"}
+SHELL_MODULES = {
+    "cli",
+    "env_file",
+    "fixture_source",
+    "telegram",
+    "state_store",
+    "settings",
+    "guard_credentials",
+    # cli_auth and mcp_guard arrive in plans 02-05 and 02-06; listing them early keeps those
+    # two plans from both editing this file. A name with no module has no effect on the checks.
+    "cli_auth",
+    "mcp_guard",
+}
 # `__init__` only imports `cli` lazily inside main(), so the package import stays light.
 EXEMPT_MODULES = {"__init__"}
 FORBIDDEN_CORE_IMPORTS = {"socket", "urllib", "http", "fcntl", "subprocess", "ssl", "time"}
