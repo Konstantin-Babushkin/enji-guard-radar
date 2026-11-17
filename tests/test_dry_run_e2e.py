@@ -21,6 +21,7 @@ DEMO_NOW = "2026-11-16T12:00:00Z"
 LATER_NOW = "2026-12-01T12:00:00Z"
 LIVE_ENVIRON = {"TELEGRAM_BOT_TOKEN": FAKE_TOKEN, "TELEGRAM_CHAT_ID": "-1001234567890"}
 
+A_HIGH_HEADLINE = 'High findings: <b>Project A &lt;core&gt; &amp; "tools"</b>'
 B_LINES = [
     "Stale Guard scans: <b>Project B</b>",
     "No completed Guard run for 27 days (last: 2026-10-20).",
@@ -123,7 +124,12 @@ def test_dry_run_does_not_alert_fresh_project_a(tmp_path: Path) -> None:
     # A's newest run (c012) sits on page 2 of its runs; page 3 is unrecorded, so reading it
     # would make A "not checked". A must appear neither as an alert nor under "not checked".
     _, out = run_dry(tmp_path)
-    assert "Project A" not in out
+    assert not any(
+        line.startswith(("Stale Guard scans: <b>Project A", "No Guard runs: <b>Project A"))
+        for line in out.splitlines()
+    )
+    assert not any("Project A" in line for line in section(out, "--- not checked"))
+    assert A_HIGH_HEADLINE in section(out, "--- baseline")
 
 
 def test_dry_run_is_repeatable_and_leaves_fixtures_unchanged(tmp_path: Path) -> None:
@@ -160,9 +166,13 @@ def test_dry_run_summary_counts(tmp_path: Path) -> None:
     _, out = run_dry(tmp_path)
     assert (
         "summary: 5 evaluated, 2 stale, 1 never ran, 1 not checked, "
-        "0 message(s) would be sent, 3 baselined"
+        "0 message(s) would be sent, 4 baselined"
     ) in out.splitlines()
-    assert "--- baseline, not sent (3) ---" in out.splitlines()
+    assert "--- baseline, not sent (4) ---" in out.splitlines()
+    baseline = section(out, "--- baseline")
+    assert A_HIGH_HEADLINE in baseline
+    assert "1 High finding in audit.security (acme/service-a)." in baseline
+    assert "Seen by the radar since 2026-11-09 (6 days)." in baseline
 
 
 def test_dry_run_orders_baseline_by_project_id(tmp_path: Path) -> None:
@@ -200,14 +210,14 @@ def test_dry_run_with_scenario_config_skips_paused_and_excluded(tmp_path: Path) 
     lines = out.splitlines()
     assert code == 0
     assert lines.count("--- would send to group ---") == 0
-    assert "--- baseline, not sent (2) ---" in lines
+    assert "--- baseline, not sent (3) ---" in lines
     assert contains_contiguous(out, B_LINES)
     assert contains_contiguous(out, C_LINES)
     assert "Project E (paused in config): paused in config" in lines
     assert "Project F" not in out
     assert (
         "summary: 3 evaluated, 1 stale, 1 never ran, 2 not checked, "
-        "0 message(s) would be sent, 2 baselined"
+        "0 message(s) would be sent, 3 baselined"
     ) in lines
 
 

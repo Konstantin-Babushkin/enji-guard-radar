@@ -20,11 +20,14 @@ from enji_guard_radar.guard import (
     fetch_project,
     list_projects,
 )
+from enji_guard_radar.high_rules import evaluate_high
 from enji_guard_radar.ledger import (
     Corrupt,
     EvaluationOutcome,
     Loaded,
     ProjectEvaluation,
+    SeriesHistory,
+    SeriesKey,
     State,
     StateStore,
     apply_delivery,
@@ -163,13 +166,19 @@ def _run_locked(deps: Deps, now: datetime) -> RunReport:
         logger.error("run ended: Guard unavailable (%s)", listing.reason)
         return _empty_report(now, RunOutcome.GUARD_UNAVAILABLE)
 
-    results, evaluations = _evaluate_projects(deps, listing, now)
+    results, evaluations, histories = _evaluate_projects(
+        deps, listing, now, {h.key(): h for h in state.histories}
+    )
+    state = state.model_copy(
+        update={"histories": tuple(sorted(histories.values(), key=lambda h: h.key()))}
+    )
     rec = reconcile(state, evaluations, now)
     logger.info(
-        "planned %d, baselined %d, retried %d, resolved %d",
+        "planned %d, baselined %d, retried %d, rearmed %d, resolved %d",
         len(rec.to_send),
         len(rec.baselined),
         len(rec.retried),
+        len(rec.rearmed),
         len(rec.resolved),
     )
     deps.store.save(rec.state)
@@ -248,8 +257,11 @@ def _notify_ops_of_actions(deps: Deps, actions: list[str], *, unauthorized: bool
 
 
 def _evaluate_projects(
-    deps: Deps, listing: ListingOk, now: datetime
-) -> tuple[list[ProjectResult], list[ProjectEvaluation]]:
+    deps: Deps,
+    listing: ListingOk,
+    now: datetime,
+    stored: dict[SeriesKey, SeriesHistory],
+) -> tuple[list[ProjectResult], list[ProjectEvaluation], dict[SeriesKey, SeriesHistory]]:
     listed_ids = {project.id for project in listing.projects}
     for configured_id in deps.config.projects:
         if configured_id not in listed_ids:
@@ -257,6 +269,7 @@ def _evaluate_projects(
 
     results: list[ProjectResult] = []
     evaluations: list[ProjectEvaluation] = []
+    histories = dict(stored)
     for project in sorted(listing.projects, key=lambda p: (p.name.casefold(), p.id)):
         mode = deps.config.mode_for(project.id)
         if mode == "excluded":
@@ -293,12 +306,31 @@ def _evaluate_projects(
             )
         else:
             status, note = ProjectStatus.EVALUATED, ""
-            alert = alert_for(stale)
+            stale_alert = alert_for(stale)
+            high = evaluate_high(
+                data,
+                histories,
+                clear_after=deps.config.high.clear_after_clean_runs,
+                audit_types=deps.config.high.audit_types,
+                aged_after_days=deps.config.thresholds_for(project.id).high_aged_after_days,
+                now=now,
+            )
+            for key in [k for k in histories if k[0] == project.id]:
+                del histories[key]
+            histories.update({h.key(): h for h in high.histories})
+            if high.histories or high.dropped:
+                logger.info(
+                    "high series of %s: %d observed, %d unknown report(s), %d open",
+                    project.id,
+                    high.observed,
+                    high.unknown_reports,
+                    len(high.alerts),
+                )
             evaluations.append(
                 ProjectEvaluation(
                     project_id=project.id,
                     outcome=EvaluationOutcome.evaluated,
-                    alerts=(alert,) if alert is not None else (),
+                    alerts=((stale_alert,) if stale_alert is not None else ()) + high.alerts,
                 )
             )
         results.append(
@@ -310,4 +342,4 @@ def _evaluate_projects(
                 note=note,
             )
         )
-    return results, evaluations
+    return results, evaluations, histories
