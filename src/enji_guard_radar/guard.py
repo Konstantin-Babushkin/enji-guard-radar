@@ -6,13 +6,14 @@ could read as "no runs". Only a well-formed empty list is a real empty answer.
 
 import logging
 import re
-from collections.abc import Callable, Iterator, Mapping
+from collections.abc import Callable, Iterable, Iterator, Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from enum import StrEnum
 
 from pydantic import AwareDatetime, BaseModel, ConfigDict
 
+from enji_guard_radar.guard_report import ReportResult, read_report
 from enji_guard_radar.ports import GuardCallError, GuardTools
 
 logger = logging.getLogger(__name__)
@@ -91,6 +92,7 @@ class AuditRun(_Frozen):
 class RepoRuns(_Frozen):
     repository: GuardRepository
     runs: tuple[AuditRun, ...]
+    reports: tuple[ReportResult, ...] = ()
 
 
 class ProjectOk(_Frozen):
@@ -130,6 +132,23 @@ class Page[T]:
     items: tuple[T, ...]
     has_more: bool
     next_cursor: str | None
+
+
+def newest_counting_runs_by_action_key(runs: Iterable[AuditRun]) -> tuple[AuditRun, ...]:
+    """The counting run with the latest completion per audit type, sorted by action_key.
+
+    On equal completion times the run that comes first in Guard's order stays.
+    """
+    newest: dict[str, AuditRun] = {}
+    for run in runs:
+        if not run.counts or run.completed_at is None:
+            continue
+        current = newest.get(run.action_key)
+        if current is None or (
+            current.completed_at is not None and run.completed_at > current.completed_at
+        ):
+            newest[run.action_key] = run
+    return tuple(newest[key] for key in sorted(newest))
 
 
 def parse_guard_time(value: str) -> datetime:
@@ -320,6 +339,16 @@ def _read_runs(tools: GuardTools, repository: GuardRepository) -> tuple[AuditRun
     return tuple(runs)
 
 
+def _repo_runs(tools: GuardTools, repository: GuardRepository) -> RepoRuns:
+    runs = _read_runs(tools, repository)
+    # A report failure is local to that report (ReportUnknown); it never makes the project unknown.
+    reports = tuple(
+        read_report(tools, run.task_id, run.action_key)
+        for run in newest_counting_runs_by_action_key(runs)
+    )
+    return RepoRuns(repository=repository, runs=runs, reports=reports)
+
+
 def fetch_project(tools: GuardTools, project: GuardProject) -> ProjectData:
     """Read a project's repositories and runs; any failure is unknown, never a partial result."""
     try:
@@ -328,10 +357,7 @@ def fetch_project(tools: GuardTools, project: GuardProject) -> ProjectData:
             tools, TOOL_LIST_REPOSITORIES, {ARG_PROJECT_ID: project.id}, parse_repositories_page
         ):
             repositories.extend(page.items)
-        repo_runs = tuple(
-            RepoRuns(repository=repository, runs=_read_runs(tools, repository))
-            for repository in repositories
-        )
+        repo_runs = tuple(_repo_runs(tools, repository) for repository in repositories)
     except GuardDataError as error:
         logger.warning("project %s is unknown: %s", project.id, error)
         return ProjectUnknown(project=project, reason=str(error))
