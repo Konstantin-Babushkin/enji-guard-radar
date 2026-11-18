@@ -24,6 +24,7 @@ SHELL_MODULES = {
     # two plans from both editing this file. A name with no module has no effect on the checks.
     "cli_auth",
     "mcp_guard",
+    "cli_doctor",
 }
 # `__init__` only imports `cli` lazily inside main(), so the package import stays light.
 EXEMPT_MODULES = {"__init__"}
