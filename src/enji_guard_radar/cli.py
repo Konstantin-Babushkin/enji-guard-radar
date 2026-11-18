@@ -13,17 +13,18 @@ from typing import TextIO
 
 from pydantic import SecretStr
 
-from enji_guard_radar import cli_auth
+from enji_guard_radar import cli_auth, cli_doctor
 from enji_guard_radar.config import ConfigError, RadarConfig, parse_config
 from enji_guard_radar.env_file import EnvFileError, read_env_file
 from enji_guard_radar.fixture_source import FixtureGuardTools
 from enji_guard_radar.guard import GuardDataError, parse_guard_time
 from enji_guard_radar.guard_credentials import LoginTransport, UrllibOAuthTransport
 from enji_guard_radar.ledger import StateStore
+from enji_guard_radar.mcp_guard import open_guard
 from enji_guard_radar.messages import render_alert
 from enji_guard_radar.model import Audience, OutboundMessage
 from enji_guard_radar.pipeline import Deps, ProjectStatus, RunReport, run_once
-from enji_guard_radar.ports import Clock, GuardCallError, Notifier, Printed
+from enji_guard_radar.ports import Clock, GuardCallError, GuardConnector, Notifier, Printed
 from enji_guard_radar.secret_guard import SecretGatedNotifier, configure_logging, redact
 from enji_guard_radar.settings import (
     ENV_CHAT_ID,
@@ -155,6 +156,7 @@ def _build_parser() -> argparse.ArgumentParser:
         "--now", metavar="ISO8601", help="fixed clock, for example 2026-11-16T12:00:00Z"
     )
     cli_auth.add_parser(commands)
+    cli_doctor.add_parser(commands)
     return parser
 
 
@@ -278,6 +280,7 @@ def main(
     stdout: TextIO | None = None,
     oauth_transport: LoginTransport | None = None,
     prompt: Callable[[str], str] | None = None,
+    guard_connector: GuardConnector | None = None,
 ) -> int:
     out = stdout if stdout is not None else sys.stdout
     args = _build_parser().parse_args(argv)
@@ -299,6 +302,16 @@ def main(
             prompt=prompt,
             clock=system_clock,
             new_secret=None,
+        )
+
+    if args.command == "doctor":
+        return cli_doctor.run_doctor(
+            args,
+            out=out,
+            environ=environ if environ is not None else os.environ,
+            transport=transport if transport is not None else UrllibTransport(),
+            guard_connector=guard_connector or (lambda d: open_guard(d, clock=system_clock)),
+            clock=system_clock,
         )
 
     if args.env_file is not None:

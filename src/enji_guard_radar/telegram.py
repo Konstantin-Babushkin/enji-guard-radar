@@ -7,7 +7,7 @@ import time
 import urllib.error
 import urllib.request
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Literal, Protocol
 
 from pydantic import SecretStr
@@ -92,6 +92,8 @@ class TelegramResult:
     retry_after: int | None = None
     migrate_to_chat_id: int | None = None
     message_id: int | None = None
+    # The API's `result` when it is a JSON object (getMe, getChatMember, getChat); else None.
+    result: Mapping[str, object] | None = None
 
 
 def _as_int(value: object) -> int | None:
@@ -112,6 +114,7 @@ def parse_telegram_response(response: HttpResponse) -> TelegramResult:
         return TelegramResult(ok=False, status=response.status)
     parameters = _as_mapping(data.get("parameters"))
     description = data.get("description")
+    raw_result = data.get("result")
     return TelegramResult(
         ok=data["ok"],
         status=response.status,
@@ -119,8 +122,36 @@ def parse_telegram_response(response: HttpResponse) -> TelegramResult:
         description=description if isinstance(description, str) else None,
         retry_after=_as_int(parameters.get("retry_after")),
         migrate_to_chat_id=_as_int(parameters.get("migrate_to_chat_id")),
-        message_id=_as_int(_as_mapping(data.get("result")).get("message_id")),
+        message_id=_as_int(_as_mapping(raw_result).get("message_id")),
+        result=raw_result if isinstance(raw_result, dict) else None,
     )
+
+
+def chat_payload_id(chat_id: str) -> int | str:
+    """A numeric chat id goes to Telegram as a number, an @username as text."""
+    return int(chat_id) if _NUMERIC_CHAT_ID.fullmatch(chat_id) else chat_id
+
+
+def call_method(
+    token: SecretStr,
+    method: str,
+    payload: Mapping[str, object],
+    transport: HttpTransport,
+    *,
+    timeout_s: float = 10.0,
+) -> TelegramResult:
+    """One Bot API call that sends nothing (getMe, getChatMember, getChat).
+
+    Raises TransportFailure when there is no HTTP answer. The URL carries the token, so it lives
+    in this local variable only, and the description is redacted before it is returned.
+    """
+    secret = token.get_secret_value()
+    url = f"{TELEGRAM_API_BASE}/bot{secret}/{method}"
+    result = parse_telegram_response(transport.post_json(url, payload, timeout_s))
+    if result.description is None:
+        return result
+    description = redact(result.description, [secret])[:MAX_DESCRIPTION_CHARS]
+    return replace(result, description=description)
 
 
 def classify_result(result: TelegramResult) -> DeliveryError | None:
@@ -173,7 +204,7 @@ class TelegramNotifier:
         self._last_request_at: float | None = None
 
     def _chat_payload_id(self) -> int | str:
-        return int(self.chat_id) if _NUMERIC_CHAT_ID.fullmatch(self.chat_id) else self.chat_id
+        return chat_payload_id(self.chat_id)
 
     def _wait_for_interval(self) -> None:
         if self._last_request_at is None:

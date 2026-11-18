@@ -20,6 +20,8 @@ from enji_guard_radar.telegram import (
     TelegramNotifier,
     TransportFailure,
     UrllibTransport,
+    call_method,
+    chat_payload_id,
     classify_result,
     parse_telegram_response,
 )
@@ -361,3 +363,51 @@ def test_send_logs_each_failure_once_without_the_token(caplog: pytest.LogCapture
     assert len(records) == 1
     assert records[0].levelno == logging.ERROR
     assert FAKE_TOKEN not in caplog.text
+
+
+def get_me_response() -> HttpResponse:
+    body = {"ok": True, "result": {"id": 777, "is_bot": True, "username": "radar_bot"}}
+    return HttpResponse(status=200, body=json.dumps(body).encode())
+
+
+def test_call_method_returns_the_result_object_and_builds_the_url() -> None:
+    fake = FakeTransport([get_me_response()])
+    result = call_method(SecretStr(FAKE_TOKEN), "getMe", {}, fake)
+    assert result.ok
+    assert result.result == {"id": 777, "is_bot": True, "username": "radar_bot"}
+    ((url, payload),) = fake.requests
+    assert url.endswith(f"/bot{FAKE_TOKEN}/getMe")
+    assert payload == {}
+
+
+@pytest.mark.parametrize("raw", [[1, 2], True, "text", None])
+def test_call_method_result_is_none_unless_it_is_an_object(raw: object) -> None:
+    body = json.dumps({"ok": True, "result": raw}).encode()
+    fake = FakeTransport([HttpResponse(status=200, body=body)])
+    assert call_method(SecretStr(FAKE_TOKEN), "getChat", {"chat_id": 1}, fake).result is None
+
+
+def test_call_method_redacts_the_token_from_the_description() -> None:
+    description = f"Unauthorized {FAKE_TOKEN} for you"
+    fake = FakeTransport([error_response(401, 401, description)])
+    result = call_method(SecretStr(FAKE_TOKEN), "getMe", {}, fake)
+    assert not result.ok
+    assert result.error_code == 401
+    assert FAKE_TOKEN not in repr(result)
+    assert result.description is not None
+    assert "[REDACTED]" in result.description
+
+
+def test_call_method_lets_a_transport_failure_through_without_the_url() -> None:
+    fake = FakeTransport([TransportFailure("timeout", "request timed out")])
+    with pytest.raises(TransportFailure) as raised:
+        call_method(SecretStr(FAKE_TOKEN), "getMe", {}, fake)
+    assert FAKE_TOKEN not in str(raised.value)
+
+
+@pytest.mark.parametrize(
+    ("chat_id", "expected"),
+    [("-1001234567890", -1001234567890), ("42", 42), ("@radar_group", "@radar_group")],
+)
+def test_chat_payload_id(chat_id: str, expected: int | str) -> None:
+    assert chat_payload_id(chat_id) == expected
