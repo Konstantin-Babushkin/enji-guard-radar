@@ -23,7 +23,7 @@ from enji_guard_radar.ledger import StateStore
 from enji_guard_radar.mcp_guard import open_guard
 from enji_guard_radar.messages import render_alert
 from enji_guard_radar.model import Audience, OutboundMessage
-from enji_guard_radar.pipeline import Deps, ProjectStatus, RunReport, run_once
+from enji_guard_radar.pipeline import Deps, DigestStatus, ProjectStatus, RunReport, run_once
 from enji_guard_radar.poll_cost import CountingGuardTools, format_poll_cost
 from enji_guard_radar.ports import (
     Clock,
@@ -96,6 +96,13 @@ def _counts(report: RunReport) -> tuple[int, int, int, int]:
     )
 
 
+def _follow_ups_line(report: RunReport) -> str | None:
+    reminders = len(report.reminder_messages)
+    if not reminders and report.digest is DigestStatus.NOT_DUE:
+        return None
+    return f"follow-ups: {reminders} reminder message(s), digest {report.digest.value}"
+
+
 def format_dry_run_report(report: RunReport, printed: Sequence[OutboundMessage]) -> str:
     now = report.now.astimezone(UTC).isoformat().replace("+00:00", "Z")
     lines = [f"DRY RUN at {now}: nothing is sent and no state is written."]
@@ -109,6 +116,9 @@ def format_dry_run_report(report: RunReport, printed: Sequence[OutboundMessage])
     lines += [f"{r.project_name}: {r.note}" for r in unchecked]
     evaluated, stale, never_ran, not_checked = _counts(report)
     would_send = sum(1 for m in printed if m.audience is Audience.GROUP)
+    follow_ups = _follow_ups_line(report)
+    if follow_ups is not None:
+        lines.append(follow_ups)
     lines.append(
         f"summary: {evaluated} evaluated, {stale} stale, {never_ran} never ran, "
         f"{not_checked} not checked, {would_send} message(s) would be sent, "
@@ -315,6 +325,9 @@ def _run(
         text = format_dry_run_report(report, printer.messages) + cost_line + "\n"
     else:
         text = format_live_summary(report)
+        follow_ups = _follow_ups_line(report)
+        if follow_ups is not None:
+            text += follow_ups + "\n"
     out.write(redact(text, secrets))
     return report.exit_code
 
