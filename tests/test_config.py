@@ -1,9 +1,12 @@
+import re
 from pathlib import Path
 
 import pytest
 
+from enji_guard_radar import config as config_module
 from enji_guard_radar.cli import read_config
 from enji_guard_radar.config import ConfigError, RadarConfig, parse_config
+from enji_guard_radar.high_history import HISTORY_WINDOW
 
 EXAMPLE = Path(__file__).resolve().parents[1] / "config" / "radar.example.yaml"
 PROJECT = "00000000-0000-4000-8000-00000000a002"
@@ -286,3 +289,221 @@ def test_phase3_sections_reach_their_accessors(tmp_path: Path) -> None:
     assert config.tooling_window_for(PROJECT) == 30
     assert config.tooling_window_for("other") == 90
     assert config.tooling_gaps.audit_types == ("audit.security", "audit.tests")
+
+
+def test_phase3_defaults_are_the_decided_ones() -> None:
+    config = RadarConfig()
+    assert (config.digest.weekday, config.digest.weekday_number) == ("wednesday", 2)
+    assert (config.digest.hour_utc, config.digest.grace_hours, config.digest.max_items) == (
+        5,
+        24,
+        10,
+    )
+    assert config.reminders.every_days == 7
+    assert (config.scores.ai_readiness_below, config.scores.tests_below) == (None, None)
+    assert config.recurring.after_runs == 3
+    assert config.tooling_gaps.window_days == 60
+    assert config.tooling_gaps.audit_types == (
+        "audit.dead-code",
+        "audit.implementation-unification",
+        "audit.security",
+        "audit.dependency-hygiene",
+    )
+
+
+def test_phase3_score_rules_ship_off() -> None:
+    config = RadarConfig()
+    assert config.score_threshold_for("any", "audit.ai-readiness") is None
+    assert config.score_threshold_for("any", "audit.tests") is None
+    assert config.tooling_window_for("any") == 60
+
+
+def test_phase3_recurring_max_fits_the_stored_history() -> None:
+    assert config_module.RECURRING_AFTER_MAX <= HISTORY_WINDOW
+
+
+# (section, key, accepted values, rejected values); rejected are YAML scalars.
+INT_KEYS = [
+    ("digest", "hour_utc", [0, 5, 23], ["24", "-1"]),
+    ("digest", "grace_hours", [1, 24, 168], ["0", "169"]),
+    ("digest", "max_items", [3, 10, 50], ["2", "51"]),
+    ("reminders", "every_days", [1, 7, 90], ["0", "91"]),
+    ("scores", "ai_readiness_below", [0, 50, 100], ["101", "-1"]),
+    ("scores", "tests_below", [0, 50, 100], ["101", "-1"]),
+    ("recurring", "after_runs", [2, 3, 20], ["1", "21"]),
+    ("tooling_gaps", "window_days", [7, 60, 365], ["6", "366"]),
+]
+WRONG_TYPES = ["'5'", "5.0", "true", "false"]
+
+
+def _int_rows(accepted: bool) -> list[tuple[str, str, object]]:
+    return [
+        (section, key, value)
+        for section, key, good, bad in INT_KEYS
+        for value in (good if accepted else bad + WRONG_TYPES)
+    ]
+
+
+@pytest.mark.parametrize(("section", "key", "value"), _int_rows(accepted=True))
+def test_phase3_int_keys_accept_the_range(section: str, key: str, value: int) -> None:
+    config = parse(f"{section}: {{{key}: {value}}}")
+    assert getattr(getattr(config, section), key) == value
+
+
+@pytest.mark.parametrize(("section", "key", "value"), _int_rows(accepted=False))
+def test_phase3_int_keys_reject_without_echoing_the_value(
+    section: str, key: str, value: str
+) -> None:
+    with pytest.raises(ConfigError) as error:
+        parse_config(f"{section}: {{{key}: {value}}}", source="c.yaml")
+    message = str(error.value)
+    assert f"c.yaml: {section}.{key}:" in message
+    assert "input_value" not in message
+    assert re.search(rf"(?<![\w.-]){re.escape(value.strip(chr(39)))}(?![\w.])", message) is None
+
+
+@pytest.mark.parametrize("key", ["ai_readiness_below", "tests_below"])
+def test_scores_null_means_off(key: str) -> None:
+    assert getattr(parse(f"scores: {{{key}: null}}").scores, key) is None
+
+
+@pytest.mark.parametrize("name", config_module.WEEKDAY_NAMES)
+def test_digest_weekday_accepts_every_name(name: str) -> None:
+    config = parse(f"digest: {{weekday: {name}}}")
+    assert config.digest.weekday == name
+    assert config.digest.weekday_number == config_module.WEEKDAY_NAMES.index(name)
+
+
+def test_digest_weekday_monday_is_zero_and_sunday_is_six() -> None:
+    assert parse("digest: {weekday: monday}").digest.weekday_number == 0
+    assert parse("digest: {weekday: sunday}").digest.weekday_number == 6
+
+
+@pytest.mark.parametrize("value", ["Wednesday", "wed", "3", "null", "''"])
+def test_digest_weekday_rejects(value: str) -> None:
+    with pytest.raises(ConfigError) as error:
+        parse_config(f"digest: {{weekday: {value}}}", source="c.yaml")
+    assert "c.yaml: digest.weekday:" in str(error.value)
+    assert "input_value" not in str(error.value)
+
+
+def test_tooling_gaps_audit_types_accepts_a_list() -> None:
+    config = parse("tooling_gaps: {audit_types: [audit.tests, audit.dead-code]}")
+    assert config.tooling_gaps.audit_types == ("audit.tests", "audit.dead-code")
+
+
+@pytest.mark.parametrize(
+    "value",
+    ["null", "[]", "[security]", "[audit.Security]", "[audit.]", "[audit.tests, audit.tests]"],
+)
+def test_tooling_gaps_audit_types_rejects(value: str) -> None:
+    with pytest.raises(ConfigError, match=r"c\.yaml: tooling_gaps\.audit_types"):
+        parse_config(f"tooling_gaps: {{audit_types: {value}}}", source="c.yaml")
+
+
+def test_tooling_gaps_and_high_share_the_audit_type_messages() -> None:
+    messages = []
+    for section in ("high", "tooling_gaps"):
+        with pytest.raises(ConfigError) as error:
+            parse_config(f"{section}: {{audit_types: [audit.a, audit.a]}}", source="c.yaml")
+        messages.append(str(error.value).split(": ", 2)[-1])
+    assert messages[0] == messages[1]
+
+
+def test_phase3_high_audit_types_still_accepts_null_and_a_list() -> None:
+    assert parse("high: {audit_types: null}").high.audit_types is None
+    assert parse("high: {audit_types: [audit.security]}").high.audit_types == ("audit.security",)
+
+
+@pytest.mark.parametrize(
+    ("text", "where"),
+    [
+        ("digest: {colour: red}", "digest.colour"),
+        ("reminders: {every: 3}", "reminders.every"),
+        ("scores: {security_below: 3}", "scores.security_below"),
+        ("recurring: {after: 3}", "recurring.after"),
+        ("tooling_gaps: {window: 3}", "tooling_gaps.window"),
+        (f"projects: {{'{PROJECT}': {{tooling_days: 9}}}}", f"projects.{PROJECT}.tooling_days"),
+    ],
+)
+def test_phase3_unknown_key_names_file_and_dotted_key(text: str, where: str) -> None:
+    with pytest.raises(ConfigError) as error:
+        parse(text)
+    assert f"test.yaml: {where}:" in str(error.value)
+
+
+@pytest.mark.parametrize("section", ["digest", "reminders", "scores", "recurring", "tooling_gaps"])
+def test_phase3_duplicate_section_key_is_rejected(section: str) -> None:
+    with pytest.raises(ConfigError, match="duplicated key"):
+        parse(f"{section}: {{}}\n{section}: {{}}\n")
+
+
+def test_recurring_duplicate_field_is_rejected() -> None:
+    with pytest.raises(ConfigError, match="duplicated key 'after_runs'"):
+        parse("recurring:\n  after_runs: 3\n  after_runs: 4\n")
+
+
+@pytest.mark.parametrize(
+    ("key", "good", "bad"),
+    [
+        ("ai_readiness_below", [0, 60, 100], ["101", "-1", "'5'", "5.0", "true"]),
+        ("tests_below", [0, 60, 100], ["101", "-1", "'5'", "5.0", "true"]),
+        ("tooling_window_days", [7, 90, 365], ["6", "366", "'9'", "9.0", "true"]),
+    ],
+)
+def test_phase3_project_override_bounds(key: str, good: list[int], bad: list[str]) -> None:
+    for value in good:
+        entry = parse(f"projects: {{p1: {{{key}: {value}}}}}").projects["p1"]
+        assert getattr(entry, key) == value
+    assert getattr(parse("projects: {p1: {}}").projects["p1"], key) is None
+    for value in bad:
+        with pytest.raises(ConfigError, match=rf"test\.yaml: projects\.p1\.{key}:"):
+            parse(f"projects: {{p1: {{{key}: {value}}}}}")
+
+
+def test_scores_project_value_beats_section_value() -> None:
+    config = parse("scores: {tests_below: 50}\nprojects: {p1: {tests_below: 20}, p2: {}}")
+    assert config.score_threshold_for("p1", "audit.tests") == 20
+    assert config.score_threshold_for("p2", "audit.tests") == 50
+    assert config.score_threshold_for("unlisted", "audit.tests") == 50
+
+
+def test_scores_project_zero_wins_over_a_section_value() -> None:
+    config = parse("scores: {tests_below: 50}\nprojects: {p1: {tests_below: 0}}")
+    assert config.score_threshold_for("p1", "audit.tests") == 0
+
+
+def test_scores_project_value_applies_with_the_section_off() -> None:
+    config = parse("projects: {p1: {ai_readiness_below: 70}}")
+    assert config.score_threshold_for("p1", "audit.ai-readiness") == 70
+    assert config.score_threshold_for("p2", "audit.ai-readiness") is None
+
+
+@pytest.mark.parametrize("action_key", ["audit.security", "audit.recon", "", "ai-readiness"])
+def test_scores_unknown_audit_type_has_no_threshold(action_key: str) -> None:
+    config = parse("scores: {ai_readiness_below: 50, tests_below: 50}")
+    assert config.score_threshold_for("p1", action_key) is None
+
+
+def test_tooling_gaps_window_project_override_beats_section() -> None:
+    config = parse("tooling_gaps: {window_days: 90}\nprojects: {p1: {tooling_window_days: 14}}")
+    assert config.tooling_window_for("p1") == 14
+    assert config.tooling_window_for("p2") == 90
+
+
+def test_phase3_example_documents_every_new_key() -> None:
+    text = EXAMPLE.read_text(encoding="utf-8")
+    for key in (
+        "weekday:",
+        "hour_utc:",
+        "grace_hours:",
+        "max_items:",
+        "every_days:",
+        "ai_readiness_below:",
+        "tests_below:",
+        "after_runs:",
+        "window_days:",
+        "audit_types:",
+        "tooling_window_days:",
+    ):
+        assert key in text, key
