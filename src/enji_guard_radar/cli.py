@@ -23,7 +23,7 @@ from enji_guard_radar.ledger import StateStore
 from enji_guard_radar.mcp_guard import open_guard
 from enji_guard_radar.messages import render_alert
 from enji_guard_radar.model import Audience, OutboundMessage
-from enji_guard_radar.pipeline import Deps, ProjectStatus, RunReport, run_once
+from enji_guard_radar.pipeline import Deps, DigestStatus, ProjectStatus, RunReport, run_once
 from enji_guard_radar.poll_cost import CountingGuardTools, format_poll_cost
 from enji_guard_radar.ports import (
     Clock,
@@ -96,6 +96,16 @@ def _counts(report: RunReport) -> tuple[int, int, int, int]:
     )
 
 
+def follow_ups_line(report: RunReport) -> str:
+    """Reminders and the weekly digest of this run; empty when neither did anything."""
+    if not report.reminder_messages and report.digest is DigestStatus.NOT_DUE:
+        return ""
+    return (
+        f"follow-ups: {len(report.reminder_messages)} reminder message(s), "
+        f"digest {report.digest.value}\n"
+    )
+
+
 def format_dry_run_report(report: RunReport, printed: Sequence[OutboundMessage]) -> str:
     now = report.now.astimezone(UTC).isoformat().replace("+00:00", "Z")
     lines = [f"DRY RUN at {now}: nothing is sent and no state is written."]
@@ -107,6 +117,9 @@ def format_dry_run_report(report: RunReport, printed: Sequence[OutboundMessage])
     unchecked = [r for r in report.results if r.status is not ProjectStatus.EVALUATED]
     lines.append(f"--- not checked ({len(unchecked)}) ---")
     lines += [f"{r.project_name}: {r.note}" for r in unchecked]
+    follow_ups = follow_ups_line(report)
+    if follow_ups:
+        lines.append(follow_ups.rstrip("\n"))
     evaluated, stale, never_ran, not_checked = _counts(report)
     would_send = sum(1 for m in printed if m.audience is Audience.GROUP)
     lines.append(
@@ -314,7 +327,7 @@ def _run(
     if args.dry_run:
         text = format_dry_run_report(report, printer.messages) + cost_line + "\n"
     else:
-        text = format_live_summary(report)
+        text = format_live_summary(report) + follow_ups_line(report)
     out.write(redact(text, secrets))
     return report.exit_code
 
