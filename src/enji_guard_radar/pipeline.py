@@ -6,6 +6,7 @@ saved right after that mark (at-least-once delivery).
 """
 
 import logging
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from datetime import datetime
 from enum import StrEnum
@@ -31,7 +32,7 @@ from enji_guard_radar.health import (
     mark_ops_delivered,
     ops_message,
 )
-from enji_guard_radar.high_rules import evaluate_high, skip_report_for
+from enji_guard_radar.high_rules import HIGH_LEVEL, evaluate_high, skip_report_for
 from enji_guard_radar.ledger import (
     Corrupt,
     EvaluationOutcome,
@@ -48,7 +49,7 @@ from enji_guard_radar.ledger import (
     reconcile,
 )
 from enji_guard_radar.messages import escape, render_messages
-from enji_guard_radar.model import Alert, AlertKey, Audience, OutboundMessage
+from enji_guard_radar.model import Alert, AlertKey, AlertKind, Audience, OutboundMessage
 from enji_guard_radar.ports import (
     Clock,
     Delivered,
@@ -59,6 +60,7 @@ from enji_guard_radar.ports import (
     Printed,
     SendOutcome,
 )
+from enji_guard_radar.reminders import mark_reminded, reminders_due, render_reminders
 from enji_guard_radar.score_rules import SCORE_ACTION_KEYS, LowScore, evaluate_scores
 from enji_guard_radar.stale import StaleResult, alert_for, evaluate_stale
 from enji_guard_radar.tooling_rules import ToolingGap, evaluate_tooling
@@ -131,6 +133,10 @@ class RunReport(BaseModel):
     # What this poll found for the digest; nothing here is ever sent as an alert (SC1, SC3).
     low_scores: tuple[LowScore, ...] = ()
     tooling_gaps: tuple[ToolingGap, ...] = ()
+    # Reminders for open High series (D-11): kept apart from the alerts in `messages`.
+    reminder_messages: tuple[OutboundMessage, ...] = ()
+    reminders_delivered: int = 0
+    follow_up_not_delivered: int = 0
 
     @property
     def exit_code(self) -> int:
@@ -243,32 +249,53 @@ def _run_locked(deps: Deps, now: datetime) -> RunReport:
     deps.store.save(rec.state)
 
     messages = render_messages(rec.to_send, collapse_above=deps.config.alerts.collapse_above)
-    delivered = printed = not_delivered = 0
     actions: list[str] = []
-    unauthorized = False
-    state = rec.state
-    for message in messages:
-        outcome = deps.notifier.send(message)
-        if isinstance(outcome, Delivered):
-            state = apply_delivery(state, message.keys, now)
-            deps.store.save(state)
-            delivered += 1
-        elif isinstance(outcome, Printed):
-            printed += 1
-        elif isinstance(outcome, NotDelivered):
-            not_delivered += 1
-            unauthorized = unauthorized or outcome.error is DeliveryError.UNAUTHORIZED
-            logger.warning("message not delivered: %s (%s)", outcome.error, outcome.detail)
-        _note_action(outcome, actions)
-        if isinstance(outcome, NotDelivered) and outcome.stop_sending:
-            logger.warning("stopping delivery after a fatal send error")
-            break
+    alert_delivery = _deliver(
+        deps,
+        messages,
+        rec.state,
+        now,
+        actions,
+        lambda current, message: apply_delivery(current, message.keys, now),
+    )
+    state = alert_delivery.state
+    delivered = alert_delivery.delivered
+    printed = alert_delivery.printed
+    not_delivered = alert_delivery.not_delivered
+    unauthorized = alert_delivery.unauthorized
+
+    reminder_messages: list[OutboundMessage] = []
+    reminders_delivered = follow_up_not_delivered = 0
+    if alert_delivery.fatal:
+        logger.info("reminders skipped: delivery stopped on a fatal send error")
+    else:
+        reminder_messages = _due_reminders(deps, polled.evaluations, rec.to_send, state, now)
+        follow_up = _deliver(
+            deps,
+            reminder_messages,
+            state,
+            now,
+            actions,
+            lambda current, message: mark_reminded(current, message.keys, now),
+        )
+        state = follow_up.state
+        reminders_delivered = follow_up.delivered
+        follow_up_not_delivered = follow_up.not_delivered
+        unauthorized = unauthorized or follow_up.unauthorized
+        if reminder_messages:
+            logger.info(
+                "reminders: %d due, %d delivered",
+                sum(len(message.keys) for message in reminder_messages),
+                reminders_delivered,
+            )
+        if follow_up_not_delivered:
+            logger.warning("reminder not delivered (%s); retried next run", follow_up.last_error)
 
     _notify_ops_of_actions(deps, actions, unauthorized=unauthorized)
     state, ops_sent = _send_ops_action(deps, state, step.action, now)
     if poll_failed:
         run_outcome = RunOutcome.GUARD_UNAVAILABLE
-    elif not_delivered or actions:
+    elif not_delivered or follow_up_not_delivered or actions:
         run_outcome = RunOutcome.ATTENTION
     else:
         run_outcome = RunOutcome.COMPLETED
@@ -295,7 +322,41 @@ def _run_locked(deps: Deps, now: datetime) -> RunReport:
         ops_sent=ops_sent,
         low_scores=polled.low_scores,
         tooling_gaps=polled.tooling_gaps,
+        reminder_messages=tuple(reminder_messages),
+        reminders_delivered=reminders_delivered,
+        follow_up_not_delivered=follow_up_not_delivered,
     )
+
+
+def _due_reminders(
+    deps: Deps,
+    evaluations: Sequence[ProjectEvaluation],
+    planned: Sequence[Alert],
+    state: State,
+    now: datetime,
+) -> list[OutboundMessage]:
+    """The reminder messages for open High series whose last alert or reminder is old enough."""
+    open_high = [
+        alert
+        for evaluation in evaluations
+        for alert in evaluation.alerts
+        if alert.kind is AlertKind.HIGH_FINDINGS
+    ]
+    alerted_at = {
+        c.key: c.alerted_at
+        for c in state.conditions
+        if c.key.level == HIGH_LEVEL and c.alerted_at is not None
+    }
+    reminded_at = {clock.key(): clock.last_reminded_at for clock in state.reminders}
+    due = reminders_due(
+        open_high,
+        alerted_at=alerted_at,
+        reminded_at=reminded_at,
+        planned={alert.key for alert in planned},
+        every_days=deps.config.reminders.every_days,
+        now=now,
+    )
+    return render_reminders(due)
 
 
 def _log_poll(failures: int, failed: bool, cause: str) -> None:
@@ -339,6 +400,52 @@ def _halt(deps: Deps, now: datetime, load: Corrupt) -> RunReport:
         outcome = deps.ops_notifier.send(ops_message_for_halt(load.reason, load.backup_valid))
         logger.info("ops message about the corrupt state: %s", type(outcome).__name__)
     return _empty_report(now, RunOutcome.HALTED, halt_reason=load.reason)
+
+
+@dataclass(frozen=True)
+class _Delivery:
+    """What `_deliver` did: the state after the acknowledged marks and the fate of each send."""
+
+    state: State
+    delivered: int = 0
+    printed: int = 0
+    not_delivered: int = 0
+    unauthorized: bool = False
+    fatal: bool = False
+    last_error: str | None = None
+
+
+def _deliver(
+    deps: Deps,
+    messages: Sequence[OutboundMessage],
+    state: State,
+    now: datetime,
+    actions: list[str],
+    mark: Callable[[State, OutboundMessage], State],
+) -> _Delivery:
+    """Send each message; after an acknowledgement apply `mark` and save before the next send."""
+    delivered = printed = not_delivered = 0
+    unauthorized = fatal = False
+    last_error: str | None = None
+    for message in messages:
+        outcome = deps.notifier.send(message)
+        if isinstance(outcome, Delivered):
+            state = mark(state, message)
+            deps.store.save(state)
+            delivered += 1
+        elif isinstance(outcome, Printed):
+            printed += 1
+        elif isinstance(outcome, NotDelivered):
+            not_delivered += 1
+            unauthorized = unauthorized or outcome.error is DeliveryError.UNAUTHORIZED
+            last_error = outcome.error.name
+            logger.warning("message not delivered: %s (%s)", outcome.error, outcome.detail)
+        _note_action(outcome, actions)
+        if isinstance(outcome, NotDelivered) and outcome.stop_sending:
+            logger.warning("stopping delivery after a fatal send error")
+            fatal = True
+            break
+    return _Delivery(state, delivered, printed, not_delivered, unauthorized, fatal, last_error)
 
 
 def _note_action(outcome: SendOutcome, actions: list[str]) -> None:
