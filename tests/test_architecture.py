@@ -25,6 +25,7 @@ SHELL_MODULES = {
     "cli_auth",
     "mcp_guard",
     "cli_doctor",
+    "cli_probe",
 }
 # `__init__` only imports `cli` lazily inside main(), so the package import stays light.
 EXEMPT_MODULES = {"__init__"}
