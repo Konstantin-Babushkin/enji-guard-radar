@@ -129,6 +129,30 @@ After you have reviewed the test-chat alerts and a few runs in the journal, put 
 chat id in `TELEGRAM_CHAT_ID` in `radar.env`, run `doctor` (it checks the bot is a member) and
 wait for the next timer run. Alerts already in `state.json` are not re-sent to the new chat.
 
+## Reminders
+
+An open High finding that nobody has dealt with is sent again as a reminder: a separate
+message titled "Reminder: High findings are still open". It lists each open High series with
+its finding count, audit type, repository and how long the radar has seen it ("Seen by the
+radar since ...").
+
+A series is reminded every `reminders.every_days` days (default 7), counted from the last
+alert or reminder of that series, and never earlier. If the count rises and the series is
+alerted again, the clock restarts from that alert. There is no cap: the series is reminded
+every interval for as long as it stays open. All series due in one run share one message.
+
+Never reminded: stale or never-ran projects (they appear in the weekly digest), and series
+that were only baselined and never alerted (they also appear in the digest). A series that
+closed, or whose latest High count is 0, is not reminded either.
+
+A reminder is recorded only after Telegram acknowledges it, so a failed send is retried on the
+next run. After a fatal send error (for example a rejected bot token) no reminder is tried in
+that run, and the run exits with code 1. `run --dry-run` prints the reminders that would be
+sent and writes nothing.
+
+Set the interval with `reminders.every_days` in `/etc/enji-guard-radar/radar.yaml`, from 1 to
+90 days.
+
 ## Failure drill
 
 Prove the ops chat works before relying on it:
