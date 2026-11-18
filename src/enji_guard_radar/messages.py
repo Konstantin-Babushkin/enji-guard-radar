@@ -127,7 +127,9 @@ def render_summary_item(alert: Alert) -> str:
         if alert.age_days is None:
             message = "a stale alert needs age_days"
             raise ValueError(message)
-        return f"- <b>{name}</b>: no completed Guard run for {days_text(alert.age_days)} ({severity})"
+        return (
+            f"- <b>{name}</b>: no completed Guard run for {days_text(alert.age_days)} ({severity})"
+        )
     if alert.kind is AlertKind.HIGH_FINDINGS:
         where = high_where(alert)
         count = _high_count(alert)
@@ -182,7 +184,9 @@ def _summary_messages(ordered: Sequence[Alert], max_chars: int) -> list[Outbound
         count = len(chunks)
         while True:
             reserve = telegram_length(f" ({count}/{count})")
-            chunks = pack_items(items, telegram_length(summary_header(total, 1, 1)) + reserve, max_chars)
+            chunks = pack_items(
+                items, telegram_length(summary_header(total, 1, 1)) + reserve, max_chars
+            )
             if len(chunks) <= count:
                 break
             count = len(chunks)
