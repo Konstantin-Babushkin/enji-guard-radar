@@ -29,6 +29,42 @@ high:
 ops:
   failures_before_alert: 3
 
+# Weekly digest (D-01, D-02, D-06). Day and hour are UTC.
+digest:
+  # monday .. sunday, lowercase.
+  weekday: wednesday
+  # Hour of the day, 0..23.
+  hour_utc: 5
+  # A digest not acknowledged within this many hours of its planned moment is skipped for
+  # that week (1..168).
+  grace_hours: 24
+  # Items listed in one digest before the rest is summarised (3..50).
+  max_items: 10
+
+# Reminders (D-11): an unresolved finding is reminded about every this many days (1..90).
+reminders:
+  every_days: 7
+
+# Score rules (D-08). null = rule off (digest only). A score strictly below the number is
+# flagged (0..100). A per-project value overrides this; 0 disables the rule for one project.
+scores:
+  ai_readiness_below: null
+  tests_below: null
+
+# Recurring findings (D-09): present in this many consecutive completed runs (2..20).
+recurring:
+  after_runs: 3
+
+# Tooling gaps (D-10): an audit type with no completed run in window_days (7..365) is a gap.
+# audit_types is a non-empty list of audit.<name>, no repeats; it cannot be null.
+tooling_gaps:
+  window_days: 60
+  audit_types:
+    - audit.dead-code
+    - audit.implementation-unification
+    - audit.security
+    - audit.dependency-hygiene
+
 # Per-project settings, keyed by Guard project id. Override beats defaults.
 # mode: active (default) | paused (listed as "not checked", no Guard calls) | excluded (ignored).
 #
@@ -36,6 +72,9 @@ ops:
 #   "00000000-0000-4000-8000-00000000a002":
 #     stale_after_days: 30
 #     high_aged_after_days: 30
+#     ai_readiness_below: 60    # 0..100; 0 disables the rule for this project
+#     tests_below: 50           # 0..100; 0 disables the rule for this project
+#     tooling_window_days: 90   # 7..365
 #   "00000000-0000-4000-8000-00000000a005":
 #     mode: paused
 #   "00000000-0000-4000-8000-00000000a006":

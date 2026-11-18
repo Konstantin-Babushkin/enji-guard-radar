@@ -237,3 +237,52 @@ def test_ops_unknown_key_names_file_and_key() -> None:
     with pytest.raises(ConfigError) as error:
         parse("ops:\n  failures: 3\n")
     assert "test.yaml: ops.failures:" in str(error.value)
+
+
+# --- Phase 3 sections (digest, reminders, scores, recurring, tooling gaps) ---
+
+PHASE3_TEXT = f"""
+digest:
+  weekday: friday
+  hour_utc: 7
+  grace_hours: 48
+  max_items: 12
+reminders:
+  every_days: 14
+scores:
+  ai_readiness_below: 40
+  tests_below: 50
+recurring:
+  after_runs: 5
+tooling_gaps:
+  window_days: 90
+  audit_types: [audit.security, audit.tests]
+projects:
+  "{PROJECT}":
+    ai_readiness_below: 70
+    tests_below: 0
+    tooling_window_days: 30
+  other: {{}}
+"""
+
+
+def test_phase3_sections_reach_their_accessors(tmp_path: Path) -> None:
+    path = tmp_path / "radar.yaml"
+    path.write_text(PHASE3_TEXT, encoding="utf-8")
+    config = read_config(path)
+    assert config.digest.weekday_number == 4
+    assert (config.digest.hour_utc, config.digest.grace_hours, config.digest.max_items) == (
+        7,
+        48,
+        12,
+    )
+    assert config.reminders.every_days == 14
+    assert config.recurring.after_runs == 5
+    assert config.score_threshold_for(PROJECT, "audit.ai-readiness") == 70
+    assert config.score_threshold_for(PROJECT, "audit.tests") == 0
+    assert config.score_threshold_for("other", "audit.ai-readiness") == 40
+    assert config.score_threshold_for("other", "audit.tests") == 50
+    assert config.score_threshold_for(PROJECT, "audit.security") is None
+    assert config.tooling_window_for(PROJECT) == 30
+    assert config.tooling_window_for("other") == 90
+    assert config.tooling_gaps.audit_types == ("audit.security", "audit.tests")
