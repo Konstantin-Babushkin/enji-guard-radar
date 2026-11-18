@@ -24,6 +24,11 @@ high:
   # audit_types: [audit.security, audit.public-api-access-safety]
   audit_types: null
 
+# Radar health. After this many failed Guard polls in a row, one message goes to
+# TELEGRAM_OPS_CHAT_ID, and one more when polls work again (1..20).
+ops:
+  failures_before_alert: 3
+
 # Per-project settings, keyed by Guard project id. Override beats defaults.
 # mode: active (default) | paused (listed as "not checked", no Guard calls) | excluded (ignored).
 #

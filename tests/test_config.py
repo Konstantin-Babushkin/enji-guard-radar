@@ -216,3 +216,24 @@ def test_high_aged_override_is_independent_of_stale_override() -> None:
         for p in ("p1", "p2", "p3")
     ]
     assert got == [("p1", 7, 3), ("p2", 5, 30), ("p3", 7, 30)]
+
+
+def test_ops_defaults() -> None:
+    assert RadarConfig().ops.failures_before_alert == 3
+
+
+@pytest.mark.parametrize("value", [1, 3, 20])
+def test_ops_failures_before_alert_accepts_range(value: int) -> None:
+    assert parse(f"ops:\n  failures_before_alert: {value}\n").ops.failures_before_alert == value
+
+
+@pytest.mark.parametrize("value", ["0", "21", "3.0", "'3'", "true", "null"])
+def test_ops_failures_before_alert_rejects(value: str) -> None:
+    with pytest.raises(ConfigError, match=r"test\.yaml: ops\.failures_before_alert"):
+        parse(f"ops:\n  failures_before_alert: {value}\n")
+
+
+def test_ops_unknown_key_names_file_and_key() -> None:
+    with pytest.raises(ConfigError) as error:
+        parse("ops:\n  failures: 3\n")
+    assert "test.yaml: ops.failures:" in str(error.value)
