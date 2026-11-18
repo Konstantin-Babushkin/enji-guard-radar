@@ -64,6 +64,6 @@ def test_alerted_condition_is_not_planned_again_after_reload(tmp_path: Path) -> 
     assert third.to_send == ()
 
     raw = (tmp_path / "state" / "state.json").read_bytes()
-    assert json.loads(raw)["schema_version"] == 2
+    assert json.loads(raw)["schema_version"] == 3
     assert b"Project A" not in raw
     assert b"Project B" not in raw

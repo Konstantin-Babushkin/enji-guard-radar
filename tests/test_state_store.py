@@ -119,10 +119,10 @@ def test_corrupt_or_missing_main_loads_as_corrupt_and_changes_nothing(
 
 def test_unsupported_schema_version_loads_as_corrupt(directory: Path) -> None:
     directory.mkdir()
-    (directory / "state.json").write_bytes(b'{"schema_version": 3}')
+    (directory / "state.json").write_bytes(b'{"schema_version": 4}')
     result = FileStateStore(directory).load()
     assert isinstance(result, Corrupt)
-    assert "unsupported schema_version 3" in result.reason
+    assert "unsupported schema_version 4" in result.reason
 
 
 def test_save_refuses_to_replace_corrupt_state(directory: Path) -> None:

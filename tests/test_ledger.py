@@ -271,7 +271,7 @@ def _with(**changes: object) -> bytes:
     [
         b"{",
         b"[]",
-        _with(schema_version=3),
+        _with(schema_version=4),
         _with(schema_version="1"),
         _with(schema_version=True),
         _with(**{CANARY: 1}),
@@ -297,17 +297,17 @@ def test_deserialize_rejects_bad_input_without_echoing_content(data: bytes) -> N
 
 def test_unsupported_version_reason_names_the_version_or_its_type() -> None:
     with pytest.raises(
-        StateFormatError, match=r"unsupported schema_version 3 \(this radar reads 1 and 2\)"
+        StateFormatError, match=r"unsupported schema_version 4 \(this radar reads 1, 2 and 3\)"
     ):
-        deserialize_state(_with(schema_version=3))
+        deserialize_state(_with(schema_version=4))
     with pytest.raises(StateFormatError, match=r"unsupported schema_version str"):
         deserialize_state(_with(schema_version="1"))
 
 
-def test_schema_1_document_without_other_fields_reads_as_empty_schema_2() -> None:
+def test_schema_1_document_without_other_fields_reads_as_empty_schema_3() -> None:
     restored = deserialize_state(json.dumps({"schema_version": 1}).encode())
     assert restored == State.empty()
-    assert restored.schema_version == 2
+    assert restored.schema_version == 3
 
 
 def _run(state: State, *counts: int | None) -> list[Reconciliation]:
