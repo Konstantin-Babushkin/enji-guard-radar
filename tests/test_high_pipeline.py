@@ -215,6 +215,8 @@ BASE = datetime(2026, 11, 2, 10, tzinfo=UTC)
 CALM_CONFIG = "defaults:\n  stale_after_days: 365\n"
 # Reminders far apart, so long-span tests stay quiet unless a test turns them on.
 QUIET_REMINDERS = "reminders:\n  every_days: 90\n"
+# A one-hour digest window, so a run on a Wednesday afternoon stays quiet unless a test turns it on.
+QUIET_DIGEST = "digest:\n  grace_hours: 1\n"
 CHAT_ID = "-1001234567890"
 
 
@@ -233,11 +235,17 @@ class Sim:
     """One project with a repository; every poll builds a fresh in-memory Guard world from it."""
 
     def __init__(
-        self, tmp_path: Path, config_text: str = CALM_CONFIG, *, reminders_on: bool = False
+        self,
+        tmp_path: Path,
+        config_text: str = CALM_CONFIG,
+        *,
+        reminders_on: bool = False,
+        digest_on: bool = False,
     ) -> None:
         self.state_dir = tmp_path / "state"
         self.config_text = config_text
         self.reminders_on = reminders_on
+        self.digest_on = digest_on
         self.repos: list[tuple[str, str]] = [(RID, REPO)]
         self.runs: dict[str, list[dict[str, object]]] = {RID: []}
         self.reports: dict[str, Mapping[str, object]] = {}
@@ -270,6 +278,9 @@ class Sim:
         if not self.reminders_on:
             text = text if text.endswith("\n") else text + "\n"
             text += QUIET_REMINDERS
+        if not self.digest_on:
+            text = text if text.endswith("\n") else text + "\n"
+            text += QUIET_DIGEST
         if self.paused:
             text += f'projects:\n  "{PID}":\n    mode: paused\n'
         return parse_config(text, source="test")

@@ -8,12 +8,20 @@ saved right after that mark (at-least-once delivery).
 import logging
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
 from enum import StrEnum
 
 from pydantic import AwareDatetime, BaseModel, ConfigDict
 
 from enji_guard_radar.config import RadarConfig
+from enji_guard_radar.digest import DigestInput, build_digest, render_digest
+from enji_guard_radar.digest_schedule import (
+    Deferred,
+    DigestDecision,
+    NotDue,
+    Skipped,
+    decide_digest,
+)
 from enji_guard_radar.guard import (
     ListingOk,
     ListingUnknown,
@@ -35,6 +43,7 @@ from enji_guard_radar.health import (
 from enji_guard_radar.high_rules import HIGH_LEVEL, evaluate_high, skip_report_for
 from enji_guard_radar.ledger import (
     Corrupt,
+    DigestRecord,
     EvaluationOutcome,
     Loaded,
     ProjectEvaluation,
@@ -60,6 +69,7 @@ from enji_guard_radar.ports import (
     Printed,
     SendOutcome,
 )
+from enji_guard_radar.recurring_rules import is_recurring, trailing_high_runs
 from enji_guard_radar.reminders import mark_reminded, reminders_due, render_reminders
 from enji_guard_radar.score_rules import SCORE_ACTION_KEYS, LowScore, evaluate_scores
 from enji_guard_radar.stale import StaleResult, alert_for, evaluate_stale
@@ -105,6 +115,15 @@ class RunOutcome(StrEnum):
     HALTED = "halted"
 
 
+class DigestStatus(StrEnum):
+    NOT_DUE = "not_due"
+    SENT = "sent"
+    PRINTED = "printed"
+    DEFERRED = "deferred"
+    SKIPPED = "skipped"
+    NOT_DELIVERED = "not_delivered"
+
+
 EXIT_CODES = {
     RunOutcome.COMPLETED: 0,
     RunOutcome.ATTENTION: 1,
@@ -137,6 +156,9 @@ class RunReport(BaseModel):
     reminder_messages: tuple[OutboundMessage, ...] = ()
     reminders_delivered: int = 0
     follow_up_not_delivered: int = 0
+    # The weekly digest (D-01 to D-07): what this run did about it and the text it built.
+    digest: DigestStatus = DigestStatus.NOT_DUE
+    digest_messages: tuple[OutboundMessage, ...] = ()
 
     @property
     def exit_code(self) -> int:
@@ -150,6 +172,7 @@ def _empty_report(
     *,
     poll_failed: bool = False,
     ops_sent: int = 0,
+    digest: DigestStatus = DigestStatus.NOT_DUE,
 ) -> RunReport:
     return RunReport(
         now=now,
@@ -162,6 +185,7 @@ def _empty_report(
         halt_reason=halt_reason,
         poll_failed=poll_failed,
         ops_sent=ops_sent,
+        digest=digest,
     )
 
 
@@ -214,7 +238,14 @@ def _run_locked(deps: Deps, now: datetime) -> RunReport:
         _log_poll(step.health.consecutive_failures, True, listing.cause.value)
         deps.store.save(state)
         _, sent = _send_ops_action(deps, state, step.action, now)
-        return _empty_report(now, RunOutcome.GUARD_UNAVAILABLE, poll_failed=True, ops_sent=sent)
+        deferred = _digest_deferred(deps, state, now)
+        return _empty_report(
+            now,
+            RunOutcome.GUARD_UNAVAILABLE,
+            poll_failed=True,
+            ops_sent=sent,
+            digest=DigestStatus.DEFERRED if deferred else DigestStatus.NOT_DUE,
+        )
 
     polled = _evaluate_projects(deps, listing, now, state)
     results = polled.results
@@ -291,6 +322,13 @@ def _run_locked(deps: Deps, now: datetime) -> RunReport:
         if follow_up_not_delivered:
             logger.warning("reminder not delivered (%s); retried next run", follow_up.last_error)
 
+    digest = _digest_step(
+        deps, polled, state, now, actions, poll_failed=poll_failed, fatal=alert_delivery.fatal
+    )
+    state = digest.state
+    follow_up_not_delivered += digest.not_delivered
+    unauthorized = unauthorized or digest.unauthorized
+
     _notify_ops_of_actions(deps, actions, unauthorized=unauthorized)
     state, ops_sent = _send_ops_action(deps, state, step.action, now)
     if poll_failed:
@@ -325,6 +363,8 @@ def _run_locked(deps: Deps, now: datetime) -> RunReport:
         reminder_messages=tuple(reminder_messages),
         reminders_delivered=reminders_delivered,
         follow_up_not_delivered=follow_up_not_delivered,
+        digest=digest.status,
+        digest_messages=digest.messages,
     )
 
 
@@ -357,6 +397,27 @@ def _due_reminders(
         now=now,
     )
     return render_reminders(due)
+
+
+def _digest_decision(deps: Deps, state: State, now: datetime, *, poll_ok: bool) -> DigestDecision:
+    cfg = deps.config.digest
+    return decide_digest(
+        now,
+        handled_for=state.digest.planned_for,
+        weekday=cfg.weekday_number,
+        hour_utc=cfg.hour_utc,
+        grace=timedelta(hours=cfg.grace_hours),
+        poll_ok=poll_ok,
+    )
+
+
+def _digest_deferred(deps: Deps, state: State, now: datetime) -> bool:
+    """On an unlisted Guard: log a due digest as deferred; True when there was one."""
+    decision = _digest_decision(deps, state, now, poll_ok=False)
+    if isinstance(decision, Deferred):
+        logger.info("digest deferred: Guard poll failed; planned %s", decision.planned_for)
+        return True
+    return False
 
 
 def _log_poll(failures: int, failed: bool, cause: str) -> None:
@@ -421,17 +482,21 @@ def _deliver(
     state: State,
     now: datetime,
     actions: list[str],
-    mark: Callable[[State, OutboundMessage], State],
+    mark: Callable[[State, OutboundMessage], State] | None,
 ) -> _Delivery:
-    """Send each message; after an acknowledgement apply `mark` and save before the next send."""
+    """Send each message; after an acknowledgement apply `mark` and save before the next send.
+
+    With `mark=None` nothing is marked here: the caller marks once after the last acknowledgement.
+    """
     delivered = printed = not_delivered = 0
     unauthorized = fatal = False
     last_error: str | None = None
     for message in messages:
         outcome = deps.notifier.send(message)
         if isinstance(outcome, Delivered):
-            state = mark(state, message)
-            deps.store.save(state)
+            if mark is not None:
+                state = mark(state, message)
+                deps.store.save(state)
             delivered += 1
         elif isinstance(outcome, Printed):
             printed += 1
@@ -627,3 +692,101 @@ def _fold_scores_and_tooling(
     tooling.update({record.key(): record for record in tooled.records})
     gaps.extend(tooled.gaps)
     logger.info("tooling of %s: %d gap(s), %d undecided", pid, len(tooled.gaps), tooled.undecided)
+
+
+@dataclass(frozen=True)
+class _DigestResult:
+    state: State
+    status: DigestStatus = DigestStatus.NOT_DUE
+    messages: tuple[OutboundMessage, ...] = ()
+    not_delivered: int = 0
+    unauthorized: bool = False
+
+
+def _digest_input(deps: Deps, polled: PollData, state: State, now: datetime) -> DigestInput:
+    alerts = [alert for evaluation in polled.evaluations for alert in evaluation.alerts]
+    high = tuple(a for a in alerts if a.kind is AlertKind.HIGH_FINDINGS and a.count)
+    recurring: dict[SeriesKey, int] = {}
+    for alert in high:
+        series = (alert.key.project_id, alert.key.repo_id, alert.key.action_key)
+        history = polled.histories.get(series)
+        if is_recurring(history, after_runs=deps.config.recurring.after_runs):
+            recurring[series] = trailing_high_runs(history)
+    return DigestInput(
+        last_poll_at=now,
+        max_items=deps.config.digest.max_items,
+        high=high,
+        recurring_runs=recurring,
+        stale=tuple(a for a in alerts if a.kind in (AlertKind.STALE, AlertKind.NEVER_RAN)),
+        low_scores=polled.low_scores,
+        tooling_gaps=polled.tooling_gaps,
+        resolved=state.resolved,
+        project_names={r.project_id: r.project_name for r in polled.results},
+        unread_projects=sum(1 for r in polled.results if r.status is ProjectStatus.UNKNOWN),
+    )
+
+
+def _digest_step(
+    deps: Deps,
+    polled: PollData,
+    state: State,
+    now: datetime,
+    actions: list[str],
+    *,
+    poll_failed: bool,
+    fatal: bool,
+) -> _DigestResult:
+    """Decide on the weekly digest and, when due, send it; mark it only after every ack (D-02)."""
+    decision = _digest_decision(deps, state, now, poll_ok=not poll_failed)
+    if isinstance(decision, NotDue):
+        return _DigestResult(state)
+    if isinstance(decision, Skipped):
+        logger.warning(
+            "digest for the week of %s skipped: not acknowledged within %d hours",
+            decision.planned_for.date().isoformat(),
+            deps.config.digest.grace_hours,
+        )
+        record = DigestRecord(
+            planned_for=decision.planned_for, outcome="skipped", sent_at=state.digest.sent_at
+        )
+        state = state.model_copy(update={"digest": record})
+        deps.store.save(state)
+        return _DigestResult(state, DigestStatus.SKIPPED)
+    if isinstance(decision, Deferred):
+        logger.info("digest deferred: Guard poll failed; planned %s", decision.planned_for)
+        return _DigestResult(state, DigestStatus.DEFERRED)
+    if fatal:
+        logger.info(
+            "digest not attempted: delivery stopped on a fatal send error; planned %s",
+            decision.planned_for,
+        )
+        return _DigestResult(state, DigestStatus.DEFERRED)
+
+    digest = build_digest(_digest_input(deps, polled, state, now))
+    messages = tuple(render_digest(digest))
+    logger.info(
+        "digest due: planned %s, %d open item(s), %d resolved, %d message(s)",
+        decision.planned_for,
+        digest.total_items,
+        digest.resolved_total,
+        len(messages),
+    )
+    sent = _deliver(deps, messages, state, now, actions, None)
+    if sent.not_delivered or sent.delivered + sent.printed < len(messages):
+        logger.warning(
+            "digest not delivered: %s; retried next run while the window is open", sent.last_error
+        )
+        return _DigestResult(
+            state,
+            DigestStatus.NOT_DELIVERED,
+            messages,
+            max(sent.not_delivered, 1),
+            sent.unauthorized,
+        )
+    if sent.printed:
+        return _DigestResult(state, DigestStatus.PRINTED, messages)
+    record = DigestRecord(planned_for=decision.planned_for, outcome="sent", sent_at=now)
+    state = state.model_copy(update={"digest": record, "resolved": ()})
+    deps.store.save(state)
+    logger.info("digest sent: %d message(s)", len(messages))
+    return _DigestResult(state, DigestStatus.SENT, messages)
