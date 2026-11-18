@@ -1,0 +1,17 @@
+# Runs enji-guard-radar.service every 3 hours (00:00, 03:00, ...). The cadence is a default:
+# finalise it after the poll cost has been measured (docs/deploy.md).
+# ASSUMPTION: the OnCalendar syntax below is valid; check it on the host with
+#   systemd-analyze calendar '*-*-* 00/3:00:00'
+[Unit]
+Description=Enji Guard radar: poll every 3 hours
+
+[Timer]
+OnCalendar=*-*-* 00/3:00:00
+# A run missed while the host was off fires once at the next start.
+Persistent=true
+# Spreads the start by up to 5 minutes.
+RandomizedDelaySec=5min
+Unit=enji-guard-radar.service
+
+[Install]
+WantedBy=timers.target

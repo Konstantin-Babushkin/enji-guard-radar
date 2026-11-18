@@ -1,0 +1,32 @@
+# One radar poll. Started by enji-guard-radar.timer; run it by hand with
+#   sudo systemctl start enji-guard-radar.service
+# Assumes: checkout at /opt/enji-guard-radar (uv sync --frozen --no-dev done there), system user
+# enji-guard-radar, config and secrets in /etc/enji-guard-radar/, state in /var/lib/enji-guard-radar.
+# No secret lives in this file: Telegram settings come from radar.env through the app's own
+# --env-file, and the rotating Guard login lives in the state directory (guard-auth.json).
+[Unit]
+Description=Enji Guard radar: one poll
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+# A oneshot unit stays "activating" until the process exits. A timer never starts a second copy
+# while it is active, so a hung run would silently stop every later run.
+Type=oneshot
+# oneshot has no start timeout by default and RuntimeMaxSec does not apply to it: set one.
+# 15 minutes is above the adapter's 600 s run budget plus Telegram time.
+TimeoutStartSec=15min
+User=enji-guard-radar
+Group=enji-guard-radar
+WorkingDirectory=/opt/enji-guard-radar
+# Creates /var/lib/enji-guard-radar and keeps it writable under ProtectSystem=strict.
+StateDirectory=enji-guard-radar
+StateDirectoryMode=0700
+# Files the radar creates (state.json, guard-auth.json) are private to the service user.
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+# The installed entry point, not `uv run`: no resolver or network is needed at run time.
+ExecStart=/opt/enji-guard-radar/.venv/bin/enji-guard-radar run --config /etc/enji-guard-radar/radar.yaml --state-dir /var/lib/enji-guard-radar --env-file /etc/enji-guard-radar/radar.env

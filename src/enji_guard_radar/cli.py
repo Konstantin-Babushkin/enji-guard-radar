@@ -24,7 +24,16 @@ from enji_guard_radar.mcp_guard import open_guard
 from enji_guard_radar.messages import render_alert
 from enji_guard_radar.model import Audience, OutboundMessage
 from enji_guard_radar.pipeline import Deps, ProjectStatus, RunReport, run_once
-from enji_guard_radar.ports import Clock, GuardCallError, GuardConnector, Notifier, Printed
+from enji_guard_radar.poll_cost import CountingGuardTools, format_poll_cost
+from enji_guard_radar.ports import (
+    Clock,
+    GuardCallError,
+    GuardConnector,
+    GuardSession,
+    GuardTools,
+    Notifier,
+    Printed,
+)
 from enji_guard_radar.secret_guard import SecretGatedNotifier, configure_logging, redact
 from enji_guard_radar.settings import (
     ENV_CHAT_ID,
@@ -132,7 +141,12 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     commands = parser.add_subparsers(dest="command")
     run = commands.add_parser("run", help="run the radar once")
-    run.add_argument("--fixtures", type=Path, required=True, metavar="DIR")
+    run.add_argument(
+        "--fixtures",
+        type=Path,
+        metavar="DIR",
+        help="replay recorded Guard answers from DIR (default: read real Guard)",
+    )
     run.add_argument(
         "--dry-run", action="store_true", help="print instead of sending; write nothing"
     )
@@ -177,6 +191,42 @@ def _telegram_notifier(
     return SecretGatedNotifier(inner, secrets)
 
 
+class _LazyGuard:
+    """Real Guard that connects on the first call, so a run that never gets that far never connects.
+
+    A failed connection is remembered: every later call raises the same error and nothing
+    reconnects.
+    """
+
+    def __init__(self, connector: GuardConnector, state_dir: Path) -> None:
+        self._connector = connector
+        self._state_dir = state_dir
+        self._session: GuardSession | None = None
+        self._entered = False
+        self._error: GuardCallError | None = None
+
+    def call(self, tool: str, args: Mapping[str, str]) -> Mapping[str, object]:
+        if self._error is not None:
+            raise self._error
+        if self._session is None:
+            try:
+                session = self._connector(self._state_dir)
+                self._session = session
+                session.__enter__()
+                self._entered = True
+            except GuardCallError as error:
+                logger.error("Guard connection failed: %s", error)  # noqa: TRY400
+                self._error = error
+                raise
+            logger.info("connected to Guard")
+        return self._session.call(tool, args)
+
+    def close(self) -> None:
+        if self._session is not None and self._entered:
+            self._entered = False
+            self._session.__exit__(None, None, None)
+
+
 def _run(
     args: argparse.Namespace,
     out: TextIO,
@@ -184,6 +234,7 @@ def _run(
     environ: Mapping[str, str],
     transport: HttpTransport | None,
     sleep: Callable[[float], None] | None,
+    guard_connector: GuardConnector | None,
 ) -> int:
     env_file: Path = args.env_file or Path(DEFAULT_ENV_FILE)
     try:
@@ -205,9 +256,16 @@ def _run(
                 file=sys.stderr,
             )
             return 2
+    lazy: _LazyGuard | None = None
+    source: GuardTools
     try:
         config = read_config(args.config)
-        guard = FixtureGuardTools(args.fixtures)
+        if args.fixtures is not None:
+            source = FixtureGuardTools(args.fixtures)
+        else:
+            # Tokens are always judged by the system clock, never by --now.
+            connector = guard_connector or (lambda d: open_guard(d, clock=system_clock))
+            lazy = source = _LazyGuard(connector, args.state_dir)
     except (ConfigError, GuardCallError) as error:
         logger.error("run rejected: %s", error)  # noqa: TRY400
         print(f"error: {error}", file=sys.stderr)
@@ -230,6 +288,7 @@ def _run(
             logger.error("run rejected: %s", error)  # noqa: TRY400
             print(f"error: {error}", file=sys.stderr)
             return 2
+    guard = CountingGuardTools(source, time.monotonic)
     deps = Deps(
         guard=guard,
         notifier=notifier,
@@ -243,11 +302,19 @@ def _run(
     except Exception:
         logger.exception("unexpected error; the run stopped")
         return 2
-    text = (
-        format_dry_run_report(report, printer.messages)
-        if args.dry_run
-        else format_live_summary(report)
+    finally:
+        if lazy is not None:
+            lazy.close()
+    cost_line = format_poll_cost(
+        guard.cost(),
+        projects=len(report.results),
+        repositories=sum(r.stale.repo_count for r in report.results if r.stale is not None),
     )
+    logger.info("%s", cost_line)
+    if args.dry_run:
+        text = format_dry_run_report(report, printer.messages) + cost_line + "\n"
+    else:
+        text = format_live_summary(report)
     out.write(redact(text, secrets))
     return report.exit_code
 
@@ -293,6 +360,7 @@ def main(
             environ=environ if environ is not None else os.environ,
             transport=transport,
             sleep=sleep,
+            guard_connector=guard_connector,
         )
 
     if args.command == "auth":
