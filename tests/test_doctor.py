@@ -26,7 +26,7 @@ from fake_oauth import (
 from telegram_fakes import FAKE_TOKEN, FakeTransport, error_response
 
 from enji_guard_radar import cli
-from enji_guard_radar.config import ProjectSettings, RadarConfig
+from enji_guard_radar.config import ProjectSettings, RadarConfig, parse_config
 from enji_guard_radar.doctor import (
     ApiAnswer,
     ApiUnreachable,
@@ -40,8 +40,10 @@ from enji_guard_radar.doctor import (
     verdict_chat_permissions,
     verdict_config,
     verdict_credentials,
+    verdict_digest,
     verdict_get_me,
     verdict_guard,
+    verdict_score_rules,
     verdict_settings,
     verdict_state,
     verdict_unevaluated_projects,
@@ -51,6 +53,7 @@ from enji_guard_radar.guard_auth import AUTH_FAILURE_TEXT
 from enji_guard_radar.guard_credentials import CredentialStore, RefreshingTokenSource
 from enji_guard_radar.ledger import (
     Corrupt,
+    DigestRecord,
     Loaded,
     Missing,
     PollHealth,
@@ -864,3 +867,119 @@ def test_invalid_chat_id_is_a_settings_error(tmp_path: Path) -> None:
     code, out = run_doctor(tmp_path, environ=environment(TELEGRAM_CHAT_ID="not a chat"))
     assert code == 2
     assert out == ""
+
+
+# --- digest and score-rule lines ---------------------------------------------------------------
+
+
+def config_of(text: str = "") -> RadarConfig:
+    return parse_config(text, source="test")
+
+
+def test_digest_verdicts_default_and_window() -> None:
+    result = verdict_digest(RadarConfig(), Loaded(State.empty()))
+    assert result.status is CheckStatus.PASS
+    for part in ("Wednesday", "05:00 UTC", "24", "10", "none yet"):
+        assert part in result.detail
+    missing = verdict_digest(RadarConfig(), Missing())
+    assert missing.status is CheckStatus.PASS
+    assert "last digest" not in missing.detail
+    assert verdict_digest(config_of("digest:\n  grace_hours: 3\n"), Missing()).status is (
+        CheckStatus.PASS
+    )
+    for hours in (2, 1):
+        warned = verdict_digest(config_of(f"digest:\n  grace_hours: {hours}\n"), Missing())
+        assert warned.status is CheckStatus.WARN
+        assert "digest.grace_hours" in warned.detail
+    sunday = verdict_digest(config_of("digest:\n  weekday: sunday\n  hour_utc: 23\n"), Missing())
+    assert "Sunday" in sunday.detail
+    assert "23:00 UTC" in sunday.detail
+
+
+def test_digest_verdicts_last_outcome_from_state() -> None:
+    planned = NOW - timedelta(days=1)
+    sent = Loaded(State(digest=DigestRecord(planned_for=planned, outcome="sent", sent_at=NOW)))
+    assert "last digest: sent 2026-11-18 12:00 UTC" in verdict_digest(RadarConfig(), sent).detail
+    skipped = Loaded(State(digest=DigestRecord(planned_for=planned, outcome="skipped")))
+    skipped_detail = verdict_digest(RadarConfig(), skipped).detail
+    assert "skipped 2026-11-17 12:00 UTC" in skipped_detail
+    assert "none yet" in verdict_digest(RadarConfig(), Loaded(State.empty())).detail
+    corrupt = verdict_digest(RadarConfig(), Corrupt("bad", backup_valid=False))
+    assert corrupt.status is CheckStatus.PASS
+    assert "last digest" not in corrupt.detail
+
+
+def test_digest_verdicts_need_a_readable_config() -> None:
+    result = verdict_digest(None, Missing())
+    assert (result.status, result.detail) == (CheckStatus.SKIP, "needs a readable config")
+
+
+def test_score_rule_verdicts_table() -> None:
+    off = verdict_score_rules(RadarConfig())
+    assert off.status is CheckStatus.PASS
+    for part in ("off", "scores.ai_readiness_below", "scores.tests_below"):
+        assert part in off.detail
+
+    one = verdict_score_rules(config_of("scores:\n  ai_readiness_below: 40\n"))
+    assert one.status is CheckStatus.PASS
+    assert "ai-readiness below 40" in one.detail
+    assert "tests off" in one.detail
+
+    both = verdict_score_rules(config_of("scores:\n  ai_readiness_below: 40\n  tests_below: 60\n"))
+    assert "below 40" in both.detail
+    assert "below 60" in both.detail
+    assert "0 project override(s)" in both.detail
+
+    override = verdict_score_rules(config_of("projects:\n  p1:\n    tests_below: 50\n  p2: {}\n"))
+    assert override.status is CheckStatus.PASS
+    assert "1 project override(s)" in override.detail
+    assert "score rules are off" not in override.detail
+
+    zero = verdict_score_rules(config_of("scores:\n  ai_readiness_below: 40\n  tests_below: 0\n"))
+    assert "tests off" in zero.detail
+
+    skipped = verdict_score_rules(None)
+    assert (skipped.status, skipped.detail) == (CheckStatus.SKIP, "needs a readable config")
+
+
+def run_with_config(tmp_path: Path, text: str) -> tuple[int, str, Path]:
+    config_path = tmp_path / "radar.yaml"
+    config_path.write_text(text, encoding="utf-8")
+    save_state(tmp_path)
+    save_credentials(tmp_path)
+    code, out = run_doctor(
+        tmp_path,
+        transport=healthy_transport(),
+        session=FakeGuardSession(),
+        extra=["--config", str(config_path)],
+    )
+    return code, out, config_path
+
+
+def test_digest_warn_exit_zero_through_the_cli(tmp_path: Path) -> None:
+    code, out, _ = run_with_config(tmp_path, "digest:\n  grace_hours: 1\n")
+    assert line(out, "weekly digest").startswith("WARN"), out
+    assert "digest.grace_hours" in line(out, "weekly digest")
+    assert code == 0, out
+
+
+def test_invalid_config_skips_both_lines(tmp_path: Path) -> None:
+    code, out, _ = run_with_config(tmp_path, "digest: [\n")
+    for name in ("weekly digest", "score rules"):
+        assert line(out, name).startswith("SKIP"), out
+        assert "needs a readable config" in line(out, name)
+    assert line(out, "config").startswith("FAIL")
+    assert code == 1
+
+
+def test_digest_and_score_lines_no_leak(tmp_path: Path) -> None:
+    _, out, config_path = run_with_config(
+        tmp_path, "scores:\n  tests_below: 50\nprojects:\n  secret-project:\n    tests_below: 10\n"
+    )
+    for name in ("weekly digest", "score rules"):
+        text = line(out, name)
+        assert FAKE_TOKEN not in text
+        assert GROUP not in text
+        assert OPS not in text
+        assert str(config_path) not in text
+        assert "secret-project" not in text
