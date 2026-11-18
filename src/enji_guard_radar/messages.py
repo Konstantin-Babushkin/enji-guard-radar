@@ -47,11 +47,11 @@ def telegram_length(text: str) -> int:
     return len(text.encode("utf-16-le")) // 2
 
 
-def _days(count: int) -> str:
+def days_text(count: int) -> str:
     return "1 day" if count == 1 else f"{count} days"
 
 
-def _high_where(alert: Alert) -> str:
+def high_where(alert: Alert) -> str:
     """The shared "<audit type> (<repo>)" part; a High alert is meaningless without its repo."""
     if alert.repo_name is None:
         message = "a High alert needs repo_name"
@@ -70,7 +70,7 @@ def _is_rise(alert: Alert) -> bool:
     return alert.previous_count is not None and _high_count(alert) > alert.previous_count
 
 
-def _high_findings(count: int) -> str:
+def high_findings_text(count: int) -> str:
     return "1 High finding" if count == 1 else f"{count} High findings"
 
 
@@ -78,14 +78,14 @@ def _render_high(alert: Alert, name: str, severity: str) -> list[str]:
     if alert.seen_since is None or alert.age_days is None:
         message = "a High alert needs seen_since and age_days"
         raise ValueError(message)
-    where = _high_where(alert)
+    where = high_where(alert)
     count = _high_count(alert)
     if _is_rise(alert):
         what = f"High findings rose from {alert.previous_count} to {count} in {where}."
     else:
-        what = f"{_high_findings(count)} in {where}."
+        what = f"{high_findings_text(count)} in {where}."
     since = alert.seen_since.astimezone(UTC).date().isoformat()
-    seen = f"Seen by the radar since {since} ({_days(alert.age_days)})."
+    seen = f"Seen by the radar since {since} ({days_text(alert.age_days)})."
     if alert.aged:
         seen = LONG_STANDING_PREFIX + seen[0].lower() + seen[1:]
     return [f"High findings: <b>{name}</b>", what, seen, severity]
@@ -101,7 +101,7 @@ def render_alert(alert: Alert) -> str:
         last = alert.last_run_at.astimezone(UTC).date().isoformat()
         lines = [
             f"Stale Guard scans: <b>{name}</b>",
-            f"No completed Guard run for {_days(alert.age_days)} (last: {last}).",
+            f"No completed Guard run for {days_text(alert.age_days)} (last: {last}).",
             severity,
         ]
     elif alert.kind is AlertKind.NEVER_RAN:
@@ -127,9 +127,9 @@ def render_summary_item(alert: Alert) -> str:
         if alert.age_days is None:
             message = "a stale alert needs age_days"
             raise ValueError(message)
-        return f"- <b>{name}</b>: no completed Guard run for {_days(alert.age_days)} ({severity})"
+        return f"- <b>{name}</b>: no completed Guard run for {days_text(alert.age_days)} ({severity})"
     if alert.kind is AlertKind.HIGH_FINDINGS:
-        where = _high_where(alert)
+        where = high_where(alert)
         count = _high_count(alert)
         if _is_rise(alert):
             what = f"High rose from {alert.previous_count} to {count} in {where}"
@@ -155,7 +155,7 @@ def _sort_key(alert: Alert) -> tuple[int, int, int, str, str]:
     )
 
 
-def _pack(items: Sequence[str], header_units: int, max_chars: int) -> list[list[int]]:
+def pack_items(items: Sequence[str], header_units: int, max_chars: int) -> list[list[int]]:
     """Greedy: indexes of the items of each chunk, in order, each chunk within max_chars."""
     chunks: list[list[int]] = []
     used = 0
@@ -176,13 +176,13 @@ def _pack(items: Sequence[str], header_units: int, max_chars: int) -> list[list[
 def _summary_messages(ordered: Sequence[Alert], max_chars: int) -> list[OutboundMessage]:
     total = len(ordered)
     items = [render_summary_item(alert) for alert in ordered]
-    chunks = _pack(items, telegram_length(summary_header(total, 1, 1)), max_chars)
+    chunks = pack_items(items, telegram_length(summary_header(total, 1, 1)), max_chars)
     if len(chunks) > 1:
         # Reserve room for the " (k/n)" suffix; more chunks widen it, so repack until stable.
         count = len(chunks)
         while True:
             reserve = telegram_length(f" ({count}/{count})")
-            chunks = _pack(items, telegram_length(summary_header(total, 1, 1)) + reserve, max_chars)
+            chunks = pack_items(items, telegram_length(summary_header(total, 1, 1)) + reserve, max_chars)
             if len(chunks) <= count:
                 break
             count = len(chunks)
