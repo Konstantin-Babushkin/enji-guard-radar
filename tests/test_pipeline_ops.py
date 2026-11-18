@@ -11,7 +11,7 @@ from collections.abc import Iterator, Mapping
 from pathlib import Path
 
 import pytest
-from telegram_fakes import FAKE_TOKEN, FakeTime, FakeTransport, error_response, ok_response
+from telegram_fakes import FAKE_TOKEN, FakeTime, FakeTransport, ok_response
 
 from enji_guard_radar import cli
 from enji_guard_radar.ledger import PollHealth, State, deserialize_state, serialize_state
