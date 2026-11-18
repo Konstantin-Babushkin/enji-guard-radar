@@ -153,6 +153,65 @@ sent and writes nothing.
 Set the interval with `reminders.every_days` in `/etc/enji-guard-radar/radar.yaml`, from 1 to
 90 days.
 
+## Weekly digest
+
+Once a week the group gets one digest, even when nothing is open. It is the radar's
+heartbeat: it always says when the radar last read Guard successfully ("Last successful Guard
+poll: ...") so that silence is never ambiguous.
+
+**When.** `digest.weekday` and `digest.hour_utc`, in UTC. The default is Wednesday 05:00 UTC,
+which is 11:00 UTC+6. The first timer run at or after that moment sends it: with the 3-hour
+timer that is the 06:00 UTC run.
+
+**Window.** `digest.grace_hours` (default 24). A digest that Telegram did not acknowledge is
+tried again on each run inside the window. After the window the week is skipped: the radar
+writes one WARNING line to the journal and records the skip, and the digest is not made up
+later. To see a skipped week, run `journalctl -u enji-guard-radar` and look for "digest for the
+week of". A fresh install that starts outside a window waits for the next one and logs
+nothing. `doctor` warns when the window is shorter than the timer interval.
+
+**While Guard is unavailable.** A digest that is due is deferred and logged, never built from
+a failed poll. The first successful poll inside the window sends it. A poll in which some
+projects could not be read still sends it: the text says "N projects could not be read in that
+poll" so they are never shown as clean. Only a failed poll (the project listing failed, or
+every active project was unreadable) defers it.
+
+**What it contains.** Open items worst first, by type and then by age: open High series, stale
+or never-run projects, low scores, tooling gaps. A series that had High findings in each of the
+last `recurring.after_runs` runs carries a "Recurring" marker. At most `digest.max_items` items
+are listed, then "+N more open items not shown." Items resolved since the previous digest are
+listed once and not again. Items the group already saw as alerts, baselined items and
+below-threshold scores are included. With nothing open it is a single all-clear line with the
+poll time. The digest counts only and never shows finding titles.
+
+If the digest is held back by the secret check, or Telegram is rejecting the bot, the run
+exits with code 1 and tells the ops chat; nothing is marked and the next run in the window
+tries again. After a fatal send error while delivering alerts the digest is not tried in that
+run. `run --dry-run` prints the digest that would be sent and writes nothing.
+
+## Phase 3 operator steps
+
+1. After the first real run, list the recorded scores (run as the service user):
+   `sudo -u enji-guard-radar python3 -c "import json; [print(r['action_key'], r['score']) for r in json.load(open('/var/lib/enji-guard-radar/state.json'))['scores']]"`
+2. Choose thresholds from that spread and set `scores.ai_readiness_below` and
+   `scores.tests_below` in the config, optionally per project; a value of 0 turns the rule off
+   for that project. Run `doctor` and read the "score rules" line. Thresholds only ever add
+   digest lines, never alerts.
+3. Tooling gaps: a gap is stated once the radar has read the repository's whole run list, or
+   has watched the repository for `tooling_gaps.window_days`. For repositories with long run
+   histories the first gaps therefore appear that many days after the first run.
+   ASSUMPTION: this evidence rule is to be revisited after real data.
+4. Preview the digest without sending: copy the state directory to a scratch directory, delete
+   the `digest` entry from the scratch `state.json` when that week was already handled, and
+   run `enji-guard-radar run --dry-run --state-dir <scratch>` with `--now` set to a Wednesday
+   06:00 UTC (for example `--now 2026-11-18T06:00:00Z`).
+5. Live check in the private test chat: run once without `--dry-run` with `--now` set to a
+   Wednesday 06:00 UTC and expect one digest. Run the identical command again and expect
+   nothing.
+6. Only then point `TELEGRAM_CHAT_ID` at the group.
+7. The 60-day tooling window and the score thresholds are checked again after real data
+   exists (a gap-closure step, not part of this phase).
+
 ## Failure drill
 
 Prove the ops chat works before relying on it:

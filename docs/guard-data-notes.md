@@ -156,6 +156,17 @@ Consequences for the design:
   `list_audit_runs` default (no filter) returns the latest 5 to 10 runs only, so
   one call per audit type is needed to be sure something is missing.
 
+## Phase 3 additions
+
+- Scores are kept per (repo, audit type) from the newest completed run of `audit.ai-readiness`
+  and `audit.tests`. Deltas are not used (see "Reports").
+- `list_audit_runs` returns only the newest runs, so tooling gaps rest on the run history the
+  radar has seen. **ASSUMPTION:** the evidence rule (a gap is stated once the whole run list was
+  read or the repository was watched for the whole window) and `audit.implementation-unification`
+  as the duplicate detector.
+- Whether `list_audit_runs` accepts an `action_key` filter is NOT verified. Check the tool
+  schema with `probe`, which prints the argument names, before relying on it.
+
 ## Cost of a poll
 
 For P projects, R repos and K audit types of interest the minimum is
