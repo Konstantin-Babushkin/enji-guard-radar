@@ -121,6 +121,9 @@ class RepoRuns(_Frozen):
     repository: GuardRepository
     runs: tuple[AuditRun, ...]
     reports: tuple[ReportResult, ...] = ()
+    # True when the run listing ended because Guard said has_more was false; False when run
+    # paging stopped early on the 24 h bound, so older runs may exist that this poll never read.
+    runs_complete: bool = False
 
 
 class ProjectOk(_Frozen):
@@ -352,8 +355,13 @@ def list_projects(tools: GuardTools) -> ProjectListing:
     return ListingOk(projects=tuple(projects))
 
 
-def _read_runs(tools: GuardTools, repository: GuardRepository) -> tuple[AuditRun, ...]:
-    """Read run pages (newest linked first) until the 24 h bound proves nothing newer is left."""
+def _read_runs(tools: GuardTools, repository: GuardRepository) -> tuple[tuple[AuditRun, ...], bool]:
+    """Read run pages (newest linked first) until the 24 h bound proves nothing newer is left.
+
+    The flag is True when the listing was read to its end (Guard's last page said has_more false)
+    and False when paging stopped early, so the run list may be missing older runs.
+    """
+    complete = True
     runs: list[AuditRun] = []
     newest: datetime | None = None
     oldest_linked: datetime | None = None
@@ -380,14 +388,15 @@ def _read_runs(tools: GuardTools, repository: GuardRepository) -> tuple[AuditRun
             and oldest_linked + MAX_RUN_DURATION <= newest
         ):
             logger.info("run paging of %s stopped early: no unread run can be newer", repository.id)
+            complete = False
             break
-    return tuple(runs)
+    return tuple(runs), complete
 
 
 def _repo_runs(
     tools: GuardTools, repository: GuardRepository, *, skip_report: SkipReport | None = None
 ) -> RepoRuns:
-    runs = _read_runs(tools, repository)
+    runs, runs_complete = _read_runs(tools, repository)
     reports: list[ReportResult] = []
     for run in newest_counting_runs_by_action_key(runs):
         if skip_report is not None and skip_report(repository.id, run.action_key, run.task_id):
@@ -398,7 +407,9 @@ def _repo_runs(
         # A report failure is local to that report (ReportUnknown); it never makes the project
         # unknown.
         reports.append(read_report(tools, run.task_id, run.action_key))
-    return RepoRuns(repository=repository, runs=runs, reports=tuple(reports))
+    return RepoRuns(
+        repository=repository, runs=runs, reports=tuple(reports), runs_complete=runs_complete
+    )
 
 
 def fetch_project(
