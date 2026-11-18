@@ -21,8 +21,9 @@ from enji_guard_radar.high_history import (
     latest_high,
     previous_high,
 )
-from enji_guard_radar.ledger import SeriesHistory, SeriesKey
+from enji_guard_radar.ledger import ScoreRecord, SeriesHistory, SeriesKey
 from enji_guard_radar.model import Alert, AlertKey, AlertKind, Severity
+from enji_guard_radar.score_rules import SCORE_ACTION_KEYS, score_known
 
 logger = logging.getLogger(__name__)
 
@@ -57,17 +58,27 @@ def skip_report_for(
     project_id: str,
     histories: Mapping[SeriesKey, SeriesHistory],
     audit_types: Collection[str] | None,
+    scores: Mapping[SeriesKey, ScoreRecord] | None = None,
 ) -> SkipReport:
-    """Reports that need no read: untracked audit types and runs the series already counted.
+    """Reports that need no read: untracked audit types and runs already counted.
 
     RULE-09 counts by task_id, so only a task_id already in the stored history is skipped; a run
-    whose report failed or was never read is not in history and is requested again.
+    whose report failed or was never read is not in history and is requested again. With `scores`
+    given, a score audit type is also read until its task_id is recorded as a score, whatever the
+    High scope says; without it the rule is the High one only.
     """
 
     def skip(repo_id: str, action_key: str, task_id: str) -> bool:
+        key = (project_id, repo_id, action_key)
+        if (
+            scores is not None
+            and action_key in SCORE_ACTION_KEYS
+            and not score_known(scores.get(key), task_id)
+        ):
+            return False
         if not in_scope(action_key, audit_types):
             return True
-        return has_task(histories.get((project_id, repo_id, action_key)), task_id)
+        return has_task(histories.get(key), task_id)
 
     return skip
 

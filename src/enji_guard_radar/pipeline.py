@@ -16,6 +16,7 @@ from enji_guard_radar.config import RadarConfig
 from enji_guard_radar.guard import (
     ListingOk,
     ListingUnknown,
+    ProjectOk,
     ProjectUnknown,
     fetch_project,
     list_projects,
@@ -36,10 +37,13 @@ from enji_guard_radar.ledger import (
     EvaluationOutcome,
     Loaded,
     ProjectEvaluation,
+    ScoreRecord,
     SeriesHistory,
     SeriesKey,
     State,
     StateStore,
+    ToolingRecord,
+    append_resolved,
     apply_delivery,
     reconcile,
 )
@@ -55,7 +59,9 @@ from enji_guard_radar.ports import (
     Printed,
     SendOutcome,
 )
+from enji_guard_radar.score_rules import SCORE_ACTION_KEYS, LowScore, evaluate_scores
 from enji_guard_radar.stale import StaleResult, alert_for, evaluate_stale
+from enji_guard_radar.tooling_rules import ToolingGap, evaluate_tooling
 
 logger = logging.getLogger(__name__)
 
@@ -122,6 +128,9 @@ class RunReport(BaseModel):
     halt_reason: str | None = None
     poll_failed: bool = False
     ops_sent: int = 0
+    # What this poll found for the digest; nothing here is ever sent as an alert (SC1, SC3).
+    low_scores: tuple[LowScore, ...] = ()
+    tooling_gaps: tuple[ToolingGap, ...] = ()
 
     @property
     def exit_code(self) -> int:
@@ -201,11 +210,10 @@ def _run_locked(deps: Deps, now: datetime) -> RunReport:
         _, sent = _send_ops_action(deps, state, step.action, now)
         return _empty_report(now, RunOutcome.GUARD_UNAVAILABLE, poll_failed=True, ops_sent=sent)
 
-    results, evaluations, histories, unknown = _evaluate_projects(
-        deps, listing, now, {h.key(): h for h in state.histories}
-    )
+    polled = _evaluate_projects(deps, listing, now, state)
+    results = polled.results
     active = sum(1 for r in results if r.status is not ProjectStatus.PAUSED)
-    poll = classify_poll(listing, unknown, active)
+    poll = classify_poll(listing, polled.unknown, active)
     step = advance_health(state.health, poll, now, failures_before_alert=k)
     poll_failed = isinstance(poll, PollFailed)
     _log_poll(
@@ -215,11 +223,15 @@ def _run_locked(deps: Deps, now: datetime) -> RunReport:
     )
     state = state.model_copy(
         update={
-            "histories": tuple(sorted(histories.values(), key=lambda h: h.key())),
+            "histories": tuple(sorted(polled.histories.values(), key=lambda h: h.key())),
+            "scores": tuple(sorted(polled.scores.values(), key=lambda r: r.key())),
+            "tooling": tuple(sorted(polled.tooling.values(), key=lambda r: r.key())),
             "health": step.health,
         }
     )
-    rec = reconcile(state, evaluations, now)
+    rec = reconcile(state, polled.evaluations, now)
+    # Everything that closed between polls is remembered for the digest, on disk before any send.
+    rec = rec.model_copy(update={"state": append_resolved(rec.state, rec.resolved, now)})
     logger.info(
         "planned %d, baselined %d, retried %d, rearmed %d, resolved %d",
         len(rec.to_send),
@@ -281,6 +293,8 @@ def _run_locked(deps: Deps, now: datetime) -> RunReport:
         operator_actions=tuple(actions),
         poll_failed=poll_failed,
         ops_sent=ops_sent,
+        low_scores=polled.low_scores,
+        tooling_gaps=polled.tooling_gaps,
     )
 
 
@@ -342,17 +356,26 @@ def _notify_ops_of_actions(deps: Deps, actions: list[str], *, unauthorized: bool
     logger.info("ops message about operator actions: %s", type(outcome).__name__)
 
 
+@dataclass(frozen=True)
+class PollData:
+    """What one poll read: per-project results, the new stored facts and what to digest."""
+
+    results: tuple[ProjectResult, ...]
+    evaluations: tuple[ProjectEvaluation, ...]
+    histories: dict[SeriesKey, SeriesHistory]
+    scores: dict[SeriesKey, ScoreRecord]
+    tooling: dict[SeriesKey, ToolingRecord]
+    unknown: tuple[ProjectUnknown, ...]
+    low_scores: tuple[LowScore, ...]
+    tooling_gaps: tuple[ToolingGap, ...]
+
+
 def _evaluate_projects(
     deps: Deps,
     listing: ListingOk,
     now: datetime,
-    stored: dict[SeriesKey, SeriesHistory],
-) -> tuple[
-    list[ProjectResult],
-    list[ProjectEvaluation],
-    dict[SeriesKey, SeriesHistory],
-    list[ProjectUnknown],
-]:
+    state: State,
+) -> PollData:
     listed_ids = {project.id for project in listing.projects}
     for configured_id in deps.config.projects:
         if configured_id not in listed_ids:
@@ -360,7 +383,11 @@ def _evaluate_projects(
 
     results: list[ProjectResult] = []
     evaluations: list[ProjectEvaluation] = []
-    histories = dict(stored)
+    histories = {h.key(): h for h in state.histories}
+    scores = {r.key(): r for r in state.scores}
+    tooling = {r.key(): r for r in state.tooling}
+    low_scores: list[LowScore] = []
+    tooling_gaps: list[ToolingGap] = []
     unknown: list[ProjectUnknown] = []
     for project in sorted(listing.projects, key=lambda p: (p.name.casefold(), p.id)):
         mode = deps.config.mode_for(project.id)
@@ -382,11 +409,8 @@ def _evaluate_projects(
                 ProjectEvaluation(project_id=project.id, outcome=EvaluationOutcome.skipped)
             )
             continue
-        data = fetch_project(
-            deps.guard,
-            project,
-            skip_report=skip_report_for(project.id, histories, deps.config.high.audit_types),
-        )
+        skip = skip_report_for(project.id, histories, deps.config.high.audit_types, scores)
+        data = fetch_project(deps.guard, project, skip_report=skip)
         threshold = deps.config.thresholds_for(project.id).stale_after_days
         stale = evaluate_stale(data, threshold, now)
         if stale.future_run:
@@ -423,6 +447,9 @@ def _evaluate_projects(
                     high.unknown_reports,
                     len(high.alerts),
                 )
+            _fold_scores_and_tooling(
+                deps, data, now, scores=scores, tooling=tooling, low=low_scores, gaps=tooling_gaps
+            )
             evaluations.append(
                 ProjectEvaluation(
                     project_id=project.id,
@@ -439,4 +466,57 @@ def _evaluate_projects(
                 note=note,
             )
         )
-    return results, evaluations, histories, unknown
+    return PollData(
+        results=tuple(results),
+        evaluations=tuple(evaluations),
+        histories=histories,
+        scores=scores,
+        tooling=tooling,
+        unknown=tuple(unknown),
+        low_scores=tuple(low_scores),
+        tooling_gaps=tuple(tooling_gaps),
+    )
+
+
+def _fold_scores_and_tooling(
+    deps: Deps,
+    data: ProjectOk,
+    now: datetime,
+    *,
+    scores: dict[SeriesKey, ScoreRecord],
+    tooling: dict[SeriesKey, ToolingRecord],
+    low: list[LowScore],
+    gaps: list[ToolingGap],
+) -> None:
+    """Replace this project's score and tooling records with the poll's and collect the findings."""
+    pid = data.project.id
+    thresholds = {
+        key: value
+        for key in SCORE_ACTION_KEYS
+        if (value := deps.config.score_threshold_for(pid, key)) is not None
+    }
+    scored = evaluate_scores(data, scores, thresholds=thresholds)
+    for key in [k for k in scores if k[0] == pid]:
+        del scores[key]
+    scores.update({record.key(): record for record in scored.records})
+    low.extend(scored.low)
+    logger.info(
+        "scores of %s: %d recorded, %d low, %d unknown report(s)",
+        pid,
+        len(scored.records),
+        len(scored.low),
+        scored.unknown_reports,
+    )
+
+    tooled = evaluate_tooling(
+        data,
+        tooling,
+        audit_types=deps.config.tooling_gaps.audit_types,
+        window_days=deps.config.tooling_window_for(pid),
+        now=now,
+    )
+    for key in [k for k in tooling if k[0] == pid]:
+        del tooling[key]
+    tooling.update({record.key(): record for record in tooled.records})
+    gaps.extend(tooled.gaps)
+    logger.info("tooling of %s: %d gap(s), %d undecided", pid, len(tooled.gaps), tooled.undecided)
