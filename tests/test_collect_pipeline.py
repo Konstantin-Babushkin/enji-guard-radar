@@ -290,7 +290,7 @@ def _seed_scores_and_tooling(sim: Sim) -> None:
     assert tooling_of(sim, DEAD_CODE).last_completed_at is not None
 
 
-def test_paused_project_keeps_scores_and_tooling(tmp_path: Path) -> None:
+def test_paused_project_frozen_keeps_scores_and_tooling(tmp_path: Path) -> None:
     sim = Sim(tmp_path)
     _seed_scores_and_tooling(sim)
     before = frozen_scores_and_tooling(sim)
@@ -300,7 +300,7 @@ def test_paused_project_keeps_scores_and_tooling(tmp_path: Path) -> None:
     assert frozen_scores_and_tooling(sim) == before
 
 
-def test_excluded_project_keeps_scores_and_tooling(tmp_path: Path) -> None:
+def test_excluded_project_frozen_keeps_scores_and_tooling(tmp_path: Path) -> None:
     sim = Sim(tmp_path)
     _seed_scores_and_tooling(sim)
     before = frozen_scores_and_tooling(sim)
@@ -310,7 +310,7 @@ def test_excluded_project_keeps_scores_and_tooling(tmp_path: Path) -> None:
     assert frozen_scores_and_tooling(sim) == before
 
 
-def test_unknown_project_keeps_scores_and_tooling(tmp_path: Path) -> None:
+def test_unknown_project_frozen_keeps_scores_and_tooling(tmp_path: Path) -> None:
     failing_listing: dict[Key, Response] = {
         call_key(TOOL_LIST_REPOSITORIES, **{ARG_PROJECT_ID: PID}): GuardCallError("outage")
     }
@@ -334,7 +334,7 @@ def test_unknown_project_keeps_scores_and_tooling(tmp_path: Path) -> None:
         assert frozen_scores_and_tooling(sim) == before
 
 
-def test_failed_listing_keeps_scores_and_tooling(tmp_path: Path) -> None:
+def test_failed_listing_frozen_keeps_scores_and_tooling(tmp_path: Path) -> None:
     sim = Sim(tmp_path)
     _seed_scores_and_tooling(sim)
     before = frozen_scores_and_tooling(sim)
