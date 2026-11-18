@@ -3,6 +3,7 @@
 from collections.abc import Callable, Mapping
 from datetime import datetime
 from enum import StrEnum
+from pathlib import Path
 from typing import Protocol
 
 from pydantic import BaseModel, ConfigDict
@@ -52,6 +53,34 @@ class GuardTools(Protocol):
     def call(self, tool: str, args: Mapping[str, str]) -> Mapping[str, object]:
         """Raise GuardCallError on any failure."""
         ...
+
+
+class GuardSession(Protocol):
+    """A Guard connection held open for one run: enter to connect, exit to close."""
+
+    def call(self, tool: str, args: Mapping[str, str]) -> Mapping[str, object]:
+        """Raise GuardCallError on any failure."""
+        ...
+
+    def tool_names(self) -> frozenset[str]:
+        """Names of the tools the server listed on connect."""
+        ...
+
+    def tool_arguments(self) -> Mapping[str, tuple[str, ...]]:
+        """Sorted input-schema property names per listed tool."""
+        ...
+
+    def result_shapes(self) -> Mapping[str, int]:
+        """How many results arrived in each shape so far (structured, text_json, wrapped)."""
+        ...
+
+    def __enter__(self) -> "GuardSession": ...
+
+    def __exit__(self, *exc: object) -> None: ...
+
+
+# State directory in, unentered session out.
+GuardConnector = Callable[[Path], GuardSession]
 
 
 class DeliveryError(StrEnum):
