@@ -456,9 +456,9 @@ def test_phase3_project_override_bounds(key: str, good: list[int], bad: list[str
         entry = parse(f"projects: {{p1: {{{key}: {value}}}}}").projects["p1"]
         assert getattr(entry, key) == value
     assert getattr(parse("projects: {p1: {}}").projects["p1"], key) is None
-    for value in bad:
+    for text in bad:
         with pytest.raises(ConfigError, match=rf"test\.yaml: projects\.p1\.{key}:"):
-            parse(f"projects: {{p1: {{{key}: {value}}}}}")
+            parse(f"projects: {{p1: {{{key}: {text}}}}}")
 
 
 def test_scores_project_value_beats_section_value() -> None:
