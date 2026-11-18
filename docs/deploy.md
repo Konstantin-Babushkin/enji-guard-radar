@@ -166,9 +166,9 @@ timer that is the 06:00 UTC run.
 **Window.** `digest.grace_hours` (default 24). A digest that Telegram did not acknowledge is
 tried again on each run inside the window. After the window the week is skipped: the radar
 writes one WARNING line to the journal and records the skip, and the digest is not made up
-later. To see a skipped week, run `journalctl -u enji-guard-radar` and look for "digest for the
-week of". A fresh install that starts outside a window waits for the next one and logs
-nothing. `doctor` warns when the window is shorter than the timer interval.
+later. To see a skipped week, run `journalctl -u enji-guard-radar` and look for the phrase
+"digest for the week of". A fresh install that starts outside a window waits for the next one
+and logs nothing. `doctor` warns when the window is shorter than the timer interval.
 
 **While Guard is unavailable.** A digest that is due is deferred and logged, never built from
 a failed poll. The first successful poll inside the window sends it. A poll in which some
