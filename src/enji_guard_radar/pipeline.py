@@ -20,6 +20,16 @@ from enji_guard_radar.guard import (
     fetch_project,
     list_projects,
 )
+from enji_guard_radar.health import (
+    NoOpsAction,
+    OpsAction,
+    Outage,
+    PollFailed,
+    advance_health,
+    classify_poll,
+    mark_ops_delivered,
+    ops_message,
+)
 from enji_guard_radar.high_rules import evaluate_high, skip_report_for
 from enji_guard_radar.ledger import (
     Corrupt,
@@ -48,6 +58,9 @@ from enji_guard_radar.ports import (
 from enji_guard_radar.stale import StaleResult, alert_for, evaluate_stale
 
 logger = logging.getLogger(__name__)
+
+# Named in the log when the ops chat is not configured (the settings module is shell code).
+OPS_CHAT_ENV = "TELEGRAM_OPS_CHAT_ID"
 
 
 @dataclass(frozen=True)
@@ -107,13 +120,22 @@ class RunReport(BaseModel):
     resolved: tuple[AlertKey, ...] = ()
     operator_actions: tuple[str, ...] = ()
     halt_reason: str | None = None
+    poll_failed: bool = False
+    ops_sent: int = 0
 
     @property
     def exit_code(self) -> int:
         return EXIT_CODES[self.outcome]
 
 
-def _empty_report(now: datetime, outcome: RunOutcome, halt_reason: str | None = None) -> RunReport:
+def _empty_report(
+    now: datetime,
+    outcome: RunOutcome,
+    halt_reason: str | None = None,
+    *,
+    poll_failed: bool = False,
+    ops_sent: int = 0,
+) -> RunReport:
     return RunReport(
         now=now,
         outcome=outcome,
@@ -123,6 +145,8 @@ def _empty_report(now: datetime, outcome: RunOutcome, halt_reason: str | None = 
         printed=0,
         not_delivered=0,
         halt_reason=halt_reason,
+        poll_failed=poll_failed,
+        ops_sent=ops_sent,
     )
 
 
@@ -162,15 +186,38 @@ def _run_locked(deps: Deps, now: datetime) -> RunReport:
         state = State.empty()
 
     listing = list_projects(deps.guard)
+    k = deps.config.ops.failures_before_alert
     if isinstance(listing, ListingUnknown):
         logger.error("run ended: Guard unavailable (%s)", listing.reason)
-        return _empty_report(now, RunOutcome.GUARD_UNAVAILABLE)
+        step = advance_health(
+            state.health,
+            classify_poll(listing, (), 0),
+            now,
+            failures_before_alert=k,
+        )
+        state = state.model_copy(update={"health": step.health})
+        _log_poll(step.health.consecutive_failures, True, listing.cause.value)
+        deps.store.save(state)
+        _, sent = _send_ops_action(deps, state, step.action, now)
+        return _empty_report(now, RunOutcome.GUARD_UNAVAILABLE, poll_failed=True, ops_sent=sent)
 
-    results, evaluations, histories = _evaluate_projects(
+    results, evaluations, histories, unknown = _evaluate_projects(
         deps, listing, now, {h.key(): h for h in state.histories}
     )
+    active = sum(1 for r in results if r.status is not ProjectStatus.PAUSED)
+    poll = classify_poll(listing, unknown, active)
+    step = advance_health(state.health, poll, now, failures_before_alert=k)
+    poll_failed = isinstance(poll, PollFailed)
+    _log_poll(
+        step.health.consecutive_failures,
+        poll_failed,
+        poll.cause.value if isinstance(poll, PollFailed) else "",
+    )
     state = state.model_copy(
-        update={"histories": tuple(sorted(histories.values(), key=lambda h: h.key()))}
+        update={
+            "histories": tuple(sorted(histories.values(), key=lambda h: h.key())),
+            "health": step.health,
+        }
     )
     rec = reconcile(state, evaluations, now)
     logger.info(
@@ -206,7 +253,13 @@ def _run_locked(deps: Deps, now: datetime) -> RunReport:
             break
 
     _notify_ops_of_actions(deps, actions, unauthorized=unauthorized)
-    run_outcome = RunOutcome.ATTENTION if not_delivered or actions else RunOutcome.COMPLETED
+    state, ops_sent = _send_ops_action(deps, state, step.action, now)
+    if poll_failed:
+        run_outcome = RunOutcome.GUARD_UNAVAILABLE
+    elif not_delivered or actions:
+        run_outcome = RunOutcome.ATTENTION
+    else:
+        run_outcome = RunOutcome.COMPLETED
     logger.info(
         "run finished: %d projects, %d alerts, %d delivered, %d printed, %d not delivered",
         len(results),
@@ -226,7 +279,40 @@ def _run_locked(deps: Deps, now: datetime) -> RunReport:
         baselined=rec.baselined,
         resolved=rec.resolved,
         operator_actions=tuple(actions),
+        poll_failed=poll_failed,
+        ops_sent=ops_sent,
     )
+
+
+def _log_poll(failures: int, failed: bool, cause: str) -> None:
+    if failed:
+        logger.warning("poll failed (%s): %d in a row", cause, failures)
+    else:
+        logger.info("poll ok")
+
+
+def _send_ops_action(
+    deps: Deps, state: State, action: OpsAction, now: datetime
+) -> tuple[State, int]:
+    """Tell the ops chat about an outage or a recovery; mark it only once it was acknowledged."""
+    if isinstance(action, NoOpsAction):
+        return state, 0
+    what = "outage" if isinstance(action, Outage) else "recovery"
+    if deps.ops_notifier is None:
+        logger.error("ops chat not configured (%s): cannot report the Guard %s", OPS_CHAT_ENV, what)
+        return state, 0
+    outcome = deps.ops_notifier.send(ops_message(action))
+    if not isinstance(outcome, Delivered):
+        logger.warning(
+            "ops message about the Guard %s not delivered (%s); retried next run",
+            what,
+            type(outcome).__name__,
+        )
+        return state, 0
+    state = state.model_copy(update={"health": mark_ops_delivered(state.health, action, now)})
+    deps.store.save(state)
+    logger.info("ops chat told: Guard %s", what)
+    return state, 1
 
 
 def _halt(deps: Deps, now: datetime, load: Corrupt) -> RunReport:
@@ -261,7 +347,12 @@ def _evaluate_projects(
     listing: ListingOk,
     now: datetime,
     stored: dict[SeriesKey, SeriesHistory],
-) -> tuple[list[ProjectResult], list[ProjectEvaluation], dict[SeriesKey, SeriesHistory]]:
+) -> tuple[
+    list[ProjectResult],
+    list[ProjectEvaluation],
+    dict[SeriesKey, SeriesHistory],
+    list[ProjectUnknown],
+]:
     listed_ids = {project.id for project in listing.projects}
     for configured_id in deps.config.projects:
         if configured_id not in listed_ids:
@@ -270,6 +361,7 @@ def _evaluate_projects(
     results: list[ProjectResult] = []
     evaluations: list[ProjectEvaluation] = []
     histories = dict(stored)
+    unknown: list[ProjectUnknown] = []
     for project in sorted(listing.projects, key=lambda p: (p.name.casefold(), p.id)):
         mode = deps.config.mode_for(project.id)
         if mode == "excluded":
@@ -305,6 +397,7 @@ def _evaluate_projects(
             )
         if isinstance(data, ProjectUnknown):
             status, note = ProjectStatus.UNKNOWN, f"Guard data unavailable ({data.reason})"
+            unknown.append(data)
             evaluations.append(
                 ProjectEvaluation(project_id=project.id, outcome=EvaluationOutcome.unknown)
             )
@@ -346,4 +439,4 @@ def _evaluate_projects(
                 note=note,
             )
         )
-    return results, evaluations, histories
+    return results, evaluations, histories, unknown
