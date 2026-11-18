@@ -26,6 +26,8 @@ CLEAR_AFTER_MIN = 1
 CLEAR_AFTER_MAX = 10
 COLLAPSE_MIN = 1
 COLLAPSE_MAX = 50
+FAILURES_MIN = 1
+FAILURES_MAX = 20
 AUDIT_TYPE_PATTERN = re.compile(r"audit\.[a-z0-9-]+")
 
 
@@ -83,12 +85,20 @@ class AlertSettings(BaseModel):
     collapse_above: StrictInt = Field(default=3, ge=COLLAPSE_MIN, le=COLLAPSE_MAX)
 
 
+class OpsSettings(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    # After this many failed Guard polls in a row one message goes to the ops chat (OPS-02).
+    failures_before_alert: StrictInt = Field(default=3, ge=FAILURES_MIN, le=FAILURES_MAX)
+
+
 class RadarConfig(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     defaults: Thresholds = Field(default_factory=Thresholds)
     alerts: AlertSettings = Field(default_factory=AlertSettings)
     high: HighSettings = Field(default_factory=HighSettings)
+    ops: OpsSettings = Field(default_factory=OpsSettings)
     projects: dict[str, ProjectSettings] = Field(default_factory=dict)
 
     def mode_for(self, project_id: str) -> ProjectMode:

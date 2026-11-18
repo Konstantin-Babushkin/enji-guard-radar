@@ -478,9 +478,10 @@ def test_env_file_supplies_the_token_and_the_environment_overrides_it(env: Env) 
 
 
 def test_zero_project_listing_is_guard_unavailable(tmp_path: Path) -> None:
+    """Exit 1, no message, the records are kept; only the failed poll is counted."""
     env = Env(tmp_path)
     env.baseline()
-    before = env.snapshot()
+    before = env.state()
 
     empty = tmp_path / "empty"
     shutil.copytree(FIXTURES, empty)
@@ -490,13 +491,16 @@ def test_zero_project_listing_is_guard_unavailable(tmp_path: Path) -> None:
 
     assert env.run(STALE_NOW, transport) == 1
     assert transport.requests == []
-    assert env.snapshot() == before
+    after = env.state()
+    assert (after.projects, after.conditions) == (before.projects, before.conditions)
+    assert after.health.consecutive_failures == 1
 
 
 def test_guard_listing_failure_exits_1_and_keeps_state(tmp_path: Path) -> None:
+    """Exit 1 and the records are kept; only the failed poll is counted."""
     env = Env(tmp_path)
     env.baseline()
-    before = env.state_file.read_bytes()
+    before = env.state()
 
     broken = tmp_path / "broken"
     shutil.copytree(FIXTURES, broken)
@@ -509,7 +513,9 @@ def test_guard_listing_failure_exits_1_and_keeps_state(tmp_path: Path) -> None:
     env.fixtures = broken
 
     assert env.run(STALE_NOW) == 1
-    assert env.state_file.read_bytes() == before
+    after = env.state()
+    assert (after.projects, after.conditions) == (before.projects, before.conditions)
+    assert after.health.consecutive_failures == 1
 
 
 # ---- crash window and ordering ---------------------------------------------------------------

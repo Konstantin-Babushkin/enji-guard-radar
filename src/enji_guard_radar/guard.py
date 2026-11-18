@@ -14,7 +14,13 @@ from enum import StrEnum
 from pydantic import AwareDatetime, BaseModel, ConfigDict
 
 from enji_guard_radar.guard_report import TOOL_GET_AUDIT_REPORT, ReportResult, read_report
-from enji_guard_radar.ports import GuardCallError, GuardTools
+from enji_guard_radar.ports import (
+    AuthFailureKind,
+    GuardAuthError,
+    GuardCallError,
+    GuardFailure,
+    GuardTools,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -44,7 +50,21 @@ _TIME_PATTERN = re.compile(
 
 
 class GuardDataError(Exception):
-    """Guard answered, but not with data this reader accepts. Text is safe to log."""
+    """Guard failed or answered with data this reader rejects. Text is safe to log.
+
+    `cause` says why (login, unavailable or bad data); `auth_kind` is set only for a login failure.
+    """
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        cause: GuardFailure = GuardFailure.DATA,
+        auth_kind: AuthFailureKind | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.cause = cause
+        self.auth_kind = auth_kind
 
 
 class RunStatus(StrEnum):
@@ -121,6 +141,8 @@ class ProjectOk(_Frozen):
 class ProjectUnknown(_Frozen):
     project: GuardProject
     reason: str
+    cause: GuardFailure = GuardFailure.DATA
+    auth_kind: AuthFailureKind | None = None
 
 
 class ListingOk(_Frozen):
@@ -129,6 +151,8 @@ class ListingOk(_Frozen):
 
 class ListingUnknown(_Frozen):
     reason: str
+    cause: GuardFailure = GuardFailure.DATA
+    auth_kind: AuthFailureKind | None = None
 
 
 ProjectData = ProjectOk | ProjectUnknown
@@ -296,9 +320,13 @@ def _pages[T](
     for _ in range(MAX_PAGES):
         try:
             page = parse(tools.call(tool, args))
-        except (GuardCallError, GuardDataError) as error:
+        except GuardCallError as error:
             message = f"{tool} failed: {error}"
-            raise GuardDataError(message) from None
+            auth_kind = error.kind if isinstance(error, GuardAuthError) else None
+            raise GuardDataError(message, cause=error.cause, auth_kind=auth_kind) from None
+        except GuardDataError as error:
+            message = f"{tool} failed: {error}"
+            raise GuardDataError(message, cause=error.cause, auth_kind=error.auth_kind) from None
         yield page
         if not page.has_more:
             return
@@ -317,7 +345,7 @@ def list_projects(tools: GuardTools) -> ProjectListing:
             projects.extend(page.items)
     except GuardDataError as error:
         logger.error("project listing unavailable: %s", error)  # noqa: TRY400
-        return ListingUnknown(reason=str(error))
+        return ListingUnknown(reason=str(error), cause=error.cause, auth_kind=error.auth_kind)
     if not projects:
         logger.error("project listing is empty: treating Guard as unavailable")
         return ListingUnknown(reason="list_projects returned no projects")
@@ -395,5 +423,7 @@ def fetch_project(
         )
     except GuardDataError as error:
         logger.warning("project %s is unknown: %s", project.id, error)
-        return ProjectUnknown(project=project, reason=str(error))
+        return ProjectUnknown(
+            project=project, reason=str(error), cause=error.cause, auth_kind=error.auth_kind
+        )
     return ProjectOk(project=project, repositories=repo_runs)
