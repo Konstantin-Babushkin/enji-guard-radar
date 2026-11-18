@@ -246,8 +246,13 @@ def test_doctor_passes_on_a_healthy_setup(
     ):
         assert line(out, name).startswith("PASS"), out
     assert line(out, "unevaluated projects").startswith("SKIP")
+    assert line(out, "weekly digest").startswith("PASS"), out
+    assert "Wednesday 05:00 UTC" in line(out, "weekly digest")
+    assert "24" in line(out, "weekly digest")
+    assert line(out, "score rules").startswith("PASS"), out
+    assert "off" in line(out, "score rules")
     assert line(out, "timer").startswith("SKIP")
-    assert out.rstrip().endswith("doctor: 9 pass, 0 fail, 0 warn, 2 skip")
+    assert out.rstrip().endswith("doctor: 11 pass, 0 fail, 0 warn, 2 skip")
     urls = [url.rsplit("/", 1)[1] for url, _ in transport.requests]
     assert urls == ["getMe", "getChatMember", "getChat", "getChatMember"]
     payloads = [payload for _, payload in transport.requests]

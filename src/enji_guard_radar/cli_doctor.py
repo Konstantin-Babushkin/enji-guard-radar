@@ -237,6 +237,8 @@ def run_doctor(
     state_load: StateLoad = FileStateStore(args.state_dir).load()
     results.append(doctor.verdict_state(state_load))
     results.append(doctor.verdict_unevaluated_projects(state_load, config))
+    results.append(doctor.verdict_digest(config, state_load))
+    results.append(doctor.verdict_score_rules(config))
     if isinstance(state_load, Loaded):
         logger.info("doctor read state: %d project(s)", len(state_load.state.projects))
 
