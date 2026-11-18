@@ -1,0 +1,13 @@
+# Cron fallback for hosts without systemd. /etc/cron.d style: the sixth field is the user.
+# Cron has no catch-up for missed runs and no failure hook; prefer the systemd timer.
+#
+# Bound the run with `timeout 15m` (a hung run must not pile up behind the next one).
+#
+# Do NOT wrap this command in flock on the radar's own lock file (state/radar.lock): the radar
+# takes its own non-blocking flock on that file, so a wrapper holding it makes every run find the
+# lock taken, exit 0 as "LOCKED" and do nothing. The radar already refuses to overlap itself;
+# if you want a wrapper lock anyway, use a different path.
+#
+# Cron's PATH is minimal, so every path below is absolute. Secrets are in radar.env (mode 0600),
+# never in this file.
+0 */3 * * * enji-guard-radar timeout 15m /opt/enji-guard-radar/.venv/bin/enji-guard-radar run --config /etc/enji-guard-radar/radar.yaml --state-dir /var/lib/enji-guard-radar --env-file /etc/enji-guard-radar/radar.env
