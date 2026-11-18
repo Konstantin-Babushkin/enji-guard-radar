@@ -13,7 +13,7 @@ from typing import TextIO
 
 from pydantic import SecretStr
 
-from enji_guard_radar import cli_auth, cli_doctor
+from enji_guard_radar import cli_auth, cli_doctor, cli_probe
 from enji_guard_radar.config import ConfigError, RadarConfig, parse_config
 from enji_guard_radar.env_file import EnvFileError, read_env_file
 from enji_guard_radar.fixture_source import FixtureGuardTools
@@ -157,6 +157,7 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     cli_auth.add_parser(commands)
     cli_doctor.add_parser(commands)
+    cli_probe.add_parser(commands)
     return parser
 
 
@@ -312,6 +313,13 @@ def main(
             transport=transport if transport is not None else UrllibTransport(),
             guard_connector=guard_connector or (lambda d: open_guard(d, clock=system_clock)),
             clock=system_clock,
+        )
+
+    if args.command == "probe":
+        return cli_probe.run_probe(
+            args,
+            out=out,
+            guard_connector=guard_connector or (lambda d: open_guard(d, clock=system_clock)),
         )
 
     if args.env_file is not None:
