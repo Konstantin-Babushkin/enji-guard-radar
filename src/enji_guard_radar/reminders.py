@@ -4,10 +4,11 @@ Pure: the caller passes `now` and the clocks; marking a reminder as sent is the 
 """
 
 import logging
-from collections.abc import Collection, Mapping, Sequence
+from collections.abc import Collection, Iterable, Mapping, Sequence
 from datetime import UTC, datetime, timedelta
 
-from enji_guard_radar.ledger import SeriesKey
+from enji_guard_radar.high_rules import HIGH_LEVEL
+from enji_guard_radar.ledger import ReminderClock, SeriesKey, State
 from enji_guard_radar.messages import (
     DEFAULT_MAX_CHARS,
     MIN_MAX_CHARS,
@@ -132,3 +133,23 @@ def render_reminders(
         messages.append(OutboundMessage(text=text, keys=tuple(alerts[i].key for i in indexes)))
     logger.info("reminders: %d series in %d message(s)", len(alerts), len(messages))
     return messages
+
+
+def mark_reminded(state: State, keys: Iterable[AlertKey], now: datetime) -> State:
+    """Write the reminder clock of every High series in `keys`; call it only after an ack."""
+    if now.tzinfo is None:
+        message = "now must be timezone-aware"
+        raise ValueError(message)
+    clocks = {clock.key(): clock for clock in state.reminders}
+    for key in keys:
+        if key.level != HIGH_LEVEL:
+            continue
+        series = _series(key)
+        clocks[series] = ReminderClock(
+            project_id=key.project_id,
+            repo_id=key.repo_id,
+            action_key=key.action_key,
+            last_reminded_at=now,
+        )
+    ordered = tuple(sorted(clocks.values(), key=lambda clock: clock.key()))
+    return state.model_copy(update={"reminders": ordered})

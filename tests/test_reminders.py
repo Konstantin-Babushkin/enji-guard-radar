@@ -3,13 +3,19 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
+from enji_guard_radar.ledger import ConditionRecord, ReminderClock, State
 from enji_guard_radar.messages import (
     MAX_NAME_CHARS,
     TELEGRAM_MAX_CHARS,
     telegram_length,
 )
 from enji_guard_radar.model import Alert, AlertKey, AlertKind, OutboundMessage, Severity
-from enji_guard_radar.reminders import REMINDER_TITLE, reminders_due, render_reminders
+from enji_guard_radar.reminders import (
+    REMINDER_TITLE,
+    mark_reminded,
+    reminders_due,
+    render_reminders,
+)
 
 NOW = datetime(2026, 11, 18, 9, 0, tzinfo=UTC)
 
@@ -310,3 +316,60 @@ def test_invalid_naive_now_and_zero_interval_raise() -> None:
         due([alert], now=datetime(2026, 11, 18, 9, 0))  # noqa: DTZ001
     with pytest.raises(ValueError, match="every_days"):
         due([alert], every_days=0)
+
+
+# --- mark_reminded ---
+
+
+def clock(alert: Alert, when: datetime) -> ReminderClock:
+    return ReminderClock(
+        project_id=alert.key.project_id,
+        repo_id=alert.key.repo_id,
+        action_key=alert.key.action_key,
+        last_reminded_at=when,
+    )
+
+
+def test_mark_reminded_inserts_a_clock_for_a_high_key() -> None:
+    alert = high()
+    result = mark_reminded(State.empty(), [alert.key], NOW)
+    assert result.reminders == (clock(alert, NOW),)
+
+
+def test_mark_reminded_replaces_the_clock_of_a_series_already_present() -> None:
+    alert = high()
+    state = State(reminders=(clock(alert, NOW - timedelta(days=7)),))
+    result = mark_reminded(state, [alert.key], NOW)
+    assert result.reminders == (clock(alert, NOW),)
+
+
+def test_mark_reminded_ignores_a_key_that_is_not_high() -> None:
+    stale = AlertKey(project_id="p1", level="stale")
+    assert mark_reminded(State.empty(), [stale], NOW).reminders == ()
+
+
+def test_mark_reminded_keeps_clocks_sorted_and_one_per_series() -> None:
+    first = high(pid="p1", repo_id="r2")
+    second = high(pid="p1", repo_id="r1")
+    result = mark_reminded(State.empty(), [first.key, second.key, first.key], NOW)
+    assert result.reminders == (clock(second, NOW), clock(first, NOW))
+
+
+def test_mark_reminded_leaves_the_rest_of_the_state_untouched() -> None:
+    alert = high()
+    other = high(pid="p2")
+    condition = ConditionRecord(
+        key=alert.key, first_seen_at=NOW, last_seen_at=NOW, baseline=False, alerted_at=NOW, count=3
+    )
+    state = State(conditions=(condition,), reminders=(clock(other, NOW - timedelta(days=9)),))
+    result = mark_reminded(state, [alert.key], NOW)
+    assert result.conditions == state.conditions
+    assert result.digest == state.digest
+    assert result.resolved == state.resolved
+    assert clock(other, NOW - timedelta(days=9)) in result.reminders
+    assert len(result.reminders) == 2
+
+
+def test_mark_reminded_rejects_a_naive_now() -> None:
+    with pytest.raises(ValueError, match="timezone"):
+        mark_reminded(State.empty(), [high().key], datetime(2026, 11, 18, 9, 0))  # noqa: DTZ001
