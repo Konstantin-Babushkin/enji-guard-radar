@@ -431,3 +431,26 @@ def test_guard_read_tools_are_the_four_used_tools() -> None:
         "list_projects",
         "list_repositories",
     ]
+
+
+def _runs_complete(*pages: dict[str, object]) -> bool:
+    result = fetch_project(_project_tools(*pages), PROJECT)
+    assert isinstance(result, ProjectOk)
+    return result.repositories[0].runs_complete
+
+
+def test_runs_complete_for_a_single_last_page() -> None:
+    assert _runs_complete(_runs([_run("x", T, T)])) is True
+
+
+def test_runs_complete_when_two_pages_are_read_to_the_end() -> None:
+    pages = (_runs([_run("x", T, T)], "c2"), _runs([_run("y", T - timedelta(hours=2), T)]))
+    assert _runs_complete(*pages) is True
+
+
+def test_runs_complete_for_a_well_formed_empty_run_list() -> None:
+    assert _runs_complete({"runs": [], "has_more": False}) is True
+
+
+def test_runs_not_complete_when_paging_stopped_early() -> None:
+    assert _runs_complete(_runs([_run("x", T - timedelta(hours=30), T)], "c2")) is False
