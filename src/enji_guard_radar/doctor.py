@@ -28,6 +28,8 @@ NAME_OPS_ID = "ops chat id"
 NAME_CONFIG = "config"
 NAME_STATE = "state"
 NAME_UNEVALUATED = "unevaluated projects"
+NAME_DIGEST = "weekly digest"
+NAME_SCORES = "score rules"
 NAME_CREDENTIALS = "guard login"
 NAME_TOKEN = "telegram token"
 NAME_GROUP = "group chat"
@@ -39,6 +41,9 @@ NAME_TIMER = "timer"
 LABEL_GROUP = "the group chat"
 LABEL_OPS = "the ops chat"
 
+# ASSUMPTION: mirrors OnCalendar in deploy/systemd/enji-guard-radar.timer (a run every 3 hours).
+TIMER_INTERVAL_HOURS = 3
+SKIP_NEEDS_CONFIG = "needs a readable config"
 SKIP_NEEDS_TOKEN = "needs a valid bot token"
 SKIP_NEEDS_MEMBERSHIP = "needs bot membership in the group chat"
 CREDENTIAL_MODE = 0o600
@@ -188,7 +193,7 @@ def verdict_unevaluated_projects(load: StateLoad, config: RadarConfig | None) ->
     if not isinstance(load, Loaded):
         return _result(name, CheckStatus.SKIP, "needs a readable state.json")
     if config is None:
-        return _result(name, CheckStatus.SKIP, "needs a readable config")
+        return _result(name, CheckStatus.SKIP, SKIP_NEEDS_CONFIG)
     last_success = load.state.health.last_success_at
     if last_success is None:
         return _result(name, CheckStatus.SKIP, "no successful Guard poll yet")
@@ -210,6 +215,66 @@ def verdict_unevaluated_projects(load: StateLoad, config: RadarConfig | None) ->
         CheckStatus.WARN,
         f"{len(missed)} active project(s) not evaluated in the last successful poll "
         f"(Guard failed for them, or they were removed): {listed}",
+    )
+
+
+def _last_digest(load: StateLoad) -> str:
+    """The last digest outcome as `; last digest: ...`, or nothing when state is unreadable."""
+    if not isinstance(load, Loaded):
+        return ""
+    record = load.state.digest
+    if record.outcome == "sent" and record.sent_at is not None:
+        return f"; last digest: sent {_utc(record.sent_at)}"
+    if record.outcome == "skipped" and record.planned_for is not None:
+        return f"; last digest: skipped {_utc(record.planned_for)} (planned moment)"
+    return "; last digest: none yet"
+
+
+def verdict_digest(config: RadarConfig | None, load: StateLoad) -> CheckResult:
+    """When the weekly digest goes out. WARN, never FAIL, for a window shorter than the timer."""
+    if config is None:
+        return _result(NAME_DIGEST, CheckStatus.SKIP, SKIP_NEEDS_CONFIG)
+    digest = config.digest
+    detail = (
+        f"{digest.weekday.capitalize()} {digest.hour_utc:02d}:00 UTC, "
+        f"window {digest.grace_hours} h, up to {digest.max_items} items"
+    )
+    status = CheckStatus.PASS
+    if digest.grace_hours < TIMER_INTERVAL_HOURS:
+        status = CheckStatus.WARN
+        detail += (
+            f"; window is shorter than the {TIMER_INTERVAL_HOURS} h timer interval, so the digest "
+            "can be skipped without a run in its window: raise digest.grace_hours"
+        )
+    return _result(NAME_DIGEST, status, f"{detail}{_last_digest(load)}")
+
+
+def _threshold(value: int | None) -> str:
+    return "off" if not value else f"below {value}"
+
+
+def verdict_score_rules(config: RadarConfig | None) -> CheckResult:
+    """Whether the score rules are switched on (D-08: off is the shipped state, not an error)."""
+    if config is None:
+        return _result(NAME_SCORES, CheckStatus.SKIP, SKIP_NEEDS_CONFIG)
+    scores = config.scores
+    overrides = sum(
+        1
+        for project in config.projects.values()
+        if project.ai_readiness_below is not None or project.tests_below is not None
+    )
+    if not scores.ai_readiness_below and not scores.tests_below and overrides == 0:
+        return _result(
+            NAME_SCORES,
+            CheckStatus.PASS,
+            "score rules are off: set scores.ai_readiness_below and scores.tests_below "
+            "after the first probe",
+        )
+    return _result(
+        NAME_SCORES,
+        CheckStatus.PASS,
+        f"ai-readiness {_threshold(scores.ai_readiness_below)}, "
+        f"tests {_threshold(scores.tests_below)}; {overrides} project override(s)",
     )
 
 
