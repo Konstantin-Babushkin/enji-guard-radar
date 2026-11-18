@@ -166,6 +166,18 @@ the newest `task_id` per `(repo, action_key)` to skip unchanged reports.
 Rate limits are not documented. **ASSUMPTION:** a poll of this size is fine;
 measure it before the timer is enabled.
 
+## Phase 3 additions
+
+- Scores are kept per (repo, audit type) from the newest completed run of
+  `audit.ai-readiness` and `audit.tests`. Deltas are not used (see Reports).
+- Tooling gaps rest on the run history the radar has seen, because
+  `list_audit_runs` returns only the newest runs. **ASSUMPTION:** the evidence
+  rule (a gap is stated once the whole run list was read, or the repo was
+  watched for `tooling_gaps.window_days`) is right. **ASSUMPTION:**
+  `audit.implementation-unification` is the duplicate detector.
+- Whether `list_audit_runs` accepts an `action_key` filter is NOT verified.
+  Check the tool schema with `probe`, which prints the argument names.
+
 ## Auth
 
 Not exercised from the radar yet. This session used Claude Code's own login.
