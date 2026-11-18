@@ -114,7 +114,29 @@ Plans:
   3. A repo with no recent completed run of `audit.dead-code`, `audit.implementation-unification`, `audit.security` or `audit.dependency-hygiene` shows up as a tooling gap in the digest only.
   4. One weekly digest reaches the group even when nothing is open (a one-line all-clear), lists open items worst first with each item's age and a "+N more" cap, shows the time of the last successful Guard poll, and carries resolved items and tooling gaps.
   5. An unaddressed high-risk finding is re-sent as a reminder at the configured interval in days, and not before.
-**Plans**: TBD
+**Plans**: 11 plans
+
+Plans:
+**Wave 1**
+- [ ] 03-01-PLAN.md — Wave 1: State schema 3 (scores, tooling observations, reminder clocks, digest record, bounded resolved log; schemas 1 and 2 still read)
+- [ ] 03-02-PLAN.md — Wave 1: Config for the digest, reminders, score thresholds (off by default), recurring N and tooling gaps, with the example file
+- [ ] 03-03-PLAN.md — Wave 1: Pure "is the digest due" decision (planned moment, window, deferral while Guard is down, skip)
+- [ ] 03-04-PLAN.md — Wave 1: Pure reminders (due function and text) and the shared message helpers made public
+
+**Wave 2** *(blocked on Wave 1 completion)*
+- [ ] 03-05-PLAN.md — Wave 2: Pure score rules (RULE-05, RULE-06) and recurring rule (RULE-08)
+- [ ] 03-06-PLAN.md — Wave 2: Pure tooling-gap rule (RULE-07) and the reader's run-list completeness flag
+- [ ] 03-07-PLAN.md — Wave 2: `doctor` lines for the digest schedule and whether score thresholds are set
+
+**Wave 3** *(blocked on Wave 2 completion)*
+- [ ] 03-08-PLAN.md — Wave 3: Pure digest builder and text (worst first, cap, all-clear, resolved, unread note, splitting)
+- [ ] 03-09-PLAN.md — Wave 3: Collect scores, tooling observations and the resolved log in the run (bounded report reads)
+
+**Wave 4** *(blocked on Wave 3 completion)*
+- [ ] 03-10-PLAN.md — Wave 4: Reminders in the run (ack-before-mark, shared delivery helper) and the runbook section
+
+**Wave 5** *(blocked on Wave 4 completion)*
+- [ ] 03-11-PLAN.md — Wave 5: Weekly digest in the run (window, deferral, skip, dry-run), runbook operator steps and data notes
 
 ### Phase 4: Claude Triage
 **Goal**: Every message that will be sent carries a short Claude-written summary, probable cause and priority, and the set of alerts is exactly what the rules alone would have sent.
@@ -157,5 +179,5 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 (Phase 4 may be planned in 
 |-------|----------------|--------|-----------|
 | 1. Working Pipeline on Fixtures | 7/7 | Complete | 2026-11-17 |
 | 2. Guard Connection and Core Alerts | 0/12 | Planned | - |
-| 3. Remaining Rules and the Digest | 0/TBD | Not started | - |
+| 3. Remaining Rules and the Digest | 0/11 | Planned | - |
 | 4. Claude Triage | 0/TBD | Not started | - |
