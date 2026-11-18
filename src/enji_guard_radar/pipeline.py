@@ -6,6 +6,7 @@ saved right after that mark (at-least-once delivery).
 """
 
 import logging
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from datetime import datetime
 from enum import StrEnum
@@ -243,26 +244,22 @@ def _run_locked(deps: Deps, now: datetime) -> RunReport:
     deps.store.save(rec.state)
 
     messages = render_messages(rec.to_send, collapse_above=deps.config.alerts.collapse_above)
-    delivered = printed = not_delivered = 0
     actions: list[str] = []
-    unauthorized = False
-    state = rec.state
-    for message in messages:
-        outcome = deps.notifier.send(message)
-        if isinstance(outcome, Delivered):
-            state = apply_delivery(state, message.keys, now)
-            deps.store.save(state)
-            delivered += 1
-        elif isinstance(outcome, Printed):
-            printed += 1
-        elif isinstance(outcome, NotDelivered):
-            not_delivered += 1
-            unauthorized = unauthorized or outcome.error is DeliveryError.UNAUTHORIZED
-            logger.warning("message not delivered: %s (%s)", outcome.error, outcome.detail)
-        _note_action(outcome, actions)
-        if isinstance(outcome, NotDelivered) and outcome.stop_sending:
-            logger.warning("stopping delivery after a fatal send error")
-            break
+    alert_delivery = _deliver(
+        deps,
+        messages,
+        rec.state,
+        now,
+        actions,
+        lambda current, message: apply_delivery(current, message.keys, now),
+    )
+    state = alert_delivery.state
+    delivered, printed, not_delivered = (
+        alert_delivery.delivered,
+        alert_delivery.printed,
+        alert_delivery.not_delivered,
+    )
+    unauthorized = alert_delivery.unauthorized
 
     _notify_ops_of_actions(deps, actions, unauthorized=unauthorized)
     state, ops_sent = _send_ops_action(deps, state, step.action, now)
@@ -339,6 +336,52 @@ def _halt(deps: Deps, now: datetime, load: Corrupt) -> RunReport:
         outcome = deps.ops_notifier.send(ops_message_for_halt(load.reason, load.backup_valid))
         logger.info("ops message about the corrupt state: %s", type(outcome).__name__)
     return _empty_report(now, RunOutcome.HALTED, halt_reason=load.reason)
+
+
+@dataclass(frozen=True)
+class _Delivery:
+    """What `_deliver` did: the state after the acknowledged marks and the fate of each send."""
+
+    state: State
+    delivered: int = 0
+    printed: int = 0
+    not_delivered: int = 0
+    unauthorized: bool = False
+    fatal: bool = False
+    last_error: str | None = None
+
+
+def _deliver(
+    deps: Deps,
+    messages: Sequence[OutboundMessage],
+    state: State,
+    now: datetime,
+    actions: list[str],
+    mark: Callable[[State, OutboundMessage], State],
+) -> _Delivery:
+    """Send each message; after an acknowledgement apply `mark` and save before the next send."""
+    delivered = printed = not_delivered = 0
+    unauthorized = fatal = False
+    last_error: str | None = None
+    for message in messages:
+        outcome = deps.notifier.send(message)
+        if isinstance(outcome, Delivered):
+            state = mark(state, message)
+            deps.store.save(state)
+            delivered += 1
+        elif isinstance(outcome, Printed):
+            printed += 1
+        elif isinstance(outcome, NotDelivered):
+            not_delivered += 1
+            unauthorized = unauthorized or outcome.error is DeliveryError.UNAUTHORIZED
+            last_error = outcome.error.name
+            logger.warning("message not delivered: %s (%s)", outcome.error, outcome.detail)
+        _note_action(outcome, actions)
+        if isinstance(outcome, NotDelivered) and outcome.stop_sending:
+            logger.warning("stopping delivery after a fatal send error")
+            fatal = True
+            break
+    return _Delivery(state, delivered, printed, not_delivered, unauthorized, fatal, last_error)
 
 
 def _note_action(outcome: SendOutcome, actions: list[str]) -> None:
