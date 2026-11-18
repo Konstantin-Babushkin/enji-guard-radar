@@ -26,10 +26,12 @@ SECRET_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
     ("api_key_sk", re.compile(r"(?<![A-Za-z0-9])sk-[A-Za-z0-9_-]{20,}")),
     ("slack_token", re.compile(r"xox[abprs]-[A-Za-z0-9-]{10,}")),
     ("bearer_token", re.compile(r"bearer\s+[A-Za-z0-9._~+/=-]{20,}", re.IGNORECASE)),
+    ("jwt", re.compile(r"eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}")),
 )
 
 LOG_FORMAT = "%(asctime)s %(levelname)s %(name)s: %(message)s"
-QUIET_LOGGERS = ("urllib3", "httpx", "httpcore", "httpx2", "httpcore2")
+# "mcp" logs session ids at INFO.
+QUIET_LOGGERS = ("urllib3", "httpx", "httpcore", "httpx2", "httpcore2", "mcp")
 
 _BLOCKED_ACTION = (
     "A message was withheld because it looked like it contained a secret; "

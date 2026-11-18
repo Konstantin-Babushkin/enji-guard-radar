@@ -152,5 +152,22 @@ def test_configure_logging_twice_leaves_one_radar_handler(
 
 def test_configure_logging_quiets_http_libraries(clean_root_logger: logging.Logger) -> None:
     configure_logging(level=logging.DEBUG, known_secrets=[], stream=io.StringIO())
-    for name in ("urllib3", "httpx", "httpcore", "httpx2", "httpcore2"):
+    for name in ("urllib3", "httpx", "httpcore", "httpx2", "httpcore2", "mcp"):
         assert logging.getLogger(name).level == logging.WARNING
+
+
+def test_mcp_logger_info_is_dropped_and_warning_passes(clean_root_logger: logging.Logger) -> None:
+    stream = io.StringIO()
+    configure_logging(level=logging.DEBUG, known_secrets=[], stream=stream)
+    sdk = logging.getLogger("mcp.client.streamable_http")
+    sdk.info("Received session ID: abc-session")
+    sdk.warning("sdk warning kept")
+    assert "session ID" not in stream.getvalue()
+    assert "sdk warning kept" in stream.getvalue()
+
+
+def test_jwt_shaped_string_is_found_and_redacted() -> None:
+    jwt = "eyJ" + "a" * 20 + "." + "b" * 20 + "." + "c" * 20
+    assert find_secret(f"token {jwt} here", []) == "jwt"
+    assert jwt not in redact(f"token {jwt} here", [])
+    assert find_secret("audit.public-api-access-safety", []) is None
