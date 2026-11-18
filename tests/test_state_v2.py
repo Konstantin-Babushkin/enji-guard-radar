@@ -76,7 +76,7 @@ def test_v1_state_file_upgrades_through_a_live_run(tmp_path: Path) -> None:
     assert sum("Stale Guard scans: <b>Project A" in text for text in texts) == 1
     assert sum("1 High finding in audit.security (acme/service-a)." in text for text in texts) == 1
     state = load_state(tmp_path)
-    assert state.schema_version == 2
+    assert state.schema_version == 3
     assert {h.project_id for h in state.histories} == {A_ID}
     assert any(h.action_key == "audit.security" and h.open for h in state.histories)
     assert state.health == PollHealth()

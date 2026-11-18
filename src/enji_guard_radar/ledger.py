@@ -25,12 +25,16 @@ from pydantic import (
 
 from enji_guard_radar.model import Alert, AlertKey
 
-SCHEMA_VERSION = 2
-READABLE_SCHEMA_VERSIONS = (1, 2)
+SCHEMA_VERSION = 3
+READABLE_SCHEMA_VERSIONS = (1, 2, 3)
+
+# The pending "resolved since the last digest" log keeps this many newest items (DIG-04).
+RESOLVED_LIMIT = 200
 
 # (project_id, repo_id, action_key): one audit type of one repo.
 SeriesKey = tuple[str, str, str]
 FailureCause = Literal["auth", "unavailable", "data"]
+DigestOutcome = Literal["sent", "skipped"]
 
 
 class _Frozen(BaseModel):
@@ -100,12 +104,84 @@ class PollHealth(_Frozen):
     outage_reported_at: AwareDatetime | None = None
 
 
+class ScoreRecord(_Frozen):
+    """Newest completed run whose score was read for one (repo, audit type)."""
+
+    project_id: str = Field(min_length=1)
+    repo_id: str = Field(min_length=1)
+    action_key: str = Field(min_length=1)
+    task_id: str = Field(min_length=1)
+    completed_at: AwareDatetime
+    score: StrictInt = Field(ge=0, le=100)
+
+    def key(self) -> SeriesKey:
+        return (self.project_id, self.repo_id, self.action_key)
+
+
+class ToolingRecord(_Frozen):
+    """Since when the radar has watched a (repo, tooling audit type), and its newest run seen."""
+
+    project_id: str = Field(min_length=1)
+    repo_id: str = Field(min_length=1)
+    action_key: str = Field(min_length=1)
+    observed_since: AwareDatetime
+    last_completed_at: AwareDatetime | None = None
+
+    def key(self) -> SeriesKey:
+        return (self.project_id, self.repo_id, self.action_key)
+
+
+class ReminderClock(_Frozen):
+    """When a series was last reminded about (STATE-02, D-11)."""
+
+    project_id: str = Field(min_length=1)
+    repo_id: str = Field(min_length=1)
+    action_key: str = Field(min_length=1)
+    last_reminded_at: AwareDatetime
+
+    def key(self) -> SeriesKey:
+        return (self.project_id, self.repo_id, self.action_key)
+
+
+class DigestRecord(_Frozen):
+    """The planned moment the digest was last handled for, how, and when it was last acked."""
+
+    planned_for: AwareDatetime | None = None
+    outcome: DigestOutcome | None = None
+    sent_at: AwareDatetime | None = None
+
+    @model_validator(mode="after")
+    def _consistent_fields(self) -> "DigestRecord":
+        if (self.planned_for is None) != (self.outcome is None):
+            message = "planned_for and outcome are set together"
+            raise ValueError(message)
+        if self.outcome == "sent" and self.sent_at is None:
+            message = "a sent digest needs sent_at"
+            raise ValueError(message)
+        if self.planned_for is None and self.sent_at is not None:
+            message = "sent_at needs a handled digest"
+            raise ValueError(message)
+        return self
+
+
+class ResolvedItem(_Frozen):
+    """One condition that resolved since the last digest."""
+
+    key: AlertKey
+    resolved_at: AwareDatetime
+
+
 class State(_Frozen):
     schema_version: int = SCHEMA_VERSION
     projects: tuple[ProjectRecord, ...] = ()
     conditions: tuple[ConditionRecord, ...] = ()
     histories: tuple[SeriesHistory, ...] = ()
     health: PollHealth = Field(default_factory=PollHealth)
+    scores: tuple[ScoreRecord, ...] = ()
+    tooling: tuple[ToolingRecord, ...] = ()
+    reminders: tuple[ReminderClock, ...] = ()
+    digest: DigestRecord = Field(default_factory=DigestRecord)
+    resolved: tuple[ResolvedItem, ...] = ()
 
     @classmethod
     def empty(cls) -> "State":
@@ -180,17 +256,34 @@ def _key_order(key: AlertKey) -> tuple[str, str, str, str]:
     return (key.project_id, key.repo_id, key.action_key, key.level)
 
 
+def _resolved_order(item: ResolvedItem) -> tuple[datetime, str]:
+    return (item.resolved_at, item.key.as_text())
+
+
 def _normalized(
-    projects: Iterable[ProjectRecord],
-    conditions: Iterable[ConditionRecord],
-    histories: Iterable[SeriesHistory],
-    health: PollHealth,
+    base: State,
+    *,
+    projects: Iterable[ProjectRecord] | None = None,
+    conditions: Iterable[ConditionRecord] | None = None,
 ) -> State:
+    """Rebuild ``base`` in deterministic order; every field not overridden is carried through."""
     return State(
-        projects=tuple(sorted(projects, key=lambda p: p.project_id)),
-        conditions=tuple(sorted(conditions, key=lambda c: _key_order(c.key))),
-        histories=tuple(sorted(histories, key=lambda h: h.key())),
-        health=health,
+        projects=tuple(
+            sorted(base.projects if projects is None else projects, key=lambda p: p.project_id)
+        ),
+        conditions=tuple(
+            sorted(
+                base.conditions if conditions is None else conditions,
+                key=lambda c: _key_order(c.key),
+            )
+        ),
+        histories=tuple(sorted(base.histories, key=lambda h: h.key())),
+        health=base.health,
+        scores=tuple(sorted(base.scores, key=lambda s: s.key())),
+        tooling=tuple(sorted(base.tooling, key=lambda r: r.key())),
+        reminders=tuple(sorted(base.reminders, key=lambda r: r.key())),
+        digest=base.digest,
+        resolved=tuple(sorted(base.resolved, key=_resolved_order)),
     )
 
 
@@ -264,7 +357,7 @@ def reconcile(
             resolved.append(key)
 
     return Reconciliation(
-        state=_normalized(projects.values(), conditions.values(), state.histories, state.health),
+        state=_normalized(state, projects=projects.values(), conditions=conditions.values()),
         to_send=tuple(sorted(to_send, key=lambda a: _key_order(a.key))),
         baselined=tuple(sorted(baselined, key=lambda a: _key_order(a.key))),
         resolved=tuple(sorted(resolved, key=_key_order)),
@@ -278,26 +371,45 @@ def apply_delivery(state: State, keys: Iterable[AlertKey], now: datetime) -> Sta
     """Mark the keys of an acknowledged message as alerted. The only place this is set."""
     acknowledged = set(keys)
     return _normalized(
-        state.projects,
-        (
+        state,
+        conditions=(
             c.model_copy(update={"alerted_at": now}) if c.key in acknowledged else c
             for c in state.conditions
         ),
-        state.histories,
-        state.health,
     )
 
 
+def append_resolved(state: State, keys: Iterable[AlertKey], now: datetime) -> State:
+    """Add the keys that resolved to the pending digest log, keeping the newest RESOLVED_LIMIT."""
+    if now.utcoffset() is None:
+        message = "now must be timezone-aware"
+        raise ValueError(message)
+    added = (ResolvedItem(key=key, resolved_at=now) for key in keys)
+    items = sorted([*state.resolved, *added], key=_resolved_order)
+    return _normalized(state.model_copy(update={"resolved": tuple(items[-RESOLVED_LIMIT:])}))
+
+
 def serialize_state(state: State) -> bytes:
-    normalized = _normalized(
-        state.projects, state.conditions, state.histories, state.health
-    ).model_copy(update={"schema_version": state.schema_version})
+    normalized = _normalized(state).model_copy(update={"schema_version": state.schema_version})
     return (normalized.model_dump_json(indent=2) + "\n").encode("utf-8")
 
 
 def migrate_state_v1(raw: dict[str, object]) -> dict[str, object]:
     """Pure 1 -> 2 upgrade: records are copied as they are, histories and health start empty."""
     return {**raw, "schema_version": 2, "histories": [], "health": {}}
+
+
+def migrate_state_v2(raw: dict[str, object]) -> dict[str, object]:
+    """Pure 2 -> 3 upgrade: records are copied as they are, the new blocks start empty."""
+    return {
+        **raw,
+        "schema_version": 3,
+        "scores": [],
+        "tooling": [],
+        "reminders": [],
+        "digest": {},
+        "resolved": [],
+    }
 
 
 def deserialize_state(data: bytes) -> State:
@@ -316,10 +428,12 @@ def deserialize_state(data: bytes) -> State:
         version = raw["schema_version"]
         if type(version) is not int or version not in READABLE_SCHEMA_VERSIONS:
             shown = version if type(version) is int else type(version).__name__
-            reason = f"unsupported schema_version {shown} (this radar reads 1 and 2)"
+            reason = f"unsupported schema_version {shown} (this radar reads 1, 2 and 3)"
             raise StateFormatError(reason)
         if version == 1:
             raw = migrate_state_v1(raw)
+        if version in (1, 2):
+            raw = migrate_state_v2(raw)
     try:
         return State.model_validate(raw)
     except ValidationError as exc:

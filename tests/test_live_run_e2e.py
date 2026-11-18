@@ -74,7 +74,7 @@ def test_first_live_run_baselines_and_sends_nothing(tmp_path: Path) -> None:
     code, out = run_live(tmp_path, BASELINE_NOW, transport)
     assert code == 0
     assert transport.requests == []
-    assert load_state(tmp_path).schema_version == 2
+    assert load_state(tmp_path).schema_version == 3
     assert "3 baselined" in out
 
 
