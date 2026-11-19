@@ -8,7 +8,7 @@ requirements: [ALERT-07]
 
 ## What changed
 - `texts.py`: new en/ru entries (`marker.*`, `alert.age`, `alert.high.line`, `alert.high.line_count`,
-  `alert.stale.line`, `alert.never_ran.line`, `alert.where_repo`, `alert.triage_line`,
+  `alert.stale.line`, `alert.no_scan_yet.line`, `alert.where_repo`, `alert.triage_line`,
   `summary.short_header`); the old long alert and summary keys are removed. `alert.high.count` and
   `alert.high.seen` stay for reminders and digest.
 - `messages.py`: public helpers `marker`, `audit_short`, `age_text`, `ambiguous_series`, `high_line`;
@@ -20,8 +20,8 @@ requirements: [ALERT-07]
   section of the golden changed.
 
 ## Deviations (judged by intent)
-- The plan's acceptance grep for removed catalog keys also matches the new required key
-  `alert.never_ran.line` (pattern `alert\.never_ran\.[a-z_]+`); the old keys are all gone.
+- The plan names the never-ran line key `alert.never_ran.line`, but its own acceptance grep for removed
+  `alert.never_ran.*` keys would match it. The key is `alert.no_scan_yet.line` instead (wording unchanged).
 - The plan's grep for old wording also matched the `ENGLISH_PHRASES` regex in
   `tests/test_language_e2e.py`; the old alert phrases there were replaced by `no scan|need attention`.
 - This summary file is the one extra file beyond `files_modified` (the plan's own output).

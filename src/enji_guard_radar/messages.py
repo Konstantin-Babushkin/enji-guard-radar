@@ -147,7 +147,7 @@ def render_alert(
         )
     if alert.kind is AlertKind.NEVER_RAN:
         return text(
-            language, "alert.never_ran.line", marker=marker(alert.kind, language), name=name
+            language, "alert.no_scan_yet.line", marker=marker(alert.kind, language), name=name
         )
     if alert.kind is AlertKind.HIGH_FINDINGS:
         if alert.seen_since is None:
