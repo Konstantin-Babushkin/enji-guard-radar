@@ -11,7 +11,6 @@ from enji_guard_radar.messages import (
 )
 from enji_guard_radar.model import Alert, AlertKey, AlertKind, OutboundMessage, Severity
 from enji_guard_radar.reminders import (
-    REMINDER_TITLE,
     mark_reminded,
     reminders_due,
     render_reminders,
@@ -81,10 +80,7 @@ def test_one_reminder_for_a_series_whose_clock_is_a_week_old() -> None:
     messages = render_reminders(result)
     assert len(messages) == 1
     text = messages[0].text
-    assert text.startswith(f"<b>{REMINDER_TITLE}</b>")
-    assert "3 High findings in audit.security (acme/svc)." in text
-    assert "Seen by the radar since" in text
-    assert "(12 days)" in text
+    assert text == "<b>Radar reminder · 1 open</b>\n🔴 <b>Acme</b> · security High 3 · 12d"
     assert messages[0].keys == (alert.key,)
     assert telegram_length(text) < TELEGRAM_MAX_CHARS
 
@@ -235,31 +231,44 @@ def test_order_is_count_then_age_then_name_then_key_whatever_the_input_order() -
 # --- text ---
 
 
+def test_short_reminder_text() -> None:
+    first = high("Project A", pid="a", action="audit.security", count=3, age=15)
+    second = high("Project D", pid="d", action="audit.tests", count=1, age=9)
+    (message,) = render_reminders([first, second])
+    assert message.text == (
+        "<b>Radar reminder · 2 open</b>\n"
+        "🔴 <b>Project A</b> · security High 3 · 15d\n"
+        "🔴 <b>Project D</b> · tests High 1 · 9d"
+    )
+
+
 def test_render_two_series_in_one_message_with_both_keys_in_order() -> None:
     first = high("Acme", pid="p1", count=1, repo="acme/one")
     second = high("Beta", pid="p2", count=4, action="audit.deps", repo="beta/two", age=3)
     messages = render_reminders([second, first])
     assert len(messages) == 1
     lines = messages[0].text.split("\n")
-    assert lines[0] == f"<b>{REMINDER_TITLE}</b>"
-    assert lines[1].startswith("- <b>Beta</b>: 4 High findings in audit.deps (beta/two).")
-    assert "(3 days)" in lines[1]
-    assert lines[2].startswith("- <b>Acme</b>: 1 High finding in audit.security (acme/one).")
+    assert lines == [
+        "<b>Radar reminder · 2 open</b>",
+        "🔴 <b>Beta</b> · deps High 4 · 3d",
+        "🔴 <b>Acme</b> · security High 1 · 12d",
+    ]
     assert messages[0].keys == (second.key, first.key)
 
 
-def test_render_since_date_wording_and_text_is_counts_only() -> None:
+def test_render_text_is_counts_only() -> None:
     text = render_reminders([high()])[0].text
-    since = (NOW - timedelta(days=12)).date().isoformat()
-    assert f"Seen by the radar since {since} (12 days)." in text
-    for forbidden in ("F-001", "/src/", "Placeholder", "Severity"):
+    for forbidden in ("F-001", "/src/", "Placeholder", "Severity", "since", "P1"):
         assert forbidden not in text
 
 
 def test_render_escapes_names_and_cuts_long_ones() -> None:
-    text = render_reminders([high('<b>&"x', repo="a<i>/b&c")])[0].text
+    text = render_reminders([high('<b>&"x')])[0].text
     assert '<b>&lt;b&gt;&amp;"x</b>' in text
-    assert "(a&lt;i&gt;/b&amp;c)" in text
+    both = render_reminders(
+        [high("Acme", repo_id="r1", repo="a<i>/b&c"), high("Acme", repo_id="r2", repo="other")]
+    )[0].text
+    assert "(a&lt;i&gt;/b&amp;c)" in both
     long_text = render_reminders([high("n" * 200)])[0].text
     assert "n" * (MAX_NAME_CHARS - 3) + "..." in long_text
     assert "n" * MAX_NAME_CHARS not in long_text
@@ -276,7 +285,7 @@ def test_split_into_numbered_messages_each_owning_its_keys() -> None:
     total = len(messages)
     for number, message in enumerate(messages, start=1):
         assert telegram_length(message.text) <= 1000
-        assert message.text.startswith(f"<b>{REMINDER_TITLE} ({number}/{total})</b>")
+        assert message.text.startswith(f"<b>Radar reminder · 60 open ({number}/{total})</b>")
         assert len(message.text.split("\n")) - 1 == len(message.keys)
     assert keys_of(messages) == [a.key for a in alerts]
 
@@ -284,7 +293,7 @@ def test_split_into_numbered_messages_each_owning_its_keys() -> None:
 def test_split_not_needed_keeps_a_plain_title() -> None:
     messages = render_reminders([high(pid=f"p{i}") for i in range(3)])
     assert len(messages) == 1
-    assert messages[0].text.split("\n")[0] == f"<b>{REMINDER_TITLE}</b>"
+    assert messages[0].text.split("\n")[0] == "<b>Radar reminder · 3 open</b>"
 
 
 # --- invalid input ---
@@ -300,7 +309,6 @@ def test_invalid_max_chars_raises(max_chars: int) -> None:
     "alert",
     [
         high(repo=None),
-        high(seen_since=None),
         high(age=None),
         high(count=None),
     ],
