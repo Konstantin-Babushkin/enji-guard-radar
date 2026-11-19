@@ -7,7 +7,6 @@ import pytest
 from enji_guard_radar.config import parse_config
 from enji_guard_radar.high_rules import HIGH_LEVEL, HighSeries, high_alert, in_scope
 from enji_guard_radar.messages import (
-    LONG_STANDING_PREFIX,
     render_alert,
     render_messages,
     render_summary_item,
@@ -59,13 +58,8 @@ def test_config_to_high_rise_message() -> None:
     assert messages[0].keys == (
         AlertKey(project_id="p1", repo_id="r1", action_key="audit.security", level="high"),
     )
-    assert messages[0].text == "\n".join(
-        [
-            'High findings: <b>Project A &lt;core&gt; &amp; "tools"</b>',
-            "High findings rose from 1 to 3 in audit.security (acme/service-a).",
-            "Seen by the radar since 2026-11-09 (11 days).",
-            "Severity: high.",
-        ]
+    assert messages[0].text == (
+        '🔴 <b>Project A &lt;core&gt; &amp; "tools"</b> · security High 1→3 · 11d'
     )
     assert config.high.clear_after_clean_runs == 3
 
@@ -73,29 +67,27 @@ def test_config_to_high_rise_message() -> None:
 @pytest.mark.parametrize(
     ("high_now", "previous", "expected"),
     [
-        (3, None, "3 High findings in audit.security (acme/service-a)."),
-        (2, 0, "High findings rose from 0 to 2 in audit.security (acme/service-a)."),
-        (1, 1, "1 High finding in audit.security (acme/service-a)."),
-        (4, 4, "4 High findings in audit.security (acme/service-a)."),
-        (1, 3, "1 High finding in audit.security (acme/service-a)."),
-        (0, 2, "0 High findings in audit.security (acme/service-a)."),
-        (0, None, "0 High findings in audit.security (acme/service-a)."),
+        (3, None, "High 0→3"),
+        (2, 0, "High 0→2"),
+        (1, 1, "High 1→1"),
+        (4, 4, "High 4→4"),
+        (1, 3, "High 3→1"),
+        (0, 2, "High 2→0"),
+        (0, None, "High 0→0"),
     ],
 )
 def test_count_line(high_now: int, previous: int | None, expected: str) -> None:
     alert = high_alert(
         series(high_now=high_now, previous_high=previous), aged_after_days=14, now=NOW
     )
-    assert lines(alert)[1] == expected
-    assert lines(alert)[0] == "High findings: <b>Project A</b>"
-    assert lines(alert)[3] == "Severity: high."
+    assert lines(alert) == [f"🔴 <b>Project A</b> · security {expected} · 11d"]
 
 
 def test_aged_boundary_exactly_threshold_is_not_aged() -> None:
     alert = high_alert(series(opened_at=NOW - timedelta(days=14)), aged_after_days=14, now=NOW)
     assert alert.aged is False
     assert alert.age_days == 14
-    assert lines(alert)[2] == "Seen by the radar since 2026-11-07 (14 days)."
+    assert lines(alert) == ["🔴 <b>Project A</b> · security High 1→3 · 14d"]
 
 
 def test_aged_boundary_one_second_over_is_aged() -> None:
@@ -104,17 +96,17 @@ def test_aged_boundary_one_second_over_is_aged() -> None:
     )
     assert alert.aged is True
     assert alert.age_days == 14
-    assert lines(alert)[2] == (
-        f"{LONG_STANDING_PREFIX}seen by the radar since 2026-11-07 (14 days)."
-    )
+    # an aged series reads like any other: the flag does not change the text
+    assert lines(alert) == ["🔴 <b>Project A</b> · security High 1→3 · 14d"]
+    assert render_alert(alert) == render_alert(alert.model_copy(update={"aged": False}))
 
 
-def test_age_in_whole_days_and_one_day_singular() -> None:
+def test_age_in_whole_days() -> None:
     alert = high_alert(
         series(opened_at=NOW - timedelta(days=1, hours=5)), aged_after_days=14, now=NOW
     )
     assert alert.age_days == 1
-    assert lines(alert)[2].endswith("(1 day).")
+    assert lines(alert)[0].endswith("· 1d")
 
 
 def test_opened_after_now_is_age_zero_and_not_aged() -> None:
@@ -182,13 +174,13 @@ def test_dynamic_text_is_escaped_and_cleaned() -> None:
         aged_after_days=14,
         now=NOW,
     )
-    text = render_alert(alert)
+    text = render_alert(alert, show_repo=True)
     assert "<script>" not in text
-    assert "acme/&lt;script&gt;" in text
-    assert "audit.x&amp;y" in text
-    assert "\nline two" not in text.splitlines()[0]
-    assert text.splitlines()[0].endswith("...</b>")
-    assert len(text.splitlines()) == 4
+    assert "(acme/&lt;script&gt;)" in text
+    assert "x&amp;y" in text
+    assert "\nline two" not in text
+    assert "...</b>" in text
+    assert len(text.splitlines()) == 1
     item = render_summary_item(alert)
     assert "<script>" not in item
     assert "\n" not in item

@@ -21,17 +21,10 @@ DEMO_NOW = "2026-11-16T12:00:00Z"
 LATER_NOW = "2026-12-01T12:00:00Z"
 LIVE_ENVIRON = {"TELEGRAM_BOT_TOKEN": FAKE_TOKEN, "TELEGRAM_CHAT_ID": "-1001234567890"}
 
-A_HIGH_HEADLINE = 'High findings: <b>Project A &lt;core&gt; &amp; "tools"</b>'
-B_LINES = [
-    "Stale Guard scans: <b>Project B</b>",
-    "No completed Guard run for 27 days (last: 2026-10-20).",
-    "Severity: medium.",
-]
-C_LINES = [
-    "No Guard runs: <b>Project C (no repositories)</b>",
-    "It has no repositories in Guard.",
-    "Severity: medium.",
-]
+A_NAME = 'Project A &lt;core&gt; &amp; "tools"'
+A_HIGH_LINE = f"🔴 <b>{A_NAME}</b> · security High 0→1 · 6d"
+B_LINES = ["🟡 <b>Project B</b> · no scan 27d"]
+C_LINES = ["🟡 <b>Project C (no repositories)</b> · no scan yet"]
 
 
 @pytest.fixture(autouse=True)
@@ -124,12 +117,9 @@ def test_dry_run_does_not_alert_fresh_project_a(tmp_path: Path) -> None:
     # A's newest run (c012) sits on page 2 of its runs; page 3 is unrecorded, so reading it
     # would make A "not checked". A must appear neither as an alert nor under "not checked".
     _, out = run_dry(tmp_path)
-    assert not any(
-        line.startswith(("Stale Guard scans: <b>Project A", "No Guard runs: <b>Project A"))
-        for line in out.splitlines()
-    )
+    assert not any(line.startswith("🟡") and "<b>Project A" in line for line in out.splitlines())
     assert not any("Project A" in line for line in section(out, "--- not checked"))
-    assert A_HIGH_HEADLINE in section(out, "--- baseline")
+    assert A_HIGH_LINE in section(out, "--- baseline")
 
 
 def test_dry_run_is_repeatable_and_leaves_fixtures_unchanged(tmp_path: Path) -> None:
@@ -159,7 +149,7 @@ def test_dry_run_lists_unreachable_project_d_as_not_checked(tmp_path: Path) -> N
 
 def test_dry_run_baselines_long_stale_project_e(tmp_path: Path) -> None:
     _, out = run_dry(tmp_path)
-    assert "No completed Guard run for 104 days (last: 2026-08-04)." in out.splitlines()
+    assert "🟡 <b>Project E (paused in config)</b> · no scan 104d" in out.splitlines()
 
 
 def test_dry_run_summary_counts(tmp_path: Path) -> None:
@@ -170,32 +160,24 @@ def test_dry_run_summary_counts(tmp_path: Path) -> None:
     ) in out.splitlines()
     assert "--- baseline, not sent (4) ---" in out.splitlines()
     baseline = section(out, "--- baseline")
-    assert A_HIGH_HEADLINE in baseline
-    assert "1 High finding in audit.security (acme/service-a)." in baseline
-    assert "Seen by the radar since 2026-11-09 (6 days)." in baseline
+    assert A_HIGH_LINE in baseline
 
 
 def test_dry_run_orders_baseline_by_project_id(tmp_path: Path) -> None:
     _, out = run_dry(tmp_path)
-    headlines = [
-        line
-        for line in section(out, "--- baseline")
-        if line.startswith(("Stale Guard scans:", "No Guard runs:"))
-    ]
+    headlines = [line for line in section(out, "--- baseline") if line.startswith("🟡")]
     assert headlines == [
-        "Stale Guard scans: <b>Project B</b>",
-        "No Guard runs: <b>Project C (no repositories)</b>",
-        "Stale Guard scans: <b>Project E (paused in config)</b>",
+        "🟡 <b>Project B</b> · no scan 27d",
+        "🟡 <b>Project C (no repositories)</b> · no scan yet",
+        "🟡 <b>Project E (paused in config)</b> · no scan 104d",
     ]
 
 
 def test_dry_run_orders_would_send_worst_first(tmp_path: Path) -> None:
     seed_live_baseline(tmp_path)
     _, out = run_dry(tmp_path, LATER_NOW)
-    headlines = [line for line in out.splitlines() if line.startswith("Stale Guard scans:")]
-    ages = [
-        int(match.group(1)) for match in re.finditer(r"No completed Guard run for (\d+) days", out)
-    ]
+    headlines = [line for line in out.splitlines() if line.startswith("🟡")]
+    ages = [int(match.group(1)) for match in re.finditer(r"· no scan (\d+)d$", out, re.MULTILINE)]
     assert len(headlines) == len(ages) == 2
     assert ages == sorted(ages, reverse=True)
 
@@ -272,7 +254,7 @@ def test_future_newest_run_is_treated_as_fresh_with_a_warning(
     assert code == 0
     assert "is in the future" in caplog.text
     assert "treated as fresh" in caplog.text
-    assert "Stale Guard scans" not in out
+    assert not re.search(r"no scan \d+d", out)
 
 
 def test_dry_run_after_live_baseline_prints_would_send(tmp_path: Path) -> None:
@@ -285,14 +267,7 @@ def test_dry_run_after_live_baseline_prints_would_send(tmp_path: Path) -> None:
     assert code == 0
     lines = out.splitlines()
     assert lines.count("--- would send to group ---") == 1
-    assert contains_contiguous(
-        out,
-        [
-            'Stale Guard scans: <b>Project A &lt;core&gt; &amp; "tools"</b>',
-            "No completed Guard run for 20 days (last: 2026-11-10).",
-            "Severity: medium.",
-        ],
-    )
+    assert f"🟡 <b>{A_NAME}</b> · no scan 20d" in lines
     assert "--- baseline, not sent (0) ---" in lines
     assert state_snapshot(tmp_path / "state") == before
 
@@ -320,5 +295,5 @@ def test_two_alerts_are_sent_individually_with_default_collapse(tmp_path: Path) 
     assert code == 0
     assert lines.count("--- would send to group ---") == 2
     assert not any(line.startswith("Guard radar:") for line in lines)
-    assert 'Stale Guard scans: <b>Project A &lt;core&gt; &amp; "tools"</b>' in lines
+    assert f"🟡 <b>{A_NAME}</b> · no scan 20d" in lines
     assert "2 message(s) would be sent" in out

@@ -172,7 +172,7 @@ def test_baselined_series_is_not_reminded_until_a_rise_alerts_it(tmp_path: Path)
 
     sim.add_run(high=4, day=31)
     (rise,) = texts(sim.poll(31))
-    assert "High findings rose from 2 to 4 in audit.security (acme/svc)." in rise
+    assert rise == "🔴 <b>Proj</b> · security High 2→4 · 31d"
     assert sim.poll(37).reminder_messages == ()
     assert len(sim.poll(38).reminder_messages) == 1
 
@@ -181,7 +181,7 @@ def test_exclusions_stale_project_is_never_reminded(tmp_path: Path) -> None:
     sim = Sim(tmp_path, "defaults:\n  stale_after_days: 14\n", reminders_on=True)
     sim.poll(0)
     stale = sim.poll(20)
-    assert any(text.startswith("Stale Guard scans:") for text in texts(stale))
+    assert any(text.startswith("🟡 <b>Proj</b> · no scan") for text in texts(stale))
     for day in (30, 50):
         report = sim.poll(day)
         assert report.reminder_messages == ()

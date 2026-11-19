@@ -86,8 +86,7 @@ def test_newly_stale_project_is_sent_once(tmp_path: Path) -> None:
     assert code == 0
     assert len(transport.requests) == 1
     text = str(transport.requests[0][1]["text"])
-    assert 'Stale Guard scans: <b>Project A &lt;core&gt; &amp; "tools"</b>' in text
-    assert "No completed Guard run for 20 days (last: 2026-11-10)." in text
+    assert text == '🟡 <b>Project A &lt;core&gt; &amp; "tools"</b> · no scan 20d'
     assert condition(load_state(tmp_path), A_ID, "stale").alerted_at is not None
 
     again = FakeTransport([])

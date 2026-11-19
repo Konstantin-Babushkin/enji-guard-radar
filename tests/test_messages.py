@@ -9,13 +9,20 @@ from enji_guard_radar.messages import (
     MIN_MAX_CHARS,
     TELEGRAM_MAX_CHARS,
     UNNAMED_PROJECT,
+    age_text,
+    ambiguous_series,
+    audit_short,
     clean_name,
+    high_line,
+    marker,
     render_alert,
     render_messages,
     render_summary_item,
     telegram_length,
 )
 from enji_guard_radar.model import Alert, AlertKey, AlertKind, OutboundMessage, Severity
+from enji_guard_radar.ports import Delivered, DeliveryError, NotDelivered, SendOutcome
+from enji_guard_radar.secret_guard import SecretGatedNotifier
 
 LAST_RUN = datetime(2026, 10, 20, 8, 0, tzinfo=UTC)
 
@@ -44,6 +51,41 @@ def never_ran(name: str, *, pid: str = "p2", repos: int = 0) -> Alert:
         last_run_at=None,
         repo_count=repos,
     )
+
+
+def high(
+    name: str = "Project A",
+    *,
+    pid: str = "p1",
+    repo: str = "r1",
+    repo_name: str = "acme/r1",
+    audit: str = "audit.security",
+    count: int = 1,
+    previous: int | None = None,
+    age: int = 8,
+) -> Alert:
+    return Alert(
+        key=AlertKey(project_id=pid, repo_id=repo, action_key=audit, level="high"),
+        kind=AlertKind.HIGH_FINDINGS,
+        project_name=name,
+        severity=Severity.HIGH,
+        age_days=age,
+        last_run_at=None,
+        repo_count=1,
+        count=count,
+        repo_name=repo_name,
+        previous_count=previous,
+        seen_since=datetime(2026, 11, 9, tzinfo=UTC),
+    )
+
+
+class RecordingNotifier:
+    def __init__(self) -> None:
+        self.sent: list[OutboundMessage] = []
+
+    def send(self, message: OutboundMessage) -> SendOutcome:
+        self.sent.append(message)
+        return Delivered()
 
 
 def many(count: int) -> list[Alert]:
@@ -85,35 +127,115 @@ def test_telegram_length_counts_utf16_units() -> None:
 # --- individual alerts ---
 
 
-def test_render_alert_stale_is_three_plain_lines() -> None:
-    assert render_alert(stale("Project B")).split("\n") == [
-        "Stale Guard scans: <b>Project B</b>",
-        "No completed Guard run for 27 days (last: 2026-10-20).",
-        "Severity: medium.",
+def test_high_alert_is_one_line() -> None:
+    alert = high()
+    assert render_alert(alert) == "🔴 <b>Project A</b> · security High 0→1 · 8d"
+    assert render_alert(alert, language="ru") == "🔴 <b>Project A</b> · security высокие 0→1 · 8 д"
+
+
+def test_high_rise_starts_from_the_previous_count() -> None:
+    assert render_alert(high(count=3, previous=1)) == "🔴 <b>Project A</b> · security High 1→3 · 8d"
+    # a retried new series (no previous count) starts from 0
+    assert render_alert(high(count=4, previous=None)).endswith("High 0→4 · 8d")
+
+
+def test_stale_line() -> None:
+    assert render_alert(stale("Project B", age=28)) == "🟡 <b>Project B</b> · no scan 28d"
+    assert render_alert(stale("Project B", age=1)) == "🟡 <b>Project B</b> · no scan 1d"
+
+
+def test_never_ran_line_does_not_depend_on_the_repo_count() -> None:
+    expected = "🟡 <b>Project C</b> · no scan yet"
+    for repos in (0, 1, 3):
+        assert render_alert(never_ran("Project C", repos=repos)) == expected
+
+
+def test_a_single_alert_is_one_line_in_every_kind() -> None:
+    for alert in (high(), stale("B"), never_ran("C")):
+        for language in ("en", "ru"):
+            assert "\n" not in render_alert(alert, language=language)
+
+
+def test_marker_comes_from_the_kind_only() -> None:
+    assert marker(AlertKind.HIGH_FINDINGS, "en") == marker(AlertKind.HIGH_FINDINGS, "ru") == "🔴"
+    for kind in (AlertKind.STALE, AlertKind.NEVER_RAN):
+        assert marker(kind, "en") == marker(kind, "ru") == "🟡"
+
+
+def test_audit_short_strips_the_prefix_and_escapes() -> None:
+    assert audit_short("audit.security") == "security"
+    assert audit_short("tests") == "tests"
+    assert audit_short("audit.<u>&") == "&lt;u&gt;&amp;"
+
+
+def test_age_text_in_both_languages() -> None:
+    assert (age_text(8, "en"), age_text(8, "ru"), age_text(105, "ru")) == ("8d", "8 д", "105 д")
+
+
+def test_ambiguous_series_needs_two_repos_of_one_project_and_audit() -> None:
+    first, second = high(repo="r1"), high(repo="r2")
+    other_audit = high(repo="r1", audit="audit.tests")
+    assert ambiguous_series([first, second, other_audit]) == {("p1", "audit.security")}
+    assert ambiguous_series([first, other_audit]) == frozenset()
+    assert ambiguous_series([first, first]) == frozenset()
+    assert ambiguous_series([stale("B"), stale("B")]) == frozenset()
+
+
+def test_high_line_arrow_and_repo_variants() -> None:
+    alert = high()
+    plain = "🔴 <b>Project A</b> · security High 1 · 8d"
+    assert high_line(alert, language="en", show_repo=False, arrow=False) == plain
+    assert high_line(alert, language="en", show_repo=False, arrow=True).endswith("High 0→1 · 8d")
+    assert high_line(alert, language="en", show_repo=True, arrow=True) == (
+        "🔴 <b>Project A</b> · security (acme/r1) High 0→1 · 8d"
+    )
+    assert high_line(alert, language="ru", show_repo=False, arrow=False) == (
+        "🔴 <b>Project A</b> · security высокие 1 · 8 д"
+    )
+
+
+def test_repo_shown_only_for_two_repos_of_one_audit_in_separate_messages() -> None:
+    first = high(repo="r1", repo_name="acme/r1")
+    second = high(repo="r2", repo_name="acme/r2")
+    tests_alert = high(repo="r1", audit="audit.tests", count=2)
+    texts = [m.text for m in render_messages([first, second, tests_alert], collapse_above=5)]
+    assert texts == [
+        "🔴 <b>Project A</b> · security (acme/r1) High 0→1 · 8d",
+        "🔴 <b>Project A</b> · tests High 0→2 · 8d",
+        "🔴 <b>Project A</b> · security (acme/r2) High 0→1 · 8d",
     ]
+    alone = [m.text for m in render_messages([first, tests_alert], collapse_above=5)]
+    assert all("acme/" not in text for text in alone)
 
 
-def test_render_alert_never_ran_variants() -> None:
-    assert "It has no repositories in Guard." in render_alert(never_ran("C", repos=0))
-    assert "in its 1 repository." in render_alert(never_ran("C", repos=1))
-    assert "in its 3 repositories." in render_alert(never_ran("C", repos=3))
+def test_escaping_name_repo_and_audit_once() -> None:
+    first = high('A<b>&"x"', repo="r1", repo_name="r<i>&", audit="audit.<u>")
+    second = high('A<b>&"x"', repo="r2", repo_name="r2", audit="audit.<u>")
+    line = render_messages([first, second], collapse_above=5)[0].text
+    assert line == '🔴 <b>A&lt;b&gt;&amp;"x"</b> · &lt;u&gt; (r&lt;i&gt;&amp;) High 0→1 · 8d'
+    assert "&amp;amp;" not in line
 
 
-def test_escape_name_once_in_alert_and_summary_item() -> None:
-    alert = stale("Acme\nAPI\t<beta> & co")
-    assert "<b>Acme API &lt;beta&gt; &amp; co</b>" in render_alert(alert)
-    assert "<b>Acme API &lt;beta&gt; &amp; co</b>" in render_summary_item(alert)
-    assert "&amp;amp;" not in render_alert(stale("a & b"))
-    assert "<b>a &amp; b</b>" in render_alert(stale("a & b"))
+def test_secret_gate_withholds_an_alert_whose_project_name_holds_a_token() -> None:
+    inner = RecordingNotifier()
+    gated = SecretGatedNotifier(inner, ())
+    for alert in (high("ghp_" + "a" * 36), stale("ghp_" + "a" * 36)):
+        for language in ("en", "ru"):
+            (message,) = render_messages([alert], collapse_above=5, language=language)
+            outcome = gated.send(message)
+            assert isinstance(outcome, NotDelivered)
+            assert outcome.error is DeliveryError.BLOCKED_SECRET
+    assert inner.sent == []
+    (clean,) = render_messages([high()], collapse_above=5)
+    assert isinstance(gated.send(clean), Delivered)
 
 
-def test_render_alert_age_of_one_day_is_singular() -> None:
-    assert "for 1 day (last" in render_alert(stale("P", age=1))
-
-
-def test_render_alert_cleans_empty_and_long_names() -> None:
-    assert f"<b>{UNNAMED_PROJECT}</b>" in render_alert(stale("  "))
-    assert f"<b>{'x' * 77}...</b>" in render_alert(stale("x" * 120))
+def test_both_languages_send_the_same_keys_in_the_same_order() -> None:
+    alerts = [stale("B"), high(), never_ran("C"), stale("E", pid="p9", age=105)]
+    english = render_messages(alerts, collapse_above=9)
+    russian = render_messages(alerts, collapse_above=9, language="ru")
+    assert [m.keys for m in english] == [m.keys for m in russian]
+    assert [m.text for m in english] != [m.text for m in russian]
 
 
 def test_summary_item_formats() -> None:

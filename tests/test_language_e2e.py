@@ -119,28 +119,12 @@ def test_alerts_in_russian_match_the_english_ones(tmp_path: Path, ru_config: Pat
     assert english.returncode == russian.returncode == 0
 
     assert blocks(english.stdout, "") == [
-        [
-            f"Stale Guard scans: <b>{PROJECT_A}</b>",
-            "No completed Guard run for 20 days (last: 2026-11-10).",
-            "Severity: medium.",
-        ],
-        [
-            "Stale Guard scans: <b>Project F (excluded in config)</b>",
-            "No completed Guard run for 16 days (last: 2026-11-14).",
-            "Severity: medium.",
-        ],
+        [f"🟡 <b>{PROJECT_A}</b> · no scan 20d"],
+        ["🟡 <b>Project F (excluded in config)</b> · no scan 16d"],
     ]
     assert blocks(russian.stdout, "") == [
-        [
-            f"Устаревшие проверки Guard: <b>{PROJECT_A}</b>",
-            "Нет завершённых запусков Guard уже 20 дней (последний: 2026-11-10).",
-            "Серьёзность: средняя.",
-        ],
-        [
-            "Устаревшие проверки Guard: <b>Project F (excluded in config)</b>",
-            "Нет завершённых запусков Guard уже 16 дней (последний: 2026-11-14).",
-            "Серьёзность: средняя.",
-        ],
+        [f"🟡 <b>{PROJECT_A}</b> · нет проверок 20 д"],
+        ["🟡 <b>Project F (excluded in config)</b> · нет проверок 16 д"],
     ]
     assert not ENGLISH_PHRASES.search(russian.stdout)
     assert FRAME.findall(english.stdout) == FRAME.findall(russian.stdout)

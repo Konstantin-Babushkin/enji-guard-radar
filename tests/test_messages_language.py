@@ -95,96 +95,51 @@ def keys_of(messages: list[OutboundMessage]) -> list[AlertKey]:
 ALERT_TABLE = [
     pytest.param(
         stale(age=1),
-        "Stale Guard scans: <b>Project B</b>\n"
-        "No completed Guard run for 1 day (last: 2026-11-17).\n"
-        "Severity: medium.",
-        "Устаревшие проверки Guard: <b>Project B</b>\n"
-        "Нет завершённых запусков Guard уже 1 день (последний: 2026-11-17).\n"
-        "Серьёзность: средняя.",
+        "🟡 <b>Project B</b> · no scan 1d",
+        "🟡 <b>Project B</b> · нет проверок 1 д",
         id="stale-1-day",
     ),
     pytest.param(
         stale(age=22),
-        "Stale Guard scans: <b>Project B</b>\n"
-        "No completed Guard run for 22 days (last: 2026-10-27).\n"
-        "Severity: medium.",
-        "Устаревшие проверки Guard: <b>Project B</b>\n"
-        "Нет завершённых запусков Guard уже 22 дня (последний: 2026-10-27).\n"
-        "Серьёзность: средняя.",
+        "🟡 <b>Project B</b> · no scan 22d",
+        "🟡 <b>Project B</b> · нет проверок 22 д",
         id="stale-22-days",
     ),
     pytest.param(
         never_ran(repos=0),
-        "No Guard runs: <b>Project C</b>\nIt has no repositories in Guard.\nSeverity: medium.",
-        "Нет запусков Guard: <b>Project C</b>\n"
-        "В Guard у проекта нет репозиториев.\n"
-        "Серьёзность: средняя.",
+        "🟡 <b>Project C</b> · no scan yet",
+        "🟡 <b>Project C</b> · проверок ещё не было",
         id="never-ran-no-repos",
     ),
     pytest.param(
-        never_ran(repos=1),
-        "No Guard runs: <b>Project C</b>\n"
-        "No completed Guard run found in its 1 repository.\n"
-        "Severity: medium.",
-        "Нет запусков Guard: <b>Project C</b>\n"
-        "Завершённых запусков Guard не найдено в 1 репозитории проекта.\n"
-        "Серьёзность: средняя.",
-        id="never-ran-1-repo",
-    ),
-    pytest.param(
         never_ran(repos=5),
-        "No Guard runs: <b>Project C</b>\n"
-        "No completed Guard run found in its 5 repositories.\n"
-        "Severity: medium.",
-        "Нет запусков Guard: <b>Project C</b>\n"
-        "Завершённых запусков Guard не найдено в 5 репозиториях проекта.\n"
-        "Серьёзность: средняя.",
+        "🟡 <b>Project C</b> · no scan yet",
+        "🟡 <b>Project C</b> · проверок ещё не было",
         id="never-ran-5-repos",
     ),
     pytest.param(
         high(1),
-        f"High findings: <b>Project A</b>\n1 High finding in {HIGH_WHERE}.\n"
-        "Seen by the radar since 2026-11-10 (8 days).\nSeverity: high.",
-        f"Находки высокой серьёзности: <b>Project A</b>\n"
-        f"1 находка высокой серьёзности в {HIGH_WHERE}.\n"
-        "Радар видит с 2026-11-10 (8 дней).\nСерьёзность: высокая.",
-        id="high-1",
-    ),
-    pytest.param(
-        high(2),
-        f"High findings: <b>Project A</b>\n2 High findings in {HIGH_WHERE}.\n"
-        "Seen by the radar since 2026-11-10 (8 days).\nSeverity: high.",
-        f"Находки высокой серьёзности: <b>Project A</b>\n"
-        f"2 находки высокой серьёзности в {HIGH_WHERE}.\n"
-        "Радар видит с 2026-11-10 (8 дней).\nСерьёзность: высокая.",
-        id="high-2",
+        "🔴 <b>Project A</b> · security High 0→1 · 8d",
+        "🔴 <b>Project A</b> · security высокие 0→1 · 8 д",
+        id="high-new-series",
     ),
     pytest.param(
         high(5),
-        f"High findings: <b>Project A</b>\n5 High findings in {HIGH_WHERE}.\n"
-        "Seen by the radar since 2026-11-10 (8 days).\nSeverity: high.",
-        f"Находки высокой серьёзности: <b>Project A</b>\n"
-        f"5 находок высокой серьёзности в {HIGH_WHERE}.\n"
-        "Радар видит с 2026-11-10 (8 дней).\nСерьёзность: высокая.",
+        "🔴 <b>Project A</b> · security High 0→5 · 8d",
+        "🔴 <b>Project A</b> · security высокие 0→5 · 8 д",
         id="high-5",
     ),
     pytest.param(
         high(3, previous=1),
-        f"High findings: <b>Project A</b>\nHigh findings rose from 1 to 3 in {HIGH_WHERE}.\n"
-        "Seen by the radar since 2026-11-10 (8 days).\nSeverity: high.",
-        f"Находки высокой серьёзности: <b>Project A</b>\n"
-        f"Число находок высокой серьёзности выросло с 1 до 3 в {HIGH_WHERE}.\n"
-        "Радар видит с 2026-11-10 (8 дней).\nСерьёзность: высокая.",
+        "🔴 <b>Project A</b> · security High 1→3 · 8d",
+        "🔴 <b>Project A</b> · security высокие 1→3 · 8 д",
         id="high-rise",
     ),
     pytest.param(
         high(21, aged=True, age=21),
-        f"High findings: <b>Project A</b>\n21 High findings in {HIGH_WHERE}.\n"
-        "Long-standing: seen by the radar since 2026-10-28 (21 days).\nSeverity: high.",
-        f"Находки высокой серьёзности: <b>Project A</b>\n"
-        f"21 находка высокой серьёзности в {HIGH_WHERE}.\n"
-        "Давняя проблема: радар видит её с 2026-10-28 (21 день).\nСерьёзность: высокая.",
-        id="high-long-standing",
+        "🔴 <b>Project A</b> · security High 0→21 · 21d",
+        "🔴 <b>Project A</b> · security высокие 0→21 · 21 д",
+        id="high-aged-looks-the-same",
     ),
 ]
 
@@ -284,14 +239,6 @@ def test_high_findings_text_in_russian(count: int, russian: str) -> None:
     )
 
 
-@pytest.mark.parametrize(
-    ("repos", "russian"),
-    [(1, "1 репозитории"), (2, "2 репозиториях"), (21, "21 репозитории"), (25, "25 репозиториях")],
-)
-def test_repositories_use_the_prepositional_case(repos: int, russian: str) -> None:
-    assert russian in render_alert(never_ran(repos=repos), language="ru")
-
-
 # --- names ---
 
 
@@ -313,7 +260,8 @@ def test_html_in_names_is_escaped_once_in_russian() -> None:
         assert 'Проект &lt;b&gt;&amp; "Ко"' in text
         assert "&amp;amp;" not in text
         assert not re.search(r"<(?!/?b>)", text)
-    assert "acme/&lt;web&gt;&amp;co" in render_alert(alert, language="ru")
+    shown = render_alert(alert, language="ru", show_repo=True)
+    assert "security (acme/&lt;web&gt;&amp;co)" in shown
 
 
 # --- ordering and the same set of alerts ---
