@@ -15,6 +15,7 @@ from enji_guard_radar.reminders import (
     reminders_due,
     render_reminders,
 )
+from enji_guard_radar.texts import Language
 
 NOW = datetime(2026, 11, 18, 9, 0, tzinfo=UTC)
 
@@ -294,6 +295,65 @@ def test_split_not_needed_keeps_a_plain_title() -> None:
     messages = render_reminders([high(pid=f"p{i}") for i in range(3)])
     assert len(messages) == 1
     assert messages[0].text.split("\n")[0] == "<b>Radar reminder · 3 open</b>"
+
+
+def test_reminder_russian_text() -> None:
+    first = high("Project A", pid="a", action="audit.security", count=3, age=15)
+    second = high("Project D", pid="d", action="audit.tests", count=1, age=9)
+    (message,) = render_reminders([first, second], language="ru")
+    assert message.text == (
+        "<b>Радар · напоминание · открыто: 2</b>\n"
+        "🔴 <b>Project A</b> · security высокие 3 · 15 д\n"
+        "🔴 <b>Project D</b> · tests высокие 1 · 9 д"
+    )
+
+
+def test_reminder_shows_repo_only_when_ambiguous() -> None:
+    alerts = [
+        high("P", pid="p", repo_id="r1", repo="r1", count=3),
+        high("P", pid="p", repo_id="r2", repo="r2", count=2),
+        high("Q", pid="q", repo_id="r1", repo="r1", action="audit.tests", count=1),
+        high("S", pid="s", repo_id="r1", repo="r1", action="audit.security", count=1),
+        high("S", pid="s", repo_id="r2", repo="r2", action="audit.tests", count=1),
+    ]
+    lines = render_reminders(alerts)[0].text.split("\n")[1:]
+    assert "security (r1) High 3" in lines[0]
+    assert "security (r2) High 2" in lines[1]
+    assert not any("(" in line for line in lines[2:])
+
+
+def test_reminder_split_80_series_keeps_one_total_in_every_title() -> None:
+    alerts = [high("N" * 80, pid=f"p{i:03d}", count=200 - i) for i in range(80)]
+    messages = render_reminders(alerts, max_chars=1000)
+    total = len(messages)
+    assert total > 1
+    for number, message in enumerate(messages, start=1):
+        assert message.text.split("\n")[0] == f"<b>Radar reminder · 80 open ({number}/{total})</b>"
+        assert telegram_length(message.text) <= 1000
+        assert len(message.text.split("\n")) - 1 == len(message.keys)
+    assert keys_of(messages) == [a.key for a in alerts]
+
+
+@pytest.mark.parametrize("language", ["en", "ru"])
+def test_reminder_has_no_claude_or_priority_text(language: Language) -> None:
+    alerts = [high("A", pid="a"), high("B", pid="b", action="audit.tests")]
+    lines = render_reminders(alerts, language=language)[0].text.split("\n")
+    for line in lines[1:]:
+        assert line.startswith("🔴 <b>")
+        for forbidden in ("P1", "P2", "P3", "Claude", "since", "Seen"):
+            assert forbidden not in line
+
+
+@pytest.mark.parametrize("language", ["en", "ru"])
+def test_reminder_escapes_name_and_repo(language: Language) -> None:
+    alerts = [
+        high('<b>&"x', pid="p", repo_id="r1", repo="a<i>/b&c"),
+        high('<b>&"x', pid="p", repo_id="r2", repo="d"),
+    ]
+    text = render_reminders(alerts, language=language)[0].text
+    assert '<b>&lt;b&gt;&amp;"x</b>' in text
+    assert "(a&lt;i&gt;/b&amp;c)" in text
+    assert "<i>" not in text
 
 
 # --- invalid input ---
