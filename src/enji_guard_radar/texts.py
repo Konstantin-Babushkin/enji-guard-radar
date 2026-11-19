@@ -55,6 +55,7 @@ _EN: dict[str, Entry] = {
         "- <b>{name}</b>: High rose from {previous} to {count} in {where} ({severity})"
     ),
     "summary.item.never_ran": "- <b>{name}</b>: no completed Guard run found ({severity})",
+    "reminder.title": "Reminder: High findings are still open",
 }
 
 _RU: dict[str, Entry] = {
@@ -98,6 +99,7 @@ _RU: dict[str, Entry] = {
         "с {previous} до {count} в {where} ({severity})"
     ),
     "summary.item.never_ran": "- <b>{name}</b>: завершённых запусков Guard не найдено ({severity})",
+    "reminder.title": "Напоминание: находки высокой серьёзности всё ещё открыты",
 }
 
 CATALOGS: Mapping[Language, Catalog] = {"en": _EN, "ru": _RU}

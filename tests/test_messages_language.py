@@ -19,6 +19,7 @@ from enji_guard_radar.messages import (
     telegram_length,
 )
 from enji_guard_radar.model import Alert, AlertKey, AlertKind, OutboundMessage, Severity
+from enji_guard_radar.reminders import render_reminders
 from enji_guard_radar.secret_guard import find_secret
 from enji_guard_radar.texts import Language
 
@@ -279,7 +280,7 @@ def test_high_findings_text_in_russian(count: int, russian: str) -> None:
     ("repos", "russian"),
     [(1, "1 репозитории"), (2, "2 репозиториях"), (21, "21 репозитории"), (25, "25 репозиториях")],
 )
-def test_repositories_use_the_prepositional_case(repos: int, russian: str) -> None:  # fmt: skip
+def test_repositories_use_the_prepositional_case(repos: int, russian: str) -> None:
     assert russian in render_alert(never_ran(repos=repos), language="ru")
 
 
@@ -420,3 +421,59 @@ def test_russian_texts_do_not_trip_the_secret_gate() -> None:
     texts += [m.text for m in render_messages(mixed(), collapse_above=20, language="ru")]
     assert texts
     assert all(find_secret(text, []) is None for text in texts)
+
+
+# --- reminders ---
+
+
+def test_reminder_in_both_languages() -> None:
+    alerts = [high(1, pid="a", age=8), high(5, pid="b", age=22, name="Ёлка & Ко")]
+    (english,) = render_reminders(alerts)
+    (russian,) = render_reminders(alerts, language="ru")
+    assert english.text == (
+        "<b>Reminder: High findings are still open</b>\n"
+        f"- <b>Project A</b>: 1 High finding in {HIGH_WHERE}. "
+        "Seen by the radar since 2026-11-10 (8 days).\n"
+        f"- <b>Ёлка &amp; Ко</b>: 5 High findings in {HIGH_WHERE}. "
+        "Seen by the radar since 2026-10-27 (22 days)."
+    )
+    assert russian.text == (
+        "<b>Напоминание: находки высокой серьёзности всё ещё открыты</b>\n"
+        f"- <b>Project A</b>: 1 находка высокой серьёзности в {HIGH_WHERE}. "
+        "Радар видит с 2026-11-10 (8 дней).\n"
+        f"- <b>Ёлка &amp; Ко</b>: 5 находок высокой серьёзности в {HIGH_WHERE}. "
+        "Радар видит с 2026-10-27 (22 дня)."
+    )
+    assert english.keys == russian.keys == tuple(a.key for a in alerts)
+
+
+@pytest.mark.parametrize(
+    ("count", "phrase"),
+    [
+        (1, "1 находка"),
+        (2, "2 находки"),
+        (11, "11 находок"),
+        (21, "21 находка"),
+        (22, "22 находки"),
+    ],
+)
+def test_reminder_findings_plural_in_russian(count: int, phrase: str) -> None:
+    (message,) = render_reminders([high(count)], language="ru")
+    assert phrase in message.text
+
+
+def test_reminder_split_keeps_every_series_once_in_order_in_russian() -> None:
+    alerts = [
+        high(2, pid=f"p{i:03d}", age=10 + i, name=("Проект & " + str(i)).ljust(80, "Ж"))
+        for i in range(40)
+    ]
+    english = render_reminders(alerts, max_chars=MIN_MAX_CHARS)
+    russian = render_reminders(alerts, max_chars=MIN_MAX_CHARS, language="ru")
+    assert len(russian) > 1
+    assert keys_of(russian) == keys_of(english) == [a.key for a in alerts]
+    for number, message in enumerate(russian, start=1):
+        title = "Напоминание: находки высокой серьёзности всё ещё открыты"
+        assert message.text.startswith(f"<b>{title} ({number}/{len(russian)})</b>\n")
+        assert telegram_length(message.text) <= MIN_MAX_CHARS
+        assert len(message.text.split("\n")) - 1 == len(message.keys)
+        assert find_secret(message.text, []) is None
