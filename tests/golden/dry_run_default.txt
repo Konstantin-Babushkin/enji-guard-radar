@@ -1,0 +1,40 @@
+DRY RUN at 2026-11-18T06:00:00Z: nothing is sent and no state is written.
+--- would send to group ---
+<b>Guard radar weekly digest</b>
+Last successful Guard poll: 2026-11-18 06:00 UTC.
+Open items: 18.
+1 project could not be read in that poll.
+- High: <b>Project A &lt;core&gt; &amp; "tools"</b>: 1 High finding in audit.security (acme/service-a). Seen by the radar since 2026-11-09 (8 days).
+- Stale: <b>Project E (paused in config)</b>: no completed Guard run for 105 days (last: 2026-08-04).
+- Stale: <b>Project B</b>: no completed Guard run for 28 days (last: 2026-10-20).
+- Stale: <b>Project C (no repositories)</b>: no completed Guard run found.
+- Tooling gap: <b>Project A &lt;core&gt; &amp; "tools"</b>: no completed audit.dead-code run in the last 60 days in acme/web-a (none seen).
+- Tooling gap: <b>Project A &lt;core&gt; &amp; "tools"</b>: no completed audit.dependency-hygiene run in the last 60 days in acme/web-a (none seen).
+- Tooling gap: <b>Project A &lt;core&gt; &amp; "tools"</b>: no completed audit.implementation-unification run in the last 60 days in acme/web-a (none seen).
+- Tooling gap: <b>Project A &lt;core&gt; &amp; "tools"</b>: no completed audit.security run in the last 60 days in acme/web-a (none seen).
+- Tooling gap: <b>Project B</b>: no completed audit.dead-code run in the last 60 days in acme/service-b (none seen).
+- Tooling gap: <b>Project B</b>: no completed audit.dependency-hygiene run in the last 60 days in acme/service-b (none seen).
++8 more open items not shown.
+
+--- baseline, not sent (4) ---
+High findings: <b>Project A &lt;core&gt; &amp; "tools"</b>
+1 High finding in audit.security (acme/service-a).
+Seen by the radar since 2026-11-09 (8 days).
+Severity: high.
+
+Stale Guard scans: <b>Project B</b>
+No completed Guard run for 28 days (last: 2026-10-20).
+Severity: medium.
+
+No Guard runs: <b>Project C (no repositories)</b>
+It has no repositories in Guard.
+Severity: medium.
+
+Stale Guard scans: <b>Project E (paused in config)</b>
+No completed Guard run for 105 days (last: 2026-08-04).
+Severity: medium.
+
+--- not checked (1) ---
+Project D (Guard unreachable): Guard data unavailable (list_repositories failed: simulated Guard outage)
+follow-ups: 0 reminder message(s), digest printed
+summary: 5 evaluated, 2 stale, 1 never ran, 1 not checked, 1 message(s) would be sent, 4 baselined
