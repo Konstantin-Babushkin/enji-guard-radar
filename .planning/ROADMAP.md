@@ -4,11 +4,11 @@
 
 A scheduled, one-shot radar that reads Enji Guard, applies deterministic rules, and alerts a Telegram group of executives only when something is really wrong. Silence means healthy. The journey: first prove the whole pipeline on synthetic fixtures with no network access (Phase 1), then connect it to real Guard on the radar's own read-only login and switch on the core alerts and the timer (Phase 2), then widen the rule set and add the always-sent weekly digest (Phase 3), and finally let Claude explain what the rules have already decided (Phase 4). Rules decide; Claude never adds, drops or suppresses an alert.
 
-Scope: 41 v1 requirements in 4 phases (granularity: coarse). RULE-04 was dropped on 2026-11-16 and is not mapped.
+Scope: 42 v1 requirements in 4 phases (granularity: coarse). ALERT-07 (short templates) was added to Phase 4 on 2026-11-19. RULE-04 was dropped on 2026-11-16 and is not mapped.
 
 ## MVP
 
-**MVP = Phases 1 and 2 (27 of 41 requirements).** Defined 2026-11-16. Phase 1 alone is not an MVP: it runs only on synthetic fixtures and tells nobody anything real. The MVP is done at the end of Phase 2.
+**MVP = Phases 1 and 2 (27 of 42 requirements).** Defined 2026-11-16. Phase 1 alone is not an MVP: it runs only on synthetic fixtures and tells nobody anything real. The MVP is done at the end of Phase 2.
 
 **What the group gets:** on a timer, with no operator action, the Telegram group receives a short alert when (a) the number of High findings rises in a repo's audit, or (b) a project has had no completed Guard run for N days. The operator gets a message in a separate ops chat when the radar itself breaks and when it recovers.
 
@@ -35,7 +35,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 - [x] **Phase 1: Working Pipeline on Fixtures** - Models, parser, stale rule, durable state and dedup, Telegram send and dry-run, all runnable on `fixtures/guard/`
 - [ ] **Phase 2: Guard Connection and Core Alerts** - Real read-only Guard adapter, `probe`, High-count rules, timer, `doctor` and ops-chat alert (gated on Guard access)
 - [ ] **Phase 3: Remaining Rules and the Digest** - AI readiness, tests, tooling and recurring rules, reminders and the always-sent weekly digest
-- [ ] **Phase 4: Claude Triage** - Summary, probable cause and priority from Claude through a swappable CLI/T3 boundary, with rule-only fallback
+- [ ] **Phase 4: Claude Triage and Short Templates** - One-line alert and digest templates, then a priority and one short cause from Claude on High-findings items through a swappable CLI/T3 boundary, with rule-only fallback
 
 ## Phase Details
 
@@ -138,15 +138,16 @@ Plans:
 **Wave 5** *(blocked on Wave 4 completion)*
 - [ ] 03-11-PLAN.md — Wave 5: Weekly digest in the run (window, deferral, skip, dry-run), runbook operator steps and data notes
 
-### Phase 4: Claude Triage
-**Goal**: Every message that will be sent carries a short Claude-written summary, probable cause and priority, and the set of alerts is exactly what the rules alone would have sent.
-**Depends on**: Phase 2 (real alerts to enrich), plus Phase 3 for digest items. Claude is reached through the CLI or T3 with no API key; the mechanism is unverified (see Gates and Open Items), so verifying it is the first piece of work in this phase.
-**Requirements**: TRI-01, TRI-02, TRI-03, TRI-04, TRI-05
+### Phase 4: Claude Triage and Short Templates
+**Goal**: Alerts, reminders and the weekly digest read as one short line per item (in English and Russian), and a fresh High-findings alert read in this run can carry one more line from Claude with a priority and a short cause (`P1 · <cause>`) in the configured message language. The set of alerts is exactly what the rules alone would have sent.
+**Depends on**: T-0033 (`messages.language` and the `texts.py` catalog the new templates are written into; Phase 4 plans start after it is merged), Phase 2 (real alerts to enrich) and Phase 3 (digest and reminders to shorten). Claude is reached through the CLI or T3 with no API key, using the operator's own `claude setup-token` token (decided 2026-11-19). The mechanism is unverified (see Gates and Open Items), so verifying it is the first piece of work in this phase.
+**Requirements**: ALERT-07, TRI-01, TRI-02, TRI-03, TRI-04, TRI-05
 **Success Criteria** (what must be TRUE):
-  1. Each alert and digest item that will be sent shows a short summary, probable cause and priority, and the Claude output is validated against a typed schema before use.
-  2. Turning triage on or off sends the same alerts. Counts, ages and names in every message come from code, and invalid, refused, timed-out or failed Claude output falls back to the rule-only message.
-  3. Raw security evidence never reaches Claude, and hostile text planted in a finding fixture is delimited as data and cannot steer the output.
-  4. The triage boundary is swappable and needs no API key, and the daily cost is logged.
+  1. Alert, reminder and digest messages use the short one-line templates in both languages (marker, project, what, age; tooling gaps grouped per repo; digest titled "Radar weekly · N open"), with counts, ages and names from code only, and escaping, splitting and the secret gate unchanged.
+  2. Each fresh High-findings alert (first alert of a series, report read in this run) can show `P1 · <cause>`: a priority and one cause of at most 60 characters in the message language, validated against a typed schema before use. Digests, reminders, re-armed and retried alerts carry no cause.
+  3. Turning triage on or off sends the same alerts. Counts, ages and names in every message come from code, and invalid, refused, timed-out or failed Claude output falls back to the rule-only message.
+  4. Only sanitised finding titles (no ids, paths, links or code spans), held in memory for the run and never stored, reach Claude, never evidence, paths, report bodies or links, and hostile text planted in a finding title is delimited as data and cannot steer the output.
+  5. The triage boundary is swappable and needs no API key, and the daily cost is logged.
 **Plans**: TBD
 
 ## Gates and Open Items
@@ -168,7 +169,7 @@ Plans:
 - RULE-02 (age in days) and RULE-08 (run count) measure the same streak of runs with High findings. Both are kept as approved.
 - STATE-03 "notifies the operator" before the Phase 2 ops chat exists: Phase 1 uses the ops chat id if configured, otherwise a non-zero exit and an error log.
 
-**Operator inputs still needed:** Telegram bot token and a private test chat (Phase 1 live check), group chat id and ops chat id (Phase 2), deployment host for the timer, systemd or cron (Phase 2), digest day and timezone and the reminder interval (Phase 3), whether every group member may see security summaries (Phase 2), and how Claude is reached with no API key (Phase 4).
+**Operator inputs still needed:** Telegram bot token and a private test chat (Phase 1 live check), group chat id and ops chat id (Phase 2), deployment host for the timer, systemd or cron (Phase 2), digest day and timezone and the reminder interval (Phase 3), whether every group member may see security summaries (Phase 2), and how Claude is reached with no API key (Phase 4; answered 2026-11-19: `claude -p` with the operator's `setup-token` token in `.env`, still to be verified on the host).
 
 ## Progress
 
@@ -180,4 +181,4 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 (Phase 4 may be planned in 
 | 1. Working Pipeline on Fixtures | 7/7 | Complete | 2026-11-17 |
 | 2. Guard Connection and Core Alerts | 0/12 | Planned | - |
 | 3. Remaining Rules and the Digest | 0/11 | Planned | - |
-| 4. Claude Triage | 0/TBD | Not started | - |
+| 4. Claude Triage and Short Templates | 0/TBD | Not started | - |
