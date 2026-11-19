@@ -233,6 +233,7 @@ def run_doctor(
             results.append(doctor.verdict_config(error=str(error), override_count=0))
         else:
             results.append(doctor.verdict_config(error=None, override_count=len(config.projects)))
+            results.append(doctor.verdict_message_language(config))
 
     state_load: StateLoad = FileStateStore(args.state_dir).load()
     results.append(doctor.verdict_state(state_load))

@@ -983,3 +983,53 @@ def test_digest_and_score_lines_no_leak(tmp_path: Path) -> None:
         assert OPS not in text
         assert str(config_path) not in text
         assert "secret-project" not in text
+
+
+@pytest.mark.parametrize(
+    ("body", "detail"),
+    [
+        ("messages:\n  language: ru\n", "Russian (messages.language: ru)"),
+        ("messages:\n  language: en\n", "English (messages.language: en)"),
+        ("defaults:\n  stale_after_days: 14\n", "English (messages.language: en)"),
+    ],
+)
+def test_doctor_shows_the_message_language_when_a_config_is_given(
+    tmp_path: Path, body: str, detail: str
+) -> None:
+    save_state(tmp_path)
+    save_credentials(tmp_path)
+    config = tmp_path / "radar.yml"
+    config.write_text(body, encoding="utf-8")
+    _, out = run_doctor(
+        tmp_path,
+        transport=healthy_transport(),
+        session=FakeGuardSession(),
+        extra=["--config", str(config)],
+    )
+    assert line(out, "message language") == f"PASS  message language: {detail}"
+
+
+def test_doctor_shows_no_message_language_without_a_config(tmp_path: Path) -> None:
+    save_state(tmp_path)
+    save_credentials(tmp_path)
+    _, out = run_doctor(tmp_path, transport=healthy_transport(), session=FakeGuardSession())
+    assert "message language" not in out
+
+
+@pytest.mark.parametrize("body", ["messages:\n  language: de\n", None])
+def test_doctor_shows_no_message_language_for_an_invalid_config(
+    tmp_path: Path, body: str | None
+) -> None:
+    save_state(tmp_path)
+    save_credentials(tmp_path)
+    config = tmp_path / "radar.yml"
+    if body is not None:
+        config.write_text(body, encoding="utf-8")
+    _, out = run_doctor(
+        tmp_path,
+        transport=healthy_transport(),
+        session=FakeGuardSession(),
+        extra=["--config", str(config)],
+    )
+    assert line(out, "config").startswith("FAIL")
+    assert "message language" not in out
