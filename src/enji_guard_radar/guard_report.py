@@ -20,6 +20,8 @@ logger = logging.getLogger(__name__)
 TOOL_GET_AUDIT_REPORT = "get_audit_report"
 # ASSUMPTION: argument name confirmed in Phase 2 against the real tool schema
 ARG_TASK_ID = "task_id"
+ARG_PROJECT_ID = "project_id"
+ARG_REPOSITORY_ID = "repo_id"
 _ARG_CURSOR = "cursor"
 MAX_REPORT_PAGES = 50
 MAX_REPORT_CHARS = 2_000_000
@@ -188,9 +190,10 @@ def _check_page(page: Mapping[str, object], task_id: str, first_version: str | N
         raise _BadPage(message)
 
 
-def _read_pages(tools: GuardTools, task_id: str) -> tuple[str, str]:
+def _read_pages(tools: GuardTools, task_id: str, project_id: str, repo_id: str) -> tuple[str, str]:
     """All pages joined, plus the content_version. Raises _BadPage or GuardCallError."""
-    args = {ARG_TASK_ID: task_id}
+    base = {ARG_PROJECT_ID: project_id, ARG_REPOSITORY_ID: repo_id, ARG_TASK_ID: task_id}
+    args = dict(base)
     parts: list[str] = []
     total = 0
     version: str | None = None
@@ -209,15 +212,17 @@ def _read_pages(tools: GuardTools, task_id: str) -> tuple[str, str]:
         parts.append(content)
         if not page["has_more"]:
             return "".join(parts), version
-        args = {ARG_TASK_ID: task_id, _ARG_CURSOR: str(page["next_cursor"])}
+        args = {**base, _ARG_CURSOR: str(page["next_cursor"])}
     message = f"more than {MAX_REPORT_PAGES} pages"
     raise _BadPage(message)
 
 
-def read_report(tools: GuardTools, task_id: str, action_key: str) -> ReportResult:
+def read_report(
+    tools: GuardTools, task_id: str, action_key: str, *, project_id: str, repo_id: str
+) -> ReportResult:
     """Read every page of one report and parse it. Any failure is ReportUnknown, never raised."""
     try:
-        content, version = _read_pages(tools, task_id)
+        content, version = _read_pages(tools, task_id, project_id, repo_id)
     except GuardCallError as error:
         return _unknown(task_id, action_key, f"{TOOL_GET_AUDIT_REPORT} failed: {error}")
     except _BadPage as error:

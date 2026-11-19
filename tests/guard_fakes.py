@@ -133,9 +133,17 @@ def world(
         responses[call_key(TOOL_LIST_REPOSITORIES, **{ARG_PROJECT_ID: pid})] = repos_page(
             pid, *repos
         )
+    project_of = {repo[0]: pid for pid, repos in repos_by_project.items() for repo in repos}
+    repo_of: dict[str, str] = {}
     for rid, runs in runs_by_repo.items():
-        responses[call_key(TOOL_LIST_AUDIT_RUNS, **{ARG_REPOSITORY_ID: rid})] = runs_page(*runs)
+        scope = {ARG_PROJECT_ID: project_of[rid], ARG_REPOSITORY_ID: rid}
+        responses[call_key(TOOL_LIST_AUDIT_RUNS, **scope)] = runs_page(*runs)
+        repo_of.update({str(run["task_id"]): rid for run in runs})
     for task_id, page in reports_by_task.items():
-        responses[call_key(TOOL_GET_AUDIT_REPORT, **{ARG_TASK_ID: task_id})] = page
+        if task_id not in repo_of:
+            continue  # its run is not listed, so nothing can ask for this report
+        rid = repo_of[task_id]
+        scope = {ARG_PROJECT_ID: project_of[rid], ARG_REPOSITORY_ID: rid, ARG_TASK_ID: task_id}
+        responses[call_key(TOOL_GET_AUDIT_REPORT, **scope)] = page
     responses.update(failures or {})
     return responses

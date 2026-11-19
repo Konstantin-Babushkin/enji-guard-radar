@@ -118,7 +118,7 @@ _URL: Final = re.compile(r"https?://([^\s/\"\\?#]+)")
 _UUID: Final = re.compile(
     r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}"
 )
-_REPO_ID: Final = re.compile(r"\brepo_[0-9A-Za-z-]+")
+_REPO_ID: Final = re.compile(r"\brepo_(?!id\b)[0-9A-Za-z-]+")  # not the argument name repo_id
 _SHA: Final = re.compile(r"(?<![0-9A-Za-z])[0-9a-fA-F]{40}(?![0-9A-Za-z])")
 _LONG_RUN: Final = re.compile(r"[A-Za-z0-9+]{20,}|[A-Za-z0-9+/]{40,}")
 _SOURCE_PATH: Final = re.compile(
@@ -535,7 +535,9 @@ def sanitize_recordings(
         if tool == TOOL_GET_AUDIT_REPORT:
             if ARG_CURSOR in recording.args:
                 continue  # later pages are folded into the first call's content
-            args = _map_args({ARG_TASK_ID: raw_task}, sanitizer)
+            args = _map_args(
+                {k: v for k, v in recording.args.items() if k != ARG_CURSOR}, sanitizer
+            )
         else:
             args = _map_args(recording.args, sanitizer)
         key = (tool, tuple(sorted(args.items())))

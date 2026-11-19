@@ -315,13 +315,13 @@ def test_unknown_project_frozen_keeps_scores_and_tooling(tmp_path: Path) -> None
         call_key(TOOL_LIST_REPOSITORIES, **{ARG_PROJECT_ID: PID}): GuardCallError("outage")
     }
     broken_second_page: dict[Key, Response] = {
-        call_key(TOOL_LIST_AUDIT_RUNS, **{ARG_REPOSITORY_ID: RID}): {
+        call_key(TOOL_LIST_AUDIT_RUNS, **{ARG_PROJECT_ID: PID, ARG_REPOSITORY_ID: RID}): {
             "runs": [],
             "has_more": True,
             "next_cursor": "c2",
         },
         call_key(
-            TOOL_LIST_AUDIT_RUNS, **{ARG_REPOSITORY_ID: RID, ARG_CURSOR: "c2"}
+            TOOL_LIST_AUDIT_RUNS, **{ARG_PROJECT_ID: PID, ARG_REPOSITORY_ID: RID, ARG_CURSOR: "c2"}
         ): GuardCallError("outage"),
     }
     for name, failures in (("repos", failing_listing), ("runs", broken_second_page)):

@@ -131,7 +131,11 @@ def add_security_rise(guard_dir: Path) -> None:
     calls["calls"].append(
         {
             "tool": TOOL_GET_AUDIT_REPORT,
-            "args": {ARG_TASK_ID: C014},
+            "args": {
+                "project_id": "00000000-0000-4000-8000-00000000a001",
+                "repo_id": "repo_00000000-0000-4000-8000-00000000b001",
+                ARG_TASK_ID: C014,
+            },
             "response": "get_audit_report_security_c014.json",
         }
     )
@@ -508,13 +512,13 @@ def test_partial_fetch_frozen_keeps_histories_and_conditions(tmp_path: Path) -> 
         call_key(TOOL_LIST_REPOSITORIES, **{ARG_PROJECT_ID: PID}): GuardCallError("outage")
     }
     broken_second_page: dict[Key, Response] = {
-        call_key(TOOL_LIST_AUDIT_RUNS, **{ARG_REPOSITORY_ID: RID}): {
+        call_key(TOOL_LIST_AUDIT_RUNS, **{ARG_PROJECT_ID: PID, ARG_REPOSITORY_ID: RID}): {
             "runs": [],
             "has_more": True,
             "next_cursor": "c2",
         },
         call_key(
-            TOOL_LIST_AUDIT_RUNS, **{ARG_REPOSITORY_ID: RID, ARG_CURSOR: "c2"}
+            TOOL_LIST_AUDIT_RUNS, **{ARG_PROJECT_ID: PID, ARG_REPOSITORY_ID: RID, ARG_CURSOR: "c2"}
         ): GuardCallError("outage"),
     }
     for name, failures in (("repos", failing_listing), ("runs", broken_second_page)):

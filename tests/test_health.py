@@ -99,7 +99,7 @@ def test_guard_malformed_page_and_empty_listing_are_data() -> None:
     ("tool", "args"),
     [
         (TOOL_LIST_REPOSITORIES, {ARG_PROJECT_ID: "p1"}),
-        (TOOL_LIST_AUDIT_RUNS, {ARG_REPOSITORY_ID: "r1"}),
+        (TOOL_LIST_AUDIT_RUNS, {ARG_PROJECT_ID: "p1", ARG_REPOSITORY_ID: "r1"}),
     ],
 )
 @pytest.mark.parametrize(

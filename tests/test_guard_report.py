@@ -123,22 +123,31 @@ def test_report_read_across_three_pages_equals_single_page() -> None:
     task_id, text = document["task_id"], document["content"]
     first, second = len(text) // 3, 2 * len(text) // 3
     single = InMemoryGuardTools(
-        {call_key("get_audit_report", task_id=task_id): _page(task_id, text, "v1", None)}
+        {
+            call_key(
+                "get_audit_report", project_id="p-1", repo_id="repo_1", task_id=task_id
+            ): _page(task_id, text, "v1", None)
+        }
     )
     paged = InMemoryGuardTools(
         {
-            call_key("get_audit_report", task_id=task_id): _page(task_id, text[:first], "v1", "p2"),
-            call_key("get_audit_report", task_id=task_id, cursor="p2"): _page(
-                task_id, text[first:second], "v1", "p3"
-            ),
-            call_key("get_audit_report", task_id=task_id, cursor="p3"): _page(
-                task_id, text[second:], "v1", None
-            ),
+            call_key(
+                "get_audit_report", project_id="p-1", repo_id="repo_1", task_id=task_id
+            ): _page(task_id, text[:first], "v1", "p2"),
+            call_key(
+                "get_audit_report", project_id="p-1", repo_id="repo_1", task_id=task_id, cursor="p2"
+            ): _page(task_id, text[first:second], "v1", "p3"),
+            call_key(
+                "get_audit_report", project_id="p-1", repo_id="repo_1", task_id=task_id, cursor="p3"
+            ): _page(task_id, text[second:], "v1", None),
         }
     )
-    expected = read_report(single, task_id, "audit.security")
+    expected = read_report(single, task_id, "audit.security", project_id="p-1", repo_id="repo_1")
     assert isinstance(expected, AuditReport)
-    assert read_report(paged, task_id, "audit.security") == expected
+    assert (
+        read_report(paged, task_id, "audit.security", project_id="p-1", repo_id="repo_1")
+        == expected
+    )
     assert len(paged.calls) == 3
 
 
@@ -359,7 +368,7 @@ def test_read_report_failures_are_unknown(
     tools: InMemoryGuardTools, caplog: pytest.LogCaptureFixture
 ) -> None:
     with caplog.at_level(logging.WARNING):
-        result = read_report(tools, TASK, "audit.security")
+        result = read_report(tools, TASK, "audit.security", project_id="p-1", repo_id="repo_1")
     assert isinstance(result, ReportUnknown)
     assert [r.levelno for r in caplog.records] == [logging.WARNING]
     assert TASK in caplog.text
@@ -375,14 +384,20 @@ def test_read_report_more_than_50_pages_is_unknown() -> None:
             return _page(TASK, "x", "v1", "next")
 
     tools = Forever()
-    assert isinstance(read_report(tools, TASK, "audit.security"), ReportUnknown)
+    assert isinstance(
+        read_report(tools, TASK, "audit.security", project_id="p-1", repo_id="repo_1"),
+        ReportUnknown,
+    )
     assert tools.calls == MAX_REPORT_PAGES
 
 
 def test_read_report_too_many_characters_is_unknown() -> None:
     big = "x" * (MAX_REPORT_CHARS // 2 + 1)
     tools = _tools(_more(0, big), _last(big))
-    assert isinstance(read_report(tools, TASK, "audit.security"), ReportUnknown)
+    assert isinstance(
+        read_report(tools, TASK, "audit.security", project_id="p-1", repo_id="repo_1"),
+        ReportUnknown,
+    )
 
 
 def test_read_report_non_object_page_is_unknown() -> None:
@@ -390,4 +405,7 @@ def test_read_report_non_object_page_is_unknown() -> None:
         def call(self, tool: str, args: Mapping[str, str]) -> Mapping[str, object]:
             return cast("Mapping[str, object]", ["not", "an", "object"])
 
-    assert isinstance(read_report(ListTools(), TASK, "audit.security"), ReportUnknown)
+    assert isinstance(
+        read_report(ListTools(), TASK, "audit.security", project_id="p-1", repo_id="repo_1"),
+        ReportUnknown,
+    )

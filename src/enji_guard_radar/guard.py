@@ -35,7 +35,7 @@ GUARD_READ_TOOLS = frozenset(
 # ASSUMPTION: argument names are not recorded in docs/guard-data-notes.md; Phase 2 confirms
 # them against the real tool schemas
 ARG_PROJECT_ID = "project_id"
-ARG_REPOSITORY_ID = "repository_id"
+ARG_REPOSITORY_ID = "repo_id"
 ARG_CURSOR = "cursor"
 MAX_PAGES = 50
 
@@ -366,7 +366,7 @@ def _read_runs(tools: GuardTools, repository: GuardRepository) -> tuple[tuple[Au
     newest: datetime | None = None
     oldest_linked: datetime | None = None
     in_order = True
-    args = {ARG_REPOSITORY_ID: repository.id}
+    args = {ARG_PROJECT_ID: repository.project_id, ARG_REPOSITORY_ID: repository.id}
     for page in _pages(tools, TOOL_LIST_AUDIT_RUNS, args, parse_runs_page):
         for run in page.items:
             if in_order and oldest_linked is not None and run.linked_at > oldest_linked:
@@ -406,7 +406,15 @@ def _repo_runs(
             continue
         # A report failure is local to that report (ReportUnknown); it never makes the project
         # unknown.
-        reports.append(read_report(tools, run.task_id, run.action_key))
+        reports.append(
+            read_report(
+                tools,
+                run.task_id,
+                run.action_key,
+                project_id=repository.project_id,
+                repo_id=repository.id,
+            )
+        )
     return RepoRuns(
         repository=repository, runs=runs, reports=tuple(reports), runs_complete=runs_complete
     )

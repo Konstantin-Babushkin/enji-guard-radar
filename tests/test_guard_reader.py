@@ -74,9 +74,9 @@ def _project_tools(*run_pages: Response) -> InMemoryGuardTools:
         call_key("list_repositories", project_id="p1"): _repos([REPO])
     }
     for index, page in enumerate(run_pages):
-        key = call_key("list_audit_runs", repository_id="r1")
+        key = call_key("list_audit_runs", project_id="p1", repo_id="r1")
         if index:
-            key = call_key("list_audit_runs", repository_id="r1", cursor=f"c{index + 1}")
+            key = call_key("list_audit_runs", project_id="p1", repo_id="r1", cursor=f"c{index + 1}")
         responses[key] = page
     return InMemoryGuardTools(responses)
 
@@ -418,7 +418,7 @@ def test_scenario_project_a_requests_two_run_pages_and_finds_c012() -> None:
     cursors = [
         args.get("cursor")
         for tool, args in tools.calls
-        if tool == "list_audit_runs" and args["repository_id"].endswith("b001")
+        if tool == "list_audit_runs" and args["repo_id"].endswith("b001")
     ]
     assert cursors == [None, "<opaque-cursor>"]
     assert {tool for tool, _ in tools.calls} <= GUARD_READ_TOOLS

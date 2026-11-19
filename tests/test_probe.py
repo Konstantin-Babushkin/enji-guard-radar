@@ -186,8 +186,8 @@ class FakeGuardSession:
         return {
             TOOL_LIST_PROJECTS: ("cursor",),
             TOOL_LIST_REPOSITORIES: ("cursor", "project_id"),
-            TOOL_LIST_AUDIT_RUNS: ("cursor", "repository_id"),
-            TOOL_GET_AUDIT_REPORT: ("cursor", "task_id"),
+            TOOL_LIST_AUDIT_RUNS: ("cursor", "project_id", "repo_id"),
+            TOOL_GET_AUDIT_REPORT: ("cursor", "project_id", "repo_id", "task_id"),
         }
 
     def result_shapes(self) -> Mapping[str, int]:
@@ -341,7 +341,10 @@ def test_sanitizer_placeholders_are_consistent_between_arguments_and_responses()
     assert repos[0]["id"] == "repo_00000000-0000-4000-8000-00000000b001"
     assert repos[0]["name"] == "acme/service-1"
     runs_call = next(c for c in calls if c["tool"] == TOOL_LIST_AUDIT_RUNS)
-    assert runs_call["args"] == {"repository_id": "repo_00000000-0000-4000-8000-00000000b001"}
+    assert runs_call["args"] == {
+        "project_id": "00000000-0000-4000-8000-00000000a001",
+        "repo_id": "repo_00000000-0000-4000-8000-00000000b001",
+    }
     runs = files[runs_call["response"]]["runs"]
     assert runs[0]["task_id"] == "00000000-0000-4000-8000-00000000c001"
     assert runs[0]["report_url"] == (
@@ -372,14 +375,19 @@ def test_sanitizer_writes_unique_calls_and_one_page_reports() -> None:
 
 
 def test_sanitizer_records_a_failed_call_as_an_error_entry() -> None:
-    recordings = [Recording(TOOL_LIST_AUDIT_RUNS, {"repository_id": "r1"}, None, "unavailable")]
+    recordings = [
+        Recording(TOOL_LIST_AUDIT_RUNS, {"project_id": "p1", "repo_id": "r1"}, None, "unavailable")
+    ]
     fixtures = sanitize_recordings(recordings, tool_arguments={})
     assert fixtures.files == {}
     assert fixtures.manifest == {
         "calls": [
             {
                 "tool": TOOL_LIST_AUDIT_RUNS,
-                "args": {"repository_id": "repo_00000000-0000-4000-8000-00000000b001"},
+                "args": {
+                    "project_id": "00000000-0000-4000-8000-00000000a001",
+                    "repo_id": "repo_00000000-0000-4000-8000-00000000b001",
+                },
                 "error": "recorded failure (unavailable)",
             }
         ]
@@ -441,7 +449,7 @@ def test_summary_lists_severity_words_layouts_and_unknown_reasons() -> None:
         [
             Recording(
                 TOOL_LIST_AUDIT_RUNS,
-                {"repository_id": "r"},
+                {"project_id": "p", "repo_id": "r"},
                 {"runs": [run_item("t", "audit.x", "2026-11-16T10:00:00.000000Z")]},
                 None,
             ),
@@ -833,9 +841,8 @@ def test_probe_rejects_an_unreadable_config(
 
 def test_probe_output_replays_failures_as_errors(tmp_path: Path) -> None:
     responses = dirty_responses()
-    responses[call_key(TOOL_GET_AUDIT_REPORT, **{ARG_TASK_ID: RAW_RECON_TASK})] = GuardCallError(
-        "boom"
-    )
+    scope = {ARG_PROJECT_ID: RAW_PROJECT, "repo_id": RAW_REPO, ARG_TASK_ID: RAW_RECON_TASK}
+    responses[call_key(TOOL_GET_AUDIT_REPORT, **scope)] = GuardCallError("boom")
     out_dir = tmp_path / "recorded"
     code, output = run_probe(out_dir, FakeGuardSession(responses), tmp_path)
     assert code == 0

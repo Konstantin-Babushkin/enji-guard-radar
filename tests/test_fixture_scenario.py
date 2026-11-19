@@ -26,8 +26,6 @@ ERROR_PROJECT = "00000000-0000-4000-8000-00000000a004"
 
 Json = dict[str, Any]
 
-_ID_ARG = {"list_repositories": "project_id", "list_audit_runs": "repository_id"}
-
 
 def _load(path: Path) -> Json:
     data = json.loads(path.read_text(encoding="utf-8"))
@@ -56,10 +54,22 @@ def _ts(value: str) -> datetime:
     return datetime.fromisoformat(value)
 
 
+def _scope(tool: str, ident: str) -> dict[str, str]:
+    """The arguments that name the thing a list tool is about (Guard wants project and repo ids)."""
+    if tool == "list_repositories":
+        return {"project_id": ident}
+    for project in _load(FIXTURES / "list_projects.json")["projects"]:
+        if not _is_error_project(project["id"]) and any(
+            r["id"] == ident for r in _repositories(project["id"])
+        ):
+            return {"project_id": project["id"], "repo_id": ident}
+    return {"project_id": "", "repo_id": ident}
+
+
 def _pages(tool: str, ident: str) -> list[Json]:
     """Follow has_more from the first page, stopping only at a deliberately unrecorded page."""
-    id_arg = _ID_ARG[tool]
-    args = {id_arg: ident}
+    scope = _scope(tool, ident)
+    args = dict(scope)
     pages: list[Json] = []
     while True:
         call = _find(tool, **args)
@@ -72,7 +82,7 @@ def _pages(tool: str, ident: str) -> list[Json]:
         pages.append(page)
         if not page["has_more"]:
             return pages
-        args = {id_arg: ident, "cursor": page["next_cursor"]}
+        args = {**scope, "cursor": page["next_cursor"]}
 
 
 def _projects() -> list[Json]:
@@ -109,7 +119,7 @@ def test_manifest_entries_are_well_formed() -> None:
     reports = [c for c in _calls() if c["tool"] == "get_audit_report"]
     assert len(reports) == 4
     for call in reports:
-        assert list(call["args"]) == ["task_id"]
+        assert sorted(call["args"]) == ["project_id", "repo_id", "task_id"]
         assert _load(FIXTURES / call["response"])["task_id"] == call["args"]["task_id"]
 
 
@@ -124,7 +134,7 @@ def test_every_listed_page_and_repository_has_a_recorded_call() -> None:
         if _is_error_project(project["id"]):
             continue  # a recorded error has no pages to follow
         for repo in _repositories(project["id"]):
-            assert _find("list_audit_runs", repository_id=repo["id"]) is not None
+            assert _find("list_audit_runs", **_scope("list_audit_runs", repo["id"])) is not None
             assert _pages("list_audit_runs", repo["id"])
 
 
@@ -177,7 +187,7 @@ _SYNTHETIC_ID = re.compile(r"(repo_)?00000000-0000-4000-8000-0000000[0-9a-f]{5}"
 def _check_synthetic(node: Any, source: str) -> None:
     if isinstance(node, dict):
         for key, value in node.items():
-            if key in ("id", "project_id", "task_id", "repository_id"):
+            if key in ("id", "project_id", "task_id", "repo_id"):
                 assert _SYNTHETIC_ID.fullmatch(value), (source, key, value)
             if key == "name" and "/" in value:
                 assert value.startswith("acme/"), (source, value)

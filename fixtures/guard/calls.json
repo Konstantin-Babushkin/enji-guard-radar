@@ -23,14 +23,16 @@
     {
       "tool": "list_audit_runs",
       "args": {
-        "repository_id": "repo_00000000-0000-4000-8000-00000000b001"
+        "project_id": "00000000-0000-4000-8000-00000000a001",
+        "repo_id": "repo_00000000-0000-4000-8000-00000000b001"
       },
       "response": "list_audit_runs.json"
     },
     {
       "tool": "list_audit_runs",
       "args": {
-        "repository_id": "repo_00000000-0000-4000-8000-00000000b001",
+        "project_id": "00000000-0000-4000-8000-00000000a001",
+        "repo_id": "repo_00000000-0000-4000-8000-00000000b001",
         "cursor": "<opaque-cursor>"
       },
       "response": "list_audit_runs_b001_page2.json",
@@ -39,7 +41,8 @@
     {
       "tool": "list_audit_runs",
       "args": {
-        "repository_id": "repo_00000000-0000-4000-8000-00000000b002"
+        "project_id": "00000000-0000-4000-8000-00000000a001",
+        "repo_id": "repo_00000000-0000-4000-8000-00000000b002"
       },
       "response": "list_audit_runs_b002.json",
       "note": "c011 status running, report_status pending and completed_at null are ASSUMPTION values; only completed was OBSERVED"
@@ -54,7 +57,8 @@
     {
       "tool": "list_audit_runs",
       "args": {
-        "repository_id": "repo_00000000-0000-4000-8000-00000000b003"
+        "project_id": "00000000-0000-4000-8000-00000000a002",
+        "repo_id": "repo_00000000-0000-4000-8000-00000000b003"
       },
       "response": "list_audit_runs_b003.json"
     },
@@ -83,7 +87,8 @@
     {
       "tool": "list_audit_runs",
       "args": {
-        "repository_id": "repo_00000000-0000-4000-8000-00000000b004"
+        "project_id": "00000000-0000-4000-8000-00000000a005",
+        "repo_id": "repo_00000000-0000-4000-8000-00000000b004"
       },
       "response": "list_audit_runs_b004.json"
     },
@@ -97,13 +102,16 @@
     {
       "tool": "list_audit_runs",
       "args": {
-        "repository_id": "repo_00000000-0000-4000-8000-00000000b005"
+        "project_id": "00000000-0000-4000-8000-00000000a006",
+        "repo_id": "repo_00000000-0000-4000-8000-00000000b005"
       },
       "response": "list_audit_runs_b005.json"
     },
     {
       "tool": "get_audit_report",
       "args": {
+        "project_id": "00000000-0000-4000-8000-00000000a001",
+        "repo_id": "repo_00000000-0000-4000-8000-00000000b001",
         "task_id": "00000000-0000-4000-8000-00000000c001"
       },
       "response": "get_audit_report_security.json",
@@ -112,6 +120,8 @@
     {
       "tool": "get_audit_report",
       "args": {
+        "project_id": "00000000-0000-4000-8000-00000000a001",
+        "repo_id": "repo_00000000-0000-4000-8000-00000000b002",
         "task_id": "00000000-0000-4000-8000-00000000c004"
       },
       "response": "get_audit_report_ai_readiness.json",
@@ -120,6 +130,8 @@
     {
       "tool": "get_audit_report",
       "args": {
+        "project_id": "00000000-0000-4000-8000-00000000a001",
+        "repo_id": "repo_00000000-0000-4000-8000-00000000b002",
         "task_id": "00000000-0000-4000-8000-00000000c005"
       },
       "response": "get_audit_report_tests_slug_ids.json",
@@ -128,6 +140,8 @@
     {
       "tool": "get_audit_report",
       "args": {
+        "project_id": "00000000-0000-4000-8000-00000000a001",
+        "repo_id": "repo_00000000-0000-4000-8000-00000000b002",
         "task_id": "00000000-0000-4000-8000-00000000c006"
       },
       "response": "get_audit_report_recon.json",

@@ -66,14 +66,18 @@ class FakeGuard:
         return self._answer("list_repositories", project_id=project_id, cursor=cursor)
 
     def _list_audit_runs(
-        self, repository_id: str | None = None, cursor: str | None = None
+        self, project_id: str | None = None, repo_id: str | None = None, cursor: str | None = None
     ) -> dict[str, Any]:
-        return self._answer("list_audit_runs", repository_id=repository_id, cursor=cursor)
+        return self._answer(
+            "list_audit_runs", project_id=project_id, repo_id=repo_id, cursor=cursor
+        )
 
     def _get_audit_report(
-        self, repository_id: str | None = None, task_id: str | None = None
+        self, project_id: str | None = None, repo_id: str | None = None, task_id: str | None = None
     ) -> dict[str, Any]:
-        return self._answer("get_audit_report", repository_id=repository_id, task_id=task_id)
+        return self._answer(
+            "get_audit_report", project_id=project_id, repo_id=repo_id, task_id=task_id
+        )
 
     def _run_audit(self, repository_id: str) -> dict[str, Any]:
         self.run_audit_calls.append(repository_id)
