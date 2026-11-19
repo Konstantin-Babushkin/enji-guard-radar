@@ -47,6 +47,7 @@ Requirements for initial release. Each maps to roadmap phases.
 - [x] **ALERT-04**: When many alerts would fire at once, they collapse into one summary message instead of a flood
 - [x] **ALERT-05**: Telegram errors are handled by class: rate limit with retry-after, group migrated to a new chat id, and bad token or removed bot reported to the operator
 - [x] **ALERT-06**: A dry-run mode prints what would be sent and writes no state and sends nothing
+- [ ] **ALERT-07**: Alerts, reminders and the weekly digest use short templates in both message languages (en, ru): one line per item with a marker, the project, what is wrong and its age, and a digest titled "Radar weekly · N open" with tooling gaps of one repo grouped into one line. Counts, ages and names come from code only; escaping, splitting and the secret gate are unchanged. Added 2026-11-19
 
 ### Digest
 
@@ -57,7 +58,7 @@ Requirements for initial release. Each maps to roadmap phases.
 
 ### Triage
 
-- [ ] **TRI-01**: Claude adds a short summary, probable cause and priority for items that will be sent, and returns schema-validated output
+- [ ] **TRI-01**: Claude adds a priority (P1 to P3) and one short cause (one line, at most 60 characters, shown as `P1 · <cause>`) to each fresh High-findings alert (the first alert of a series, whose report was read in this run), in the configured message language, and returns schema-validated output. Amended 2026-11-19: no summary; the cause is based on sanitised finding titles kept in memory only, so digests, reminders, re-armed and retried alerts carry none
 - [ ] **TRI-02**: Claude cannot add, drop or suppress an alert. Counts, ages and names always come from code, never from Claude
 - [ ] **TRI-03**: Invalid, refused or failed Claude output falls back to the rule-only message
 - [ ] **TRI-04**: Raw security evidence is never sent to Claude. Untrusted finding text is delimited so it cannot steer the prompt
@@ -136,6 +137,7 @@ Which phases cover which requirements. Updated during roadmap creation.
 | ALERT-04 | Phase 1 | Complete |
 | ALERT-05 | Phase 1 | Complete |
 | ALERT-06 | Phase 1 | Complete |
+| ALERT-07 | Phase 4 | Pending |
 | DIG-01 | Phase 3 | Pending |
 | DIG-02 | Phase 3 | Pending |
 | DIG-03 | Phase 3 | Pending |
@@ -151,10 +153,10 @@ Which phases cover which requirements. Updated during roadmap creation.
 | OPS-04 | Phase 1 | Complete |
 
 **Coverage:**
-- v1 requirements: 41 total (RULE-04 dropped)
-- Mapped to phases: 41 (Phase 1: 17, Phase 2: 10, Phase 3: 9, Phase 4: 5)
+- v1 requirements: 42 total (RULE-04 dropped, ALERT-07 added 2026-11-19)
+- Mapped to phases: 42 (Phase 1: 17, Phase 2: 10, Phase 3: 9, Phase 4: 6)
 - Unmapped: 0
 
 ---
 *Requirements defined: 2026-11-16*
-*Last updated: 2026-11-16 after roadmap creation*
+*Last updated: 2026-11-19: TRI-01 amended, ALERT-07 added (Phase 4)*
