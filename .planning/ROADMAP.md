@@ -148,7 +148,35 @@ Plans:
   3. Turning triage on or off sends the same alerts. Counts, ages and names in every message come from code, and invalid, refused, timed-out or failed Claude output falls back to the rule-only message.
   4. Only sanitised finding titles (no ids, paths, links or code spans), held in memory for the run and never stored, reach Claude, never evidence, paths, report bodies or links, and hostile text planted in a finding title is delimited as data and cannot steer the output.
   5. The triage boundary is swappable and needs no API key, and the daily cost is logged.
-**Plans**: TBD
+**Plans**: 15 plans
+
+Plans:
+**Wave 1**
+- [ ] 04-01-PLAN.md — Wave 1: Claude CLI route check on the radar host with the operator's setup-token token, recorded in docs/triage-notes.md (operator-gated, not autonomous)
+- [ ] 04-02-PLAN.md — Wave 1: Short one-line alert and summary templates in en and ru, shared line helpers, `P1 · ` catalog entry
+- [ ] 04-03-PLAN.md — Wave 1: Parser keeps finding titles in memory only (never logged, never stored; state stays schema 3)
+- [ ] 04-04-PLAN.md — Wave 1: Pure `sanitize_title` and `pick_titles` (ids, paths, links, code spans, secrets removed; Unicode-aware)
+- [ ] 04-05-PLAN.md — Wave 1: Strict `triage:` config (off by default) with the example file, and the Claude token setting
+
+**Wave 2** *(blocked on Wave 1 completion)*
+- [ ] 04-06-PLAN.md — Wave 2: Short reminder template in en and ru
+- [ ] 04-07-PLAN.md — Wave 2: Triager port, typed models, request builder and nonce-delimited prompt, shared fake
+
+**Wave 3** *(blocked on Wave 2 completion)*
+- [ ] 04-08-PLAN.md — Wave 3: Two-level validation of Claude's reply
+- [ ] 04-09-PLAN.md — Wave 3: Short weekly digest in en and ru, tooling gaps grouped per repo, age footer
+- [ ] 04-10-PLAN.md — Wave 3: Item-level render seam for the `P1 · <cause>` line
+- [ ] 04-11-PLAN.md — Wave 3: Triage cost record, call and daily lines, separate `state/triage-cost.json`
+
+**Wave 4** *(blocked on Wave 3 completion)*
+- [ ] 04-12-PLAN.md — Wave 4: Triage in the run with the fake triager (fresh High alerts only, one call, rule-only fallback, cost)
+
+**Wave 5** *(blocked on Wave 4 completion)*
+- [ ] 04-13-PLAN.md — Wave 5: `claude -p` adapter and CLI wiring, CLI-process e2e with a fake binary (needs `Route verified: yes` from 04-01)
+- [ ] 04-14-PLAN.md — Wave 5: On/off equality matrix and hostile-text suite
+
+**Wave 6** *(blocked on Wave 5 completion; does not wait for 04-13 if 04-01 says the route is not verified)*
+- [ ] 04-15-PLAN.md — Wave 6: `doctor` triage line and the runbook Triage section
 
 ## Gates and Open Items
 
