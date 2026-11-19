@@ -302,6 +302,14 @@ def test_critical_severity_is_kept_as_unknown_and_logged(
     assert EVIDENCE_PATH not in caplog.text
 
 
+def test_finding_title_is_parsed() -> None:
+    report = _parse(_doc(findings=_finding()))
+    assert isinstance(report, AuditReport)
+    assert report.findings[0].title == "Secret finding title"
+    assert "Secret finding title" not in repr(report)
+    assert "Secret finding title" not in str(report)
+
+
 def test_findings_keep_report_order_and_duplicate_ids() -> None:
     findings = _finding("### `F-3` — a", "Medium") + _finding("### `F-1` — b", "Low")
     findings += _finding("### `F-1` — c", "High")
