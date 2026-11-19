@@ -302,6 +302,65 @@ def test_critical_severity_is_kept_as_unknown_and_logged(
     assert EVIDENCE_PATH not in caplog.text
 
 
+def test_finding_title_is_parsed() -> None:
+    report = _parse(_doc(findings=_finding()))
+    assert isinstance(report, AuditReport)
+    assert report.findings[0].title == "Secret finding title"
+    assert "Secret finding title" not in repr(report)
+    assert "Secret finding title" not in str(report)
+
+
+@pytest.mark.parametrize(
+    ("heading", "expected"),
+    [
+        ("### `F-1` — a b", "a b"),
+        ("### `F-2` – Missing auth", "Missing auth"),
+        ("### `F-8` - Hyphen title", "Hyphen title"),
+        ("### `F-3`: Weak hash", "Weak hash"),
+        ("### `F-4`   Spaces", "Spaces"),
+        ("### `F-5` — Внедрение SQL в поиске заказов", "Внедрение SQL в поиске заказов"),
+    ],
+)
+def test_title_separators_are_stripped(heading: str, expected: str) -> None:
+    report = _parse(_doc(findings=_finding(heading)))
+    assert isinstance(report, AuditReport)
+    assert report.findings[0].title == expected
+
+
+@pytest.mark.parametrize(
+    "heading", ["### Heading without id", "### `F-6`", "### `F-7` — ", "### `F-9` :"]
+)
+def test_title_empty_when_unreadable(heading: str) -> None:
+    report = _parse(_doc(findings=_finding(heading)))
+    assert isinstance(report, AuditReport)
+    assert report.findings[0].title == ""
+    assert report.findings[0].severity is Severity.HIGH
+    assert report.high_count == 1
+
+
+def test_title_parsed_from_committed_fixtures() -> None:
+    assert [f.title for f in _report("c001").findings] == [
+        "Placeholder high-severity finding title",
+        "Placeholder medium-severity finding title",
+    ]
+    assert all(f.title for run in ("c004", "c005") for f in _report(run).findings)
+
+
+def test_title_never_in_logs_or_repr(caplog: pytest.LogCaptureFixture) -> None:
+    titles = ["Title one", "Title two", "Title three"]
+    findings = "".join(_finding(f"### `F-{n}` — {t}") for n, t in enumerate(titles, start=1))
+    findings += _finding("### `F-4` — Title four", severity="Critical")
+    with caplog.at_level(logging.DEBUG):
+        report = _parse(_doc(findings=findings))
+    assert isinstance(report, AuditReport)
+    assert report.high_count == 3
+    assert [f.title for f in report.findings[:3]] == titles
+    for title in [*titles, "Title four"]:
+        assert title not in caplog.text
+        assert title not in repr(report)
+        assert title not in str(report)
+
+
 def test_findings_keep_report_order_and_duplicate_ids() -> None:
     findings = _finding("### `F-3` — a", "Medium") + _finding("### `F-1` — b", "Low")
     findings += _finding("### `F-1` — c", "High")

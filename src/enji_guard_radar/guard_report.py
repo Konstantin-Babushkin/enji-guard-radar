@@ -1,8 +1,9 @@
 """Markdown audit reports from Guard: parse strictly, read page by page, never guess.
 
 A report that cannot be read with certainty is `ReportUnknown`, never "zero findings"
-(SRC-03, SRC-04). Only ids, severities and the score are kept: no report text, evidence
-path or code location is stored, returned or logged.
+(SRC-03, SRC-04). Only ids, severities, the score and finding titles are kept, and titles live
+in memory only (D-06): never in repr, logs or state. No other report text, evidence path or code
+location is stored, returned or logged.
 """
 
 import logging
@@ -10,7 +11,7 @@ import re
 from collections.abc import Mapping
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 from enji_guard_radar.model import Severity
 from enji_guard_radar.ports import GuardCallError, GuardTools
@@ -50,6 +51,8 @@ class ReportFinding(_Frozen):
     finding_id: str
     severity: Severity
     severity_raw: str
+    # Raw, untrusted Guard text (D-06): in memory only, hidden from repr, never logged or stored.
+    title: str = Field(default="", repr=False)
 
 
 class AuditReport(_Frozen):
@@ -93,6 +96,18 @@ def _unknown(task_id: str, action_key: str, reason: str) -> ReportUnknown:
     return ReportUnknown(task_id=task_id, action_key=action_key, reason=reason)
 
 
+# hyphen, en dash, em dash, colon, whitespace (escaped: ruff flags a literal en dash)
+_TITLE_SEPARATORS = "-\u2013\u2014: \t"
+
+
+def _title(heading: str) -> str:
+    """Text after the backticked id of a finding heading; empty when there is no id or no text."""
+    match = _ID.search(heading)
+    if match is None:
+        return ""
+    return heading[match.end() :].strip().lstrip(_TITLE_SEPARATORS).strip()
+
+
 def _finding(task_id: str, block: list[str]) -> ReportFinding:
     id_match = _ID.search(block[0])
     finding_id = id_match.group(1) if id_match else "unknown"
@@ -111,7 +126,12 @@ def _finding(task_id: str, block: list[str]) -> ReportFinding:
             finding_id,
             severity_raw,
         )
-    return ReportFinding(finding_id=finding_id, severity=severity, severity_raw=severity_raw)
+    return ReportFinding(
+        finding_id=finding_id,
+        severity=severity,
+        severity_raw=severity_raw,
+        title=_title(block[0]),
+    )
 
 
 def _finding_blocks(lines: list[str]) -> tuple[list[list[str]], int] | str:
