@@ -56,6 +56,34 @@ _EN: dict[str, Entry] = {
     ),
     "summary.item.never_ran": "- <b>{name}</b>: no completed Guard run found ({severity})",
     "reminder.title": "Reminder: High findings are still open",
+    "digest.title": "Guard radar weekly digest",
+    "digest.poll": "Last successful Guard poll: {stamp} UTC.",
+    "digest.open_items": "Open items: {total}.",
+    "digest.unread": "{projects} could not be read in that poll.",
+    "digest.more_items": "+{hidden} more open {noun} not shown.",
+    "digest.resolved_head": "Resolved since the last digest ({total}):",
+    "digest.resolved_more": "+{hidden} more resolved.",
+    "digest.nothing_open": "nothing open",
+    "digest.nothing_open_read": "nothing open in the projects read",
+    "digest.item.high": "- High: <b>{name}</b>: {what} {seen}",
+    "digest.item.recurring": "Recurring: High findings in each of the last {runs} runs.",
+    "digest.item.stale": (
+        "- Stale: <b>{name}</b>: no completed Guard run for {days} (last: {last})."
+    ),
+    "digest.item.stale_never": "- Stale: <b>{name}</b>: no completed Guard run found.",
+    "digest.item.low_score": (
+        "- Low score: <b>{name}</b>: {audit} score {score}/100 in {repo} (run {day})."
+    ),
+    "digest.item.gap": (
+        "- Tooling gap: <b>{name}</b>: no completed {audit} run in the last {days} "
+        "in {repo} {tail}."
+    ),
+    "digest.gap.none": "(none seen)",
+    "digest.gap.last": "(last run: {day})",
+    "digest.resolved.high": "- <b>{name}</b>: High findings in {audit} are closed.",
+    "digest.resolved.stale": "- <b>{name}</b>: no longer stale.",
+    "digest.resolved.never_ran": "- <b>{name}</b>: now has completed Guard runs.",
+    "digest.resolved.other": "- <b>{name}</b>: no longer open.",
 }
 
 _RU: dict[str, Entry] = {
@@ -100,6 +128,36 @@ _RU: dict[str, Entry] = {
     ),
     "summary.item.never_ran": "- <b>{name}</b>: завершённых запусков Guard не найдено ({severity})",
     "reminder.title": "Напоминание: находки высокой серьёзности всё ещё открыты",
+    "digest.title": "Еженедельный дайджест Guard radar",
+    "digest.poll": "Последний успешный опрос Guard: {stamp} UTC.",
+    "digest.open_items": "Открытых пунктов: {total}.",
+    "digest.unread": "В этом опросе не удалось прочитать: {projects}.",
+    "digest.more_items": "Не показано ещё: {hidden} {noun}.",
+    "digest.resolved_head": "Закрыто с прошлого дайджеста ({total}):",
+    "digest.resolved_more": "Закрыто ещё: {hidden}.",
+    "digest.nothing_open": "ничего не открыто",
+    "digest.nothing_open_read": "ничего не открыто в прочитанных проектах",
+    "digest.item.high": "- Высокая: <b>{name}</b>: {what} {seen}",
+    "digest.item.recurring": (
+        "Повторяется: находки высокой серьёзности в каждом из последних {runs} запусков."
+    ),
+    "digest.item.stale": (
+        "- Устарело: <b>{name}</b>: нет завершённых запусков Guard уже {days} (последний: {last})."
+    ),
+    "digest.item.stale_never": "- Устарело: <b>{name}</b>: завершённых запусков Guard не найдено.",
+    "digest.item.low_score": (
+        "- Низкий балл: <b>{name}</b>: {audit}: оценка {score}/100 в {repo} (запуск {day})."
+    ),
+    "digest.item.gap": (
+        "- Нет проверки: <b>{name}</b>: нет завершённых запусков {audit} "
+        "за последние {days} в {repo} {tail}."
+    ),
+    "digest.gap.none": "(запусков не видно)",
+    "digest.gap.last": "(последний запуск: {day})",
+    "digest.resolved.high": "- <b>{name}</b>: находки высокой серьёзности в {audit} закрыты.",
+    "digest.resolved.stale": "- <b>{name}</b>: проверки больше не устарели.",
+    "digest.resolved.never_ran": "- <b>{name}</b>: появились завершённые запуски Guard.",
+    "digest.resolved.other": "- <b>{name}</b>: больше не открыто.",
 }
 
 CATALOGS: Mapping[Language, Catalog] = {"en": _EN, "ru": _RU}

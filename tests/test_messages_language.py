@@ -5,6 +5,8 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
+from enji_guard_radar.digest import DigestInput, build_digest, render_digest
+from enji_guard_radar.ledger import ResolvedItem
 from enji_guard_radar.messages import (
     DEFAULT_MAX_CHARS,
     MIN_MAX_CHARS,
@@ -20,8 +22,10 @@ from enji_guard_radar.messages import (
 )
 from enji_guard_radar.model import Alert, AlertKey, AlertKind, OutboundMessage, Severity
 from enji_guard_radar.reminders import render_reminders
+from enji_guard_radar.score_rules import LowScore
 from enji_guard_radar.secret_guard import find_secret
 from enji_guard_radar.texts import Language
+from enji_guard_radar.tooling_rules import ToolingGap
 
 NOW = datetime(2026, 11, 18, 6, 0, tzinfo=UTC)
 CYRILLIC = re.compile("[А-Яа-яЁё]")
@@ -477,3 +481,227 @@ def test_reminder_split_keeps_every_series_once_in_order_in_russian() -> None:
         assert telegram_length(message.text) <= MIN_MAX_CHARS
         assert len(message.text.split("\n")) - 1 == len(message.keys)
         assert find_secret(message.text, []) is None
+
+
+# --- the weekly digest ---
+
+POLL = datetime(2026, 11, 18, 6, 0, tzinfo=UTC)
+
+
+def low_score(name: str = "Gamma") -> LowScore:
+    return LowScore(
+        project_id="p4",
+        project_name=name,
+        repo_id="r4",
+        repo_name="acme/web",
+        action_key="audit.tests",
+        score=40,
+        threshold=60,
+        completed_at=datetime(2026, 11, 10, 8, 0, tzinfo=UTC),
+    )
+
+
+def gap(last: datetime | None, *, pid: str = "p5") -> ToolingGap:
+    return ToolingGap(
+        project_id=pid,
+        project_name="Delta",
+        repo_id="r5",
+        repo_name="acme/lib",
+        action_key="audit.dead-code",
+        last_completed_at=last,
+        age_days=None if last is None else (POLL - last).days,
+        window_days=60,
+    )
+
+
+def closed(level: str, pid: str = "p1", days: int = 2) -> ResolvedItem:
+    high_level = level == "high"
+    return ResolvedItem(
+        key=AlertKey(
+            project_id=pid,
+            repo_id="r1" if high_level else "*",
+            action_key="audit.security" if high_level else "*",
+            level=level,
+        ),
+        resolved_at=POLL - timedelta(days=days),
+    )
+
+
+def full_input(**more: object) -> DigestInput:
+    base: dict[str, object] = {
+        "last_poll_at": POLL,
+        "max_items": 50,
+        "high": (high(2, pid="h1", age=16, name="Acme <web>"),),
+        "recurring_runs": {("h1", "r1", "audit.security"): 3},
+        "stale": (stale("Beta", pid="s1", age=21), never_ran("Nova", pid="n1", repos=1)),
+        "low_scores": (low_score(),),
+        "tooling_gaps": (gap(None), gap(datetime(2026, 9, 1, 12, 0, tzinfo=UTC), pid="p6")),
+        "resolved": (closed("high"), closed("stale", "p2"), closed("never_ran", "p3")),
+        "project_names": {"p1": "Acme", "p2": "Beta", "p3": ""},
+        "unread_projects": 2,
+    }
+    return DigestInput.model_validate(base | more)
+
+
+def digest_text(inp: DigestInput, language: Language, max_chars: int = DEFAULT_MAX_CHARS) -> str:
+    messages = render_digest(
+        build_digest(inp, language=language), language=language, max_chars=max_chars
+    )
+    assert all(m.audience.value == "group" and m.keys == () for m in messages)
+    return "\n\n".join(m.text for m in messages)
+
+
+def test_full_digest_in_english_is_unchanged() -> None:
+    assert digest_text(full_input(), "en") == "\n".join(
+        [
+            "<b>Guard radar weekly digest</b>",
+            "Last successful Guard poll: 2026-11-18 06:00 UTC.",
+            "Open items: 6.",
+            "2 projects could not be read in that poll.",
+            f"- High: <b>Acme &lt;web&gt;</b>: 2 High findings in {HIGH_WHERE}. "
+            "Seen by the radar since 2026-11-02 (16 days). "
+            "Recurring: High findings in each of the last 3 runs.",
+            "- Stale: <b>Beta</b>: no completed Guard run for 21 days (last: 2026-10-28).",
+            "- Stale: <b>Nova</b>: no completed Guard run found.",
+            "- Low score: <b>Gamma</b>: audit.tests score 40/100 in acme/web (run 2026-11-10).",
+            "- Tooling gap: <b>Delta</b>: no completed audit.dead-code run in the last 60 days "
+            "in acme/lib (none seen).",
+            "- Tooling gap: <b>Delta</b>: no completed audit.dead-code run in the last 60 days "
+            "in acme/lib (last run: 2026-09-01).",
+            "Resolved since the last digest (3):",
+            "- <b>Acme</b>: High findings in audit.security are closed.",
+            "- <b>Beta</b>: no longer stale.",
+            "- <b>(unnamed project)</b>: now has completed Guard runs.",
+        ]
+    )
+
+
+def test_full_digest_in_russian() -> None:
+    assert digest_text(full_input(), "ru") == "\n".join(
+        [
+            "<b>Еженедельный дайджест Guard radar</b>",
+            "Последний успешный опрос Guard: 2026-11-18 06:00 UTC.",
+            "Открытых пунктов: 6.",
+            "В этом опросе не удалось прочитать: 2 проекта.",
+            f"- Высокая: <b>Acme &lt;web&gt;</b>: 2 находки высокой серьёзности в {HIGH_WHERE}. "
+            "Радар видит с 2026-11-02 (16 дней). "
+            "Повторяется: находки высокой серьёзности в каждом из последних 3 запусков.",
+            "- Устарело: <b>Beta</b>: нет завершённых запусков Guard уже 21 день "
+            "(последний: 2026-10-28).",
+            "- Устарело: <b>Nova</b>: завершённых запусков Guard не найдено.",
+            "- Низкий балл: <b>Gamma</b>: audit.tests: оценка 40/100 в acme/web "
+            "(запуск 2026-11-10).",
+            "- Нет проверки: <b>Delta</b>: нет завершённых запусков audit.dead-code "
+            "за последние 60 дней в acme/lib (запусков не видно).",
+            "- Нет проверки: <b>Delta</b>: нет завершённых запусков audit.dead-code "
+            "за последние 60 дней в acme/lib (последний запуск: 2026-09-01).",
+            "Закрыто с прошлого дайджеста (3):",
+            "- <b>Acme</b>: находки высокой серьёзности в audit.security закрыты.",
+            "- <b>Beta</b>: проверки больше не устарели.",
+            "- <b>(проект без названия)</b>: появились завершённые запуски Guard.",
+        ]
+    )
+
+
+@pytest.mark.parametrize(
+    ("hidden", "english", "russian"),
+    [
+        (1, "+1 more open item not shown.", "Не показано ещё: 1 открытый пункт."),
+        (2, "+2 more open items not shown.", "Не показано ещё: 2 открытых пункта."),
+        (5, "+5 more open items not shown.", "Не показано ещё: 5 открытых пунктов."),
+        (11, "+11 more open items not shown.", "Не показано ещё: 11 открытых пунктов."),
+        (21, "+21 more open items not shown.", "Не показано ещё: 21 открытый пункт."),
+        (22, "+22 more open items not shown.", "Не показано ещё: 22 открытых пункта."),
+    ],
+)
+def test_digest_more_line_plurals(hidden: int, english: str, russian: str) -> None:
+    stale_alerts = tuple(stale(f"S{i}", pid=f"s{i}", age=10 + i) for i in range(hidden + 2))
+    inp = full_input(
+        max_items=2, high=(), stale=stale_alerts, low_scores=(), tooling_gaps=(), resolved=()
+    )
+    assert english in digest_text(inp, "en").split("\n")
+    assert russian in digest_text(inp, "ru").split("\n")
+
+
+@pytest.mark.parametrize(
+    ("unread", "english", "russian"),
+    [
+        (1, "1 project", "1 проект"),
+        (2, "2 projects", "2 проекта"),
+        (5, "5 projects", "5 проектов"),
+        (21, "21 projects", "21 проект"),
+    ],
+)
+def test_digest_unread_note_plurals(unread: int, english: str, russian: str) -> None:
+    inp = full_input(unread_projects=unread)
+    assert f"{english} could not be read in that poll." in digest_text(inp, "en").split("\n")
+    assert f"В этом опросе не удалось прочитать: {russian}." in digest_text(inp, "ru").split("\n")
+
+
+def test_digest_resolved_overflow_line() -> None:
+    items = tuple(closed("stale", f"p{i}", days=i + 1) for i in range(8))
+    inp = full_input(resolved=items, project_names={})
+    assert "+3 more resolved." in digest_text(inp, "en").split("\n")
+    assert "Закрыто ещё: 3." in digest_text(inp, "ru").split("\n")
+    assert "Закрыто с прошлого дайджеста (8):" in digest_text(inp, "ru")
+
+
+EN_TITLE = "<b>Guard radar weekly digest</b>"
+RU_TITLE = "<b>Еженедельный дайджест Guard radar</b>"
+EN_POLL = "Last successful Guard poll: 2026-11-18 06:00 UTC."
+RU_POLL = "Последний успешный опрос Guard: 2026-11-18 06:00 UTC."
+
+
+def test_digest_all_clear() -> None:
+    inp = DigestInput(last_poll_at=POLL, max_items=10)
+    assert digest_text(inp, "en") == f"{EN_TITLE}: nothing open. {EN_POLL}"
+    assert digest_text(inp, "ru") == f"{RU_TITLE}: ничего не открыто. {RU_POLL}"
+
+
+def test_digest_all_clear_with_unread_projects() -> None:
+    inp = DigestInput(last_poll_at=POLL, max_items=10, unread_projects=3)
+    assert digest_text(inp, "en") == (
+        f"{EN_TITLE}: nothing open in the projects read. {EN_POLL}\n"
+        "3 projects could not be read in that poll."
+    )
+    assert digest_text(inp, "ru") == (
+        f"{RU_TITLE}: ничего не открыто в прочитанных проектах. {RU_POLL}\n"
+        "В этом опросе не удалось прочитать: 3 проекта."
+    )
+
+
+def test_digest_has_the_same_items_in_the_same_order_in_both_languages() -> None:
+    inp = full_input()
+    english = build_digest(inp)
+    russian = build_digest(inp, language="ru")
+    assert [i.tier for i in english.items] == [i.tier for i in russian.items]
+    assert (english.hidden_items, english.total_items) == (
+        russian.hidden_items,
+        russian.total_items,
+    )
+    assert english.resolved_total == russian.resolved_total
+
+
+def test_digest_split_with_cyrillic_names_is_numbered_and_whole() -> None:
+    names = [("Проект & <тест> " + str(i)).ljust(80, "Ж") for i in range(40)]
+    inp = full_input(
+        high=(),
+        recurring_runs={},
+        stale=tuple(stale(n, pid=f"s{i:02d}", age=10 + i) for i, n in enumerate(names)),
+        low_scores=(),
+        tooling_gaps=(),
+        resolved=(),
+        unread_projects=0,
+    )
+    digest = build_digest(inp, language="ru")
+    messages = render_digest(digest, max_chars=MIN_MAX_CHARS, language="ru")
+    assert len(messages) > 1
+    for number, message in enumerate(messages, start=1):
+        assert message.text.startswith(
+            f"<b>Еженедельный дайджест Guard radar ({number}/{len(messages)})</b>\n"
+        )
+        assert telegram_length(message.text) <= MIN_MAX_CHARS
+        assert find_secret(message.text, []) is None
+        assert not re.search(r"<(?!/?b>)", message.text)
+    body = [line for m in messages for line in m.text.split("\n")[2:]]
+    assert sum(line.startswith("- Устарело: <b>Проект &amp; &lt;тест&gt;") for line in body) == 40
