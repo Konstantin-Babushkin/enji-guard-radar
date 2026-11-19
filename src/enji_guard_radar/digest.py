@@ -82,6 +82,8 @@ class Digest(BaseModel):
     resolved_total: int
     unread_projects: int
     last_poll_at: AwareDatetime
+    # The language its lines were built in; `render_digest` writes the rest of the text in it.
+    language: Language = DEFAULT_LANGUAGE
 
 
 def _day(moment: datetime) -> str:
@@ -260,6 +262,7 @@ def build_digest(inp: DigestInput, *, language: Language = DEFAULT_LANGUAGE) -> 
         resolved_total=len(resolved),
         unread_projects=inp.unread_projects,
         last_poll_at=inp.last_poll_at,
+        language=language,
     )
 
 
@@ -305,9 +308,13 @@ def _header(digest: Digest, index: int, count: int, language: Language) -> str:
 
 
 def render_digest(
-    digest: Digest, *, max_chars: int = DEFAULT_MAX_CHARS, language: Language = DEFAULT_LANGUAGE
+    digest: Digest, *, max_chars: int = DEFAULT_MAX_CHARS, language: Language | None = None
 ) -> list[OutboundMessage]:
-    """The digest as group messages: one when it fits, else split between lines into (k/n)."""
+    """The digest as group messages: one when it fits, else split between lines into (k/n).
+
+    The text is in the language the digest was built in unless `language` says otherwise.
+    """
+    language = digest.language if language is None else language
     if not MIN_MAX_CHARS <= max_chars <= TELEGRAM_MAX_CHARS:
         message = f"max_chars must be between {MIN_MAX_CHARS} and {TELEGRAM_MAX_CHARS}"
         raise ValueError(message)

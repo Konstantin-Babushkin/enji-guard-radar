@@ -47,6 +47,7 @@ from enji_guard_radar.settings import (
 from enji_guard_radar.stale import StaleVerdict
 from enji_guard_radar.state_store import DryRunStateStore, FileStateStore
 from enji_guard_radar.telegram import HttpTransport, TelegramNotifier, UrllibTransport
+from enji_guard_radar.texts import DEFAULT_LANGUAGE, Language
 
 logger = logging.getLogger(__name__)
 
@@ -103,14 +104,16 @@ def _follow_ups_line(report: RunReport) -> str | None:
     return f"follow-ups: {reminders} reminder message(s), digest {report.digest.value}"
 
 
-def format_dry_run_report(report: RunReport, printed: Sequence[OutboundMessage]) -> str:
+def format_dry_run_report(
+    report: RunReport, printed: Sequence[OutboundMessage], *, language: Language = DEFAULT_LANGUAGE
+) -> str:
     now = report.now.astimezone(UTC).isoformat().replace("+00:00", "Z")
     lines = [f"DRY RUN at {now}: nothing is sent and no state is written."]
     for message in printed:
         lines += [f"--- would send to {message.audience.value} ---", message.text, ""]
     lines.append(f"--- baseline, not sent ({len(report.baselined)}) ---")
     for alert in report.baselined:
-        lines += [render_alert(alert), ""]
+        lines += [render_alert(alert, language=language), ""]
     unchecked = [r for r in report.results if r.status is not ProjectStatus.EVALUATED]
     lines.append(f"--- not checked ({len(unchecked)}) ---")
     lines += [f"{r.project_name}: {r.note}" for r in unchecked]
@@ -322,7 +325,8 @@ def _run(
     )
     logger.info("%s", cost_line)
     if args.dry_run:
-        text = format_dry_run_report(report, printer.messages) + cost_line + "\n"
+        dry_run = format_dry_run_report(report, printer.messages, language=config.messages.language)
+        text = dry_run + cost_line + "\n"
     else:
         text = format_live_summary(report)
         follow_ups = _follow_ups_line(report)

@@ -303,7 +303,11 @@ def _run_locked(deps: Deps, now: datetime) -> RunReport:
     )
     deps.store.save(rec.state)
 
-    messages = render_messages(rec.to_send, collapse_above=deps.config.alerts.collapse_above)
+    messages = render_messages(
+        rec.to_send,
+        collapse_above=deps.config.alerts.collapse_above,
+        language=deps.config.messages.language,
+    )
     actions: list[_OperatorAction] = []
     alert_delivery = _deliver(
         deps,
@@ -426,7 +430,7 @@ def _due_reminders(
         every_days=deps.config.reminders.every_days,
         now=now,
     )
-    return render_reminders(due)
+    return render_reminders(due, language=deps.config.messages.language)
 
 
 @dataclass(frozen=True)
@@ -517,7 +521,8 @@ def _digest_step(
         logger.info("digest not attempted: delivery stopped on a fatal send error")
         return _DigestResult(state, DigestStatus.DEFERRED)
 
-    digest = build_digest(_digest_input(deps, polled, state, now))
+    language = deps.config.messages.language
+    digest = build_digest(_digest_input(deps, polled, state, now), language=language)
     messages = render_digest(digest)
     logger.info(
         "digest due: planned %s, %d open item(s), %d resolved, %d message(s)",
@@ -577,7 +582,7 @@ def _send_ops_action(
     if deps.ops_notifier is None:
         logger.error("ops chat not configured (%s): cannot report the Guard %s", OPS_CHAT_ENV, what)
         return state, 0
-    outcome = deps.ops_notifier.send(ops_message(action))
+    outcome = deps.ops_notifier.send(ops_message(action, language=deps.config.messages.language))
     if not isinstance(outcome, Delivered):
         logger.warning(
             "ops message about the Guard %s not delivered (%s); retried next run",
@@ -598,7 +603,10 @@ def _halt(deps: Deps, now: datetime, load: Corrupt) -> RunReport:
         load.backup_valid,
     )
     if deps.ops_notifier is not None:
-        outcome = deps.ops_notifier.send(ops_message_for_halt(load.reason, load.backup_valid))
+        message = ops_message_for_halt(
+            load.reason, load.backup_valid, language=deps.config.messages.language
+        )
+        outcome = deps.ops_notifier.send(message)
         logger.info("ops message about the corrupt state: %s", type(outcome).__name__)
     return _empty_report(now, RunOutcome.HALTED, halt_reason=load.reason)
 
@@ -668,7 +676,9 @@ def _notify_ops_of_actions(
     if not actions or deps.ops_notifier is None or unauthorized:
         return
     message = ops_message_for_actions(
-        tuple(a.text for a in actions), notices=tuple(a.notice for a in actions)
+        tuple(a.text for a in actions),
+        notices=tuple(a.notice for a in actions),
+        language=deps.config.messages.language,
     )
     outcome = deps.ops_notifier.send(message)
     logger.info("ops message about operator actions: %s", type(outcome).__name__)
