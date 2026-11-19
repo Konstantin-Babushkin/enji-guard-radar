@@ -1,15 +1,21 @@
 """Boundary contracts: Guard tools, notifier, clock. Implemented by shell modules."""
 
+from __future__ import annotations
+
 from collections.abc import Callable, Mapping
 from datetime import datetime
 from enum import StrEnum
 from pathlib import Path
-from typing import Protocol
+from typing import TYPE_CHECKING, Protocol
 
 from pydantic import BaseModel, ConfigDict
 
 from enji_guard_radar.model import OutboundMessage
 from enji_guard_radar.texts import ActionNotice
+
+if TYPE_CHECKING:
+    # Type-only: loading ports must not load triage (secret_guard -> ports, titles -> secret_guard).
+    from enji_guard_radar.triage import TriageOutcome, TriageRequest
 
 
 class GuardFailure(StrEnum):
@@ -75,7 +81,7 @@ class GuardSession(Protocol):
         """How many results arrived in each shape so far (structured, text_json, wrapped)."""
         ...
 
-    def __enter__(self) -> "GuardSession": ...
+    def __enter__(self) -> GuardSession: ...
 
     def __exit__(self, *exc: object) -> None: ...
 
@@ -123,3 +129,12 @@ Clock = Callable[[], datetime]
 
 class Notifier(Protocol):
     def send(self, message: OutboundMessage) -> SendOutcome: ...
+
+
+class Triager(Protocol):
+    def triage(self, request: TriageRequest) -> TriageOutcome:
+        """Never raises: every failure comes back as a TriageFailed with a reason.
+
+        No retry inside a run; the next run tries again.
+        """
+        ...
