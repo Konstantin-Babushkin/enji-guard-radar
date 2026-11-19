@@ -50,6 +50,7 @@ _ENUM: Final = re.compile(r"[a-z_]{1,20}")
 _ACTION_KEY: Final = re.compile(r"audit\.[a-z0-9-]{1,40}")
 _FINDING_ID: Final = re.compile(r"F-\d+")
 _REPORT_GROUP: Final = re.compile(r"[a-z-]{1,30}")
+_SCAFFOLD_FILES: Final = frozenset({"tools.json", "calls.json"})
 _SCORE: Final = re.compile(r"\*\*Score: *(\d{1,3}) */ *100\*\*")
 _CONFIDENCE_WORD: Final = re.compile(r"Confidence:\**\s*([A-Za-z]{1,20})")
 _ID: Final = re.compile(r"`([^`]+)`")
@@ -708,11 +709,58 @@ def taint_strings(recordings: list[Recording], *, kept: Iterable[str]) -> frozen
     )
 
 
+def _structure_words(texts: Mapping[str, str]) -> frozenset[str]:
+    """Words the output itself is built from: JSON keys, tool metadata and error entries.
+
+    Report prose may quote such words (`task_id`, `next_cursor`, a path like `/data`); they are
+    scaffolding, not Guard data, so a prose token equal to one of them is not a leak.
+    """
+    words: set[str] = set()
+
+    def walk(node: object, *, strings: bool) -> None:
+        if isinstance(node, Mapping):
+            for key, value in node.items():
+                words.add(str(key).casefold())
+                if key == "report_url" and isinstance(value, str):
+                    words.update(f"/{part}" for part in urlsplit(value).path.split("/") if part)
+                walk(value, strings=strings)
+        elif isinstance(node, list):
+            for item in node:
+                walk(item, strings=strings)
+        elif isinstance(node, str) and strings:
+            words.update(part.casefold() for part in re.split(r"[\s,;()\[\]]+", node) if part)
+
+    for name, text in texts.items():
+        try:
+            document = json.loads(text)
+        except ValueError:
+            continue
+        walk(document, strings=name in _SCAFFOLD_FILES)
+    return frozenset(words)
+
+
+def _is_structure(value: str, words: frozenset[str]) -> bool:
+    folded = value.casefold().strip("\"':,.")
+    return folded in words or any(
+        f"/{word}" == folded or f"_{word}" == folded for word in words if word.isalpha()
+    )
+
+
 def find_taint(texts: Mapping[str, str], taint: Iterable[str]) -> list[str]:
     """Problems, one per file and tainted string; a tainted string is never shown in full."""
     problems: list[str] = []
-    lowered = {name: text.casefold() for name, text in texts.items()}
+    words = _structure_words(texts)
+    long_words = sorted((w for w in words if len(w) >= 4), key=len, reverse=True)
+    scaffold = re.compile("|".join(re.escape(w) for w in long_words)) if long_words else None
+    # A tainted string that only occurs inside scaffolding words (`_repo` in `list_repositories`)
+    # is not a leak: blank those words out before looking for it.
+    lowered = {
+        name: scaffold.sub(" ", text.casefold()) if scaffold else text.casefold()
+        for name, text in texts.items()
+    }
     for value in sorted(taint):
+        if _is_structure(value, words):
+            continue
         needle = value.casefold()
         for name in sorted(lowered):
             if needle in lowered[name]:

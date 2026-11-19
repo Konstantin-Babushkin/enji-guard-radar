@@ -608,6 +608,19 @@ def test_find_taint_is_case_insensitive_and_never_shows_the_whole_string() -> No
     assert find_taint({"b.json": "clean"}, {"realcorp"}) == []
 
 
+def test_find_taint_ignores_scaffolding_words_but_not_data_values() -> None:
+    texts = {
+        "list_audit_runs_1.json": '{"runs": [{"task_id": "x", "next_cursor": null}]}',
+        "tools.json": '{"tools": {"run_audit": {"arguments": ["project_id", "Idempotency"]}}}',
+        "calls.json": '{"calls": [{"error": "recorded failure"}]}',
+    }
+    # prose tokens that quote field names, an error key or a tool word are scaffolding
+    assert find_taint(texts, {"task_id", "next_cursor", 'error":', "Idempotency"}) == []
+    # a real name that sits in a data value is still a leak
+    leaky = {**texts, "list_repositories_1.json": '{"name": "realcorp-payments"}'}
+    assert len(find_taint(leaky, {"realcorp-payments", "task_id"})) == 1
+
+
 # --- check 3: leak scanner ---------------------------------------------------------------------
 
 LEAKS = [
