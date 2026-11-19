@@ -95,96 +95,51 @@ def keys_of(messages: list[OutboundMessage]) -> list[AlertKey]:
 ALERT_TABLE = [
     pytest.param(
         stale(age=1),
-        "Stale Guard scans: <b>Project B</b>\n"
-        "No completed Guard run for 1 day (last: 2026-11-17).\n"
-        "Severity: medium.",
-        "Устаревшие проверки Guard: <b>Project B</b>\n"
-        "Нет завершённых запусков Guard уже 1 день (последний: 2026-11-17).\n"
-        "Серьёзность: средняя.",
+        "🟡 <b>Project B</b> · no scan 1d",
+        "🟡 <b>Project B</b> · нет проверок 1 д",
         id="stale-1-day",
     ),
     pytest.param(
         stale(age=22),
-        "Stale Guard scans: <b>Project B</b>\n"
-        "No completed Guard run for 22 days (last: 2026-10-27).\n"
-        "Severity: medium.",
-        "Устаревшие проверки Guard: <b>Project B</b>\n"
-        "Нет завершённых запусков Guard уже 22 дня (последний: 2026-10-27).\n"
-        "Серьёзность: средняя.",
+        "🟡 <b>Project B</b> · no scan 22d",
+        "🟡 <b>Project B</b> · нет проверок 22 д",
         id="stale-22-days",
     ),
     pytest.param(
         never_ran(repos=0),
-        "No Guard runs: <b>Project C</b>\nIt has no repositories in Guard.\nSeverity: medium.",
-        "Нет запусков Guard: <b>Project C</b>\n"
-        "В Guard у проекта нет репозиториев.\n"
-        "Серьёзность: средняя.",
+        "🟡 <b>Project C</b> · no scan yet",
+        "🟡 <b>Project C</b> · проверок ещё не было",
         id="never-ran-no-repos",
     ),
     pytest.param(
-        never_ran(repos=1),
-        "No Guard runs: <b>Project C</b>\n"
-        "No completed Guard run found in its 1 repository.\n"
-        "Severity: medium.",
-        "Нет запусков Guard: <b>Project C</b>\n"
-        "Завершённых запусков Guard не найдено в 1 репозитории проекта.\n"
-        "Серьёзность: средняя.",
-        id="never-ran-1-repo",
-    ),
-    pytest.param(
         never_ran(repos=5),
-        "No Guard runs: <b>Project C</b>\n"
-        "No completed Guard run found in its 5 repositories.\n"
-        "Severity: medium.",
-        "Нет запусков Guard: <b>Project C</b>\n"
-        "Завершённых запусков Guard не найдено в 5 репозиториях проекта.\n"
-        "Серьёзность: средняя.",
+        "🟡 <b>Project C</b> · no scan yet",
+        "🟡 <b>Project C</b> · проверок ещё не было",
         id="never-ran-5-repos",
     ),
     pytest.param(
         high(1),
-        f"High findings: <b>Project A</b>\n1 High finding in {HIGH_WHERE}.\n"
-        "Seen by the radar since 2026-11-10 (8 days).\nSeverity: high.",
-        f"Находки высокой серьёзности: <b>Project A</b>\n"
-        f"1 находка высокой серьёзности в {HIGH_WHERE}.\n"
-        "Радар видит с 2026-11-10 (8 дней).\nСерьёзность: высокая.",
-        id="high-1",
-    ),
-    pytest.param(
-        high(2),
-        f"High findings: <b>Project A</b>\n2 High findings in {HIGH_WHERE}.\n"
-        "Seen by the radar since 2026-11-10 (8 days).\nSeverity: high.",
-        f"Находки высокой серьёзности: <b>Project A</b>\n"
-        f"2 находки высокой серьёзности в {HIGH_WHERE}.\n"
-        "Радар видит с 2026-11-10 (8 дней).\nСерьёзность: высокая.",
-        id="high-2",
+        "🔴 <b>Project A</b> · security High 0→1 · 8d",
+        "🔴 <b>Project A</b> · security высокие 0→1 · 8 д",
+        id="high-new-series",
     ),
     pytest.param(
         high(5),
-        f"High findings: <b>Project A</b>\n5 High findings in {HIGH_WHERE}.\n"
-        "Seen by the radar since 2026-11-10 (8 days).\nSeverity: high.",
-        f"Находки высокой серьёзности: <b>Project A</b>\n"
-        f"5 находок высокой серьёзности в {HIGH_WHERE}.\n"
-        "Радар видит с 2026-11-10 (8 дней).\nСерьёзность: высокая.",
+        "🔴 <b>Project A</b> · security High 0→5 · 8d",
+        "🔴 <b>Project A</b> · security высокие 0→5 · 8 д",
         id="high-5",
     ),
     pytest.param(
         high(3, previous=1),
-        f"High findings: <b>Project A</b>\nHigh findings rose from 1 to 3 in {HIGH_WHERE}.\n"
-        "Seen by the radar since 2026-11-10 (8 days).\nSeverity: high.",
-        f"Находки высокой серьёзности: <b>Project A</b>\n"
-        f"Число находок высокой серьёзности выросло с 1 до 3 в {HIGH_WHERE}.\n"
-        "Радар видит с 2026-11-10 (8 дней).\nСерьёзность: высокая.",
+        "🔴 <b>Project A</b> · security High 1→3 · 8d",
+        "🔴 <b>Project A</b> · security высокие 1→3 · 8 д",
         id="high-rise",
     ),
     pytest.param(
         high(21, aged=True, age=21),
-        f"High findings: <b>Project A</b>\n21 High findings in {HIGH_WHERE}.\n"
-        "Long-standing: seen by the radar since 2026-10-28 (21 days).\nSeverity: high.",
-        f"Находки высокой серьёзности: <b>Project A</b>\n"
-        f"21 находка высокой серьёзности в {HIGH_WHERE}.\n"
-        "Давняя проблема: радар видит её с 2026-10-28 (21 день).\nСерьёзность: высокая.",
-        id="high-long-standing",
+        "🔴 <b>Project A</b> · security High 0→21 · 21d",
+        "🔴 <b>Project A</b> · security высокие 0→21 · 21 д",
+        id="high-aged-looks-the-same",
     ),
 ]
 
@@ -199,27 +154,26 @@ def test_render_alert_in_both_languages(alert: Alert, english: str, russian: str
 SUMMARY_TABLE = [
     pytest.param(
         stale(age=5),
-        "- <b>Project B</b>: no completed Guard run for 5 days (medium)",
-        "- <b>Project B</b>: нет завершённых запусков Guard уже 5 дней (средняя)",
+        "🟡 <b>Project B</b> · no scan 5d",
+        "🟡 <b>Project B</b> · нет проверок 5 д",
         id="stale",
     ),
     pytest.param(
         never_ran(repos=2),
-        "- <b>Project C</b>: no completed Guard run found (medium)",
-        "- <b>Project C</b>: завершённых запусков Guard не найдено (средняя)",
+        "🟡 <b>Project C</b> · no scan yet",
+        "🟡 <b>Project C</b> · проверок ещё не было",
         id="never-ran",
     ),
     pytest.param(
         high(3),
-        f"- <b>Project A</b>: 3 High in {HIGH_WHERE} (high)",
-        f"- <b>Project A</b>: находок высокой серьёзности: 3 в {HIGH_WHERE} (высокая)",
+        "🔴 <b>Project A</b> · security High 0→3 · 8d",
+        "🔴 <b>Project A</b> · security высокие 0→3 · 8 д",
         id="high",
     ),
     pytest.param(
         high(3, previous=1),
-        f"- <b>Project A</b>: High rose from 1 to 3 in {HIGH_WHERE} (high)",
-        "- <b>Project A</b>: число находок высокой серьёзности выросло "
-        f"с 1 до 3 в {HIGH_WHERE} (высокая)",
+        "🔴 <b>Project A</b> · security High 1→3 · 8d",
+        "🔴 <b>Project A</b> · security высокие 1→3 · 8 д",
         id="high-rise",
     ),
 ]
@@ -234,16 +188,16 @@ def test_render_summary_item_in_both_languages(alert: Alert, english: str, russi
 @pytest.mark.parametrize(
     ("total", "index", "count", "english", "russian"),
     [
-        (5, 1, 1, "5 problems need attention", "требуется внимание — 5 проблем"),
-        (21, 2, 3, "21 problems need attention (2/3)", "требуется внимание — 21 проблема (2/3)"),
-        (22, 1, 2, "22 problems need attention (1/2)", "требуется внимание — 22 проблемы (1/2)"),
+        (5, 1, 1, "Radar · 5 need attention", "Радар · требуют внимания: 5"),
+        (21, 2, 3, "Radar · 21 need attention (2/3)", "Радар · требуют внимания: 21 (2/3)"),
+        (22, 1, 2, "Radar · 22 need attention (1/2)", "Радар · требуют внимания: 22 (1/2)"),
     ],
 )
 def test_summary_header_in_both_languages(
     total: int, index: int, count: int, english: str, russian: str
 ) -> None:
-    assert summary_header(total, index, count) == f"Guard radar: {english}"
-    assert summary_header(total, index, count, language="ru") == f"Guard radar: {russian}"
+    assert summary_header(total, index, count) == english
+    assert summary_header(total, index, count, language="ru") == russian
 
 
 @pytest.mark.parametrize(
@@ -284,14 +238,6 @@ def test_high_findings_text_in_russian(count: int, russian: str) -> None:
     )
 
 
-@pytest.mark.parametrize(
-    ("repos", "russian"),
-    [(1, "1 репозитории"), (2, "2 репозиториях"), (21, "21 репозитории"), (25, "25 репозиториях")],
-)
-def test_repositories_use_the_prepositional_case(repos: int, russian: str) -> None:
-    assert russian in render_alert(never_ran(repos=repos), language="ru")
-
-
 # --- names ---
 
 
@@ -313,7 +259,8 @@ def test_html_in_names_is_escaped_once_in_russian() -> None:
         assert 'Проект &lt;b&gt;&amp; "Ко"' in text
         assert "&amp;amp;" not in text
         assert not re.search(r"<(?!/?b>)", text)
-    assert "acme/&lt;web&gt;&amp;co" in render_alert(alert, language="ru")
+    shown = render_alert(alert, language="ru", show_repo=True)
+    assert "security (acme/&lt;web&gt;&amp;co)" in shown
 
 
 # --- ordering and the same set of alerts ---
@@ -354,9 +301,7 @@ def test_summary_is_split_with_numbered_russian_headers() -> None:
     parts = render_messages(alerts, collapse_above=3, max_chars=MIN_MAX_CHARS, language="ru")
     assert len(parts) > 2
     for number, part in enumerate(parts, start=1):
-        assert part.text.startswith(
-            f"Guard radar: требуется внимание — 60 проблем ({number}/{len(parts)})\n"
-        )
+        assert part.text.startswith(f"Радар · требуют внимания: 60 ({number}/{len(parts)})\n")
         assert telegram_length(part.text) <= MIN_MAX_CHARS
         assert len(part.text.split("\n")) - 1 == len(part.keys)
     keys = keys_of(parts)
@@ -389,7 +334,7 @@ def test_cyrillic_names_split_between_items_within_the_limit(
     for part in parts:  # whole items only: one line per key, each ending in its closing bracket
         lines = part.text.split("\n")[1:]
         assert len(lines) == len(part.keys)
-        assert all(line.startswith("- <b>") and line.endswith(")") for line in lines)
+        assert all(re.fullmatch(r"🟡 <b>.+</b> · .+ \d+ ?[dд]", line) for line in lines)
         assert "&lt;тест&gt;" in part.text
         assert "<тест>" not in part.text
 
@@ -407,8 +352,8 @@ def test_russian_worst_case_item_fits_the_minimum_message_size(name: str) -> Non
         high(99999, previous=99998, aged=True, age=36500, name=name, repo=name),
     ]
     for alert in alerts:
-        assert telegram_length(render_alert(alert, language="ru")) <= MIN_MAX_CHARS
-        item = render_summary_item(alert, language="ru")
+        assert telegram_length(render_alert(alert, language="ru", show_repo=True)) <= MIN_MAX_CHARS
+        item = render_summary_item(alert, language="ru", show_repo=True)
         parts = render_messages(
             [alert, *[stale("o", pid=f"o{i}") for i in range(3)]],
             collapse_above=3,

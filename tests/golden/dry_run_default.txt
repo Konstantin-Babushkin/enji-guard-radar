@@ -17,22 +17,13 @@ Open items: 18.
 +8 more open items not shown.
 
 --- baseline, not sent (4) ---
-High findings: <b>Project A &lt;core&gt; &amp; "tools"</b>
-1 High finding in audit.security (acme/service-a).
-Seen by the radar since 2026-11-09 (8 days).
-Severity: high.
+🔴 <b>Project A &lt;core&gt; &amp; "tools"</b> · security High 0→1 · 8d
 
-Stale Guard scans: <b>Project B</b>
-No completed Guard run for 28 days (last: 2026-10-20).
-Severity: medium.
+🟡 <b>Project B</b> · no scan 28d
 
-No Guard runs: <b>Project C (no repositories)</b>
-It has no repositories in Guard.
-Severity: medium.
+🟡 <b>Project C (no repositories)</b> · no scan yet
 
-Stale Guard scans: <b>Project E (paused in config)</b>
-No completed Guard run for 105 days (last: 2026-08-04).
-Severity: medium.
+🟡 <b>Project E (paused in config)</b> · no scan 105d
 
 --- not checked (1) ---
 Project D (Guard unreachable): Guard data unavailable (list_repositories failed: simulated Guard outage)

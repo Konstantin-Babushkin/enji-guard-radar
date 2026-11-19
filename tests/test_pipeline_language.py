@@ -94,13 +94,12 @@ def test_alerts_and_reminders_are_the_same_set_in_both_languages(tmp_path: Path)
     assert [m.audience for m in english] == [m.audience for m in russian]
     assert russian_state == english_state  # the language is not part of the state
 
-    assert english[0].text.startswith("High findings: <b>Proj</b>")
-    assert "2 High findings in audit.security (acme/svc)." in english[0].text
+    assert english[0].text == "🔴 <b>Proj</b> · security High 0→2 · 0d"
+    assert english[1].text == "🔴 <b>Proj</b> · security High 2→4 · 1d"
     assert english[2].text.startswith("<b>Reminder: High findings are still open</b>")
 
-    assert russian[0].text.startswith("Находки высокой серьёзности: <b>Proj</b>")
-    assert "2 находки высокой серьёзности в audit.security (acme/svc)." in russian[0].text
-    assert "Число находок высокой серьёзности выросло с 2 до 4" in russian[1].text
+    assert russian[0].text == "🔴 <b>Proj</b> · security высокие 0→2 · 0 д"
+    assert russian[1].text == "🔴 <b>Proj</b> · security высокие 2→4 · 1 д"
     assert russian[2].text.startswith("<b>Напоминание: находки высокой серьёзности")
     assert "4 находки высокой серьёзности в audit.security (acme/svc)." in russian[2].text
     assert not any(CYRILLIC.search(m.text) for m in english)
@@ -210,7 +209,7 @@ def test_dry_run_prints_the_same_russian_text_and_writes_nothing(tmp_path: Path)
     live = FakeTransport([ok_response(1)])
     assert run_live(tmp_path, "live-state", "2026-11-18T06:00:00Z", "ru", live) == 0
     assert text_of(live.requests[0]) in printed  # dry-run shows exactly what a live send sends
-    assert 'Находки высокой серьёзности: <b>Project A &lt;core&gt; &amp; "tools"</b>' in printed
+    assert '🔴 <b>Project A &lt;core&gt; &amp; "tools"</b> · security высокие 0→1 · 8 д' in printed
     assert "--- would send to group ---" in printed
     assert "baseline, not sent (3)" in printed
     assert not (tmp_path / "state").exists()

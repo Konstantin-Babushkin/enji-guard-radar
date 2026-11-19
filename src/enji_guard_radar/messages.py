@@ -5,10 +5,9 @@ import logging
 import re
 import unicodedata
 from collections.abc import Sequence
-from datetime import UTC
 
 from enji_guard_radar.model import SEVERITY_ORDER, Alert, AlertKind, OutboundMessage
-from enji_guard_radar.texts import DEFAULT_LANGUAGE, Language, counted, severity_word, text
+from enji_guard_radar.texts import DEFAULT_LANGUAGE, Language, counted, text
 
 logger = logging.getLogger(__name__)
 
@@ -22,7 +21,6 @@ MIN_MAX_CHARS = 1000
 MAX_NAME_CHARS = 80
 # The English texts other modules and tests name; the catalog holds them for every language.
 UNNAMED_PROJECT = text("en", "name.unnamed")
-LONG_STANDING_PREFIX = "Long-standing: "
 
 
 def escape(text: str) -> str:
@@ -73,103 +71,104 @@ def _high_count(alert: Alert) -> int:
     return alert.count
 
 
-def _is_rise(alert: Alert) -> bool:
-    return alert.previous_count is not None and _high_count(alert) > alert.previous_count
-
-
 def high_findings_text(count: int, *, language: Language = DEFAULT_LANGUAGE) -> str:
     return counted(language, "noun.finding", count)
 
 
-def _render_high(alert: Alert, name: str, severity: str, language: Language) -> list[str]:
-    if alert.seen_since is None or alert.age_days is None:
-        message = "a High alert needs seen_since and age_days"
+def marker(kind: AlertKind, language: Language = DEFAULT_LANGUAGE) -> str:
+    """The colour marker, chosen by code from the alert kind only."""
+    key = "marker.high" if kind is AlertKind.HIGH_FINDINGS else "marker.other"
+    return text(language, key)
+
+
+def audit_short(action_key: str) -> str:
+    """The audit type without its `audit.` prefix, escaped."""
+    return escape(action_key.removeprefix("audit."))
+
+
+def age_text(days: int, language: Language = DEFAULT_LANGUAGE) -> str:
+    return text(language, "alert.age", days=days)
+
+
+def ambiguous_series(alerts: Sequence[Alert]) -> frozenset[tuple[str, str]]:
+    """(project_id, action_key) pairs that more than one repo holds in this set of alerts."""
+    repos: dict[tuple[str, str], set[str]] = {}
+    for alert in alerts:
+        if alert.kind is AlertKind.HIGH_FINDINGS:
+            repos.setdefault((alert.key.project_id, alert.key.action_key), set()).add(
+                alert.key.repo_id
+            )
+    return frozenset(pair for pair, ids in repos.items() if len(ids) > 1)
+
+
+def high_line(
+    alert: Alert, *, language: Language = DEFAULT_LANGUAGE, show_repo: bool, arrow: bool
+) -> str:
+    """One High line. `arrow` shows `High <previous or 0>→<count>`, else `High <count>`."""
+    if alert.age_days is None:
+        message = "a High alert needs age_days"
         raise ValueError(message)
-    where = high_where(alert)
+    if alert.repo_name is None:
+        message = "a High alert needs repo_name"
+        raise ValueError(message)
     count = _high_count(alert)
-    if _is_rise(alert):
-        what = text(
-            language, "alert.high.rise", previous=alert.previous_count, count=count, where=where
-        )
-    else:
-        what = text(
-            language,
-            "alert.high.count",
-            findings=high_findings_text(count, language=language),
-            where=where,
-        )
-    since = alert.seen_since.astimezone(UTC).date().isoformat()
-    seen_key = "alert.high.seen_long" if alert.aged else "alert.high.seen"
-    seen = text(language, seen_key, since=since, days=days_text(alert.age_days, language=language))
-    return [text(language, "alert.high.title", name=name), what, seen, severity]
+    audit = audit_short(alert.key.action_key)
+    if show_repo:
+        repo = escape(clean_name(alert.repo_name))
+        audit = text(language, "alert.where_repo", audit=audit, repo=repo)
+    params = {
+        "marker": marker(alert.kind, language),
+        "name": escape(clean_name(alert.project_name, language=language)),
+        "audit": audit,
+        "count": count,
+        "age": age_text(alert.age_days, language),
+    }
+    if arrow:
+        previous = alert.previous_count or 0
+        return text(language, "alert.high.line", previous=previous, **params)
+    return text(language, "alert.high.line_count", **params)
 
 
-def render_alert(alert: Alert, *, language: Language = DEFAULT_LANGUAGE) -> str:
+def render_alert(
+    alert: Alert, *, language: Language = DEFAULT_LANGUAGE, show_repo: bool = False
+) -> str:
+    """Exactly one line."""
     name = escape(clean_name(alert.project_name, language=language))
-    severity = text(language, "alert.severity", severity=severity_word(language, alert.severity))
     if alert.kind is AlertKind.STALE:
         if alert.age_days is None or alert.last_run_at is None:
             message = "a stale alert needs age_days and last_run_at"
             raise ValueError(message)
-        last = alert.last_run_at.astimezone(UTC).date().isoformat()
-        lines = [
-            text(language, "alert.stale.title", name=name),
-            text(
-                language,
-                "alert.stale.body",
-                days=days_text(alert.age_days, language=language),
-                last=last,
-            ),
-            severity,
-        ]
-    elif alert.kind is AlertKind.NEVER_RAN:
-        if alert.repo_count == 0:
-            detail = text(language, "alert.never_ran.no_repos")
-        else:
-            repos = counted(language, "noun.repository_in", alert.repo_count)
-            detail = text(language, "alert.never_ran.repos", repos=repos)
-        lines = [text(language, "alert.never_ran.title", name=name), detail, severity]
-    elif alert.kind is AlertKind.HIGH_FINDINGS:
-        lines = _render_high(alert, name, severity, language)
-    else:  # a future AlertKind must get its own text, never fall into another one's
-        message = f"unsupported alert kind {alert.kind}"  # type: ignore[unreachable]
-        raise ValueError(message)
-    return "\n".join(lines)
-
-
-def render_summary_item(alert: Alert, *, language: Language = DEFAULT_LANGUAGE) -> str:
-    name = escape(clean_name(alert.project_name, language=language))
-    severity = severity_word(language, alert.severity)
-    if alert.kind is AlertKind.STALE:
-        if alert.age_days is None:
-            message = "a stale alert needs age_days"
-            raise ValueError(message)
-        days = days_text(alert.age_days, language=language)
-        return text(language, "summary.item.stale", name=name, days=days, severity=severity)
-    if alert.kind is AlertKind.HIGH_FINDINGS:
-        where = high_where(alert)
-        count = _high_count(alert)
-        if _is_rise(alert):
-            return text(
-                language,
-                "summary.item.high_rise",
-                name=name,
-                previous=alert.previous_count,
-                count=count,
-                where=where,
-                severity=severity,
-            )
         return text(
-            language, "summary.item.high", name=name, count=count, where=where, severity=severity
+            language,
+            "alert.stale.line",
+            marker=marker(alert.kind, language),
+            name=name,
+            age=age_text(alert.age_days, language),
         )
-    return text(language, "summary.item.never_ran", name=name, severity=severity)
+    if alert.kind is AlertKind.NEVER_RAN:
+        return text(
+            language, "alert.no_scan_yet.line", marker=marker(alert.kind, language), name=name
+        )
+    if alert.kind is AlertKind.HIGH_FINDINGS:
+        if alert.seen_since is None:
+            message = "a High alert needs seen_since"
+            raise ValueError(message)
+        return high_line(alert, language=language, show_repo=show_repo, arrow=True)
+    message = f"unsupported alert kind {alert.kind}"  # type: ignore[unreachable]
+    raise ValueError(message)
+
+
+def render_summary_item(
+    alert: Alert, *, language: Language = DEFAULT_LANGUAGE, show_repo: bool = False
+) -> str:
+    """One shape for single alerts and summary items."""
+    return render_alert(alert, language=language, show_repo=show_repo)
 
 
 def summary_header(
     total: int, index: int, count: int, *, language: Language = DEFAULT_LANGUAGE
 ) -> str:
-    problems = counted(language, "noun.problem", total)
-    header = text(language, "summary.header", problems=problems)
+    header = text(language, "summary.short_header", count=total)
     return f"{header} ({index}/{count})" if count > 1 else header
 
 
@@ -182,6 +181,10 @@ def _sort_key(alert: Alert) -> tuple[int, int, int, str, str]:
         clean_name(alert.project_name).casefold(),
         alert.key.as_text(),
     )
+
+
+def _shows_repo(alert: Alert, ambiguous: frozenset[tuple[str, str]]) -> bool:
+    return (alert.key.project_id, alert.key.action_key) in ambiguous
 
 
 def pack_items(items: Sequence[str], header_units: int, max_chars: int) -> list[list[int]]:
@@ -203,10 +206,16 @@ def pack_items(items: Sequence[str], header_units: int, max_chars: int) -> list[
 
 
 def _summary_messages(
-    ordered: Sequence[Alert], max_chars: int, language: Language
+    ordered: Sequence[Alert],
+    max_chars: int,
+    language: Language,
+    ambiguous: frozenset[tuple[str, str]],
 ) -> list[OutboundMessage]:
     total = len(ordered)
-    items = [render_summary_item(alert, language=language) for alert in ordered]
+    items = [
+        render_summary_item(alert, language=language, show_repo=_shows_repo(alert, ambiguous))
+        for alert in ordered
+    ]
     head_units = telegram_length(summary_header(total, 1, 1, language=language))
     chunks = pack_items(items, head_units, max_chars)
     if len(chunks) > 1:
@@ -239,11 +248,17 @@ def render_messages(
         message = f"max_chars must be between {MIN_MAX_CHARS} and {TELEGRAM_MAX_CHARS}"
         raise ValueError(message)
     ordered = sorted(alerts, key=_sort_key)
+    ambiguous = ambiguous_series(ordered)
     if len(ordered) <= collapse_above:
         return [
-            OutboundMessage(text=render_alert(alert, language=language), keys=(alert.key,))
+            OutboundMessage(
+                text=render_alert(
+                    alert, language=language, show_repo=_shows_repo(alert, ambiguous)
+                ),
+                keys=(alert.key,),
+            )
             for alert in ordered
         ]
-    messages = _summary_messages(ordered, max_chars, language)
+    messages = _summary_messages(ordered, max_chars, language, ambiguous)
     logger.info("collapsed %d alerts into %d summary message(s)", len(ordered), len(messages))
     return messages

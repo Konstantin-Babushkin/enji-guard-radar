@@ -73,8 +73,11 @@ def test_v1_state_file_upgrades_through_a_live_run(tmp_path: Path) -> None:
     # are both sent immediately.
     texts = {str(request[1]["text"]) for request in transport.requests}
     assert len(transport.requests) == 2
-    assert sum("Stale Guard scans: <b>Project A" in text for text in texts) == 1
-    assert sum("1 High finding in audit.security (acme/service-a)." in text for text in texts) == 1
+    assert sum(text.startswith("🟡 <b>Project A") and "no scan" in text for text in texts) == 1
+    assert (
+        sum(text.startswith("🔴 <b>Project A") and "security High 0→1" in text for text in texts)
+        == 1
+    )
     state = load_state(tmp_path)
     assert state.schema_version == 3
     assert {h.project_id for h in state.histories} == {A_ID}

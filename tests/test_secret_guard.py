@@ -51,7 +51,7 @@ def clean_root_logger() -> Iterator[logging.Logger]:
         pytest.param("Bearer " + LETTERS[:30], [], "bearer_token", id="bearer"),
         pytest.param("abc" + FAKE_TOKEN + "xyz", [], "telegram_bot_token", id="glued_shape"),
         pytest.param("abc" + FAKE_TOKEN + "xyz", [FAKE_TOKEN], "known_secret", id="glued_known"),
-        pytest.param("Stale Guard scans: <b>Project B</b>", [FAKE_TOKEN], None, id="alert_text"),
+        pytest.param("🟡 <b>Project B</b> · no scan 28d", [FAKE_TOKEN], None, id="alert_text"),
         pytest.param("risk-assessment-of-the-whole-platform", [], None, id="sk_inside_word"),
         pytest.param("a short secret", ["short"], None, id="known_too_short"),
     ],

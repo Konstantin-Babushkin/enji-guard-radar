@@ -168,9 +168,7 @@ def test_new_security_run_with_more_highs_is_sent_once(tmp_path: Path, guard_cop
     assert code == 0
     assert len(transport.requests) == 1
     text = str(transport.requests[0][1]["text"])
-    assert 'High findings: <b>Project A &lt;core&gt; &amp; "tools"</b>' in text
-    assert "High findings rose from 1 to 3 in audit.security (acme/service-a)." in text
-    assert "Seen by the radar since 2026-11-09 (11 days)." in text
+    assert text == '🔴 <b>Project A &lt;core&gt; &amp; "tools"</b> · security High 1→3 · 11d'
     for leak in ("F-00", "Placeholder", "src/"):
         assert leak not in text
     record = condition(load_state(tmp_path), A_ID, "high")
@@ -202,7 +200,7 @@ def test_dry_run_prints_rise_and_writes_no_state(tmp_path: Path, guard_copy: Pat
     assert transport.requests == []
     lines = out.splitlines()
     sending = lines[lines.index("--- would send to group ---") :]
-    assert "High findings rose from 1 to 3 in audit.security (acme/service-a)." in sending
+    assert '🔴 <b>Project A &lt;core&gt; &amp; "tools"</b> · security High 1→3 · 11d' in sending
     assert snapshot() == before
 
 
@@ -386,8 +384,7 @@ def test_first_sight_opens_sends_immediately(tmp_path: Path) -> None:
     sim.poll(0)
     sim.add_run(high=2, day=1)
     (text,) = texts(sim.poll(1))
-    assert "2 High findings in audit.security (acme/svc)." in text
-    assert "rose" not in text
+    assert text == "🔴 <b>Proj</b> · security High 0→2 · 0d"
 
 
 def test_closed_series_reopens_as_a_rise_from_zero(tmp_path: Path) -> None:
@@ -397,8 +394,7 @@ def test_closed_series_reopens_as_a_rise_from_zero(tmp_path: Path) -> None:
     assert sim.history().open is False
     sim.add_run(high=2, day=1)
     (text,) = texts(sim.poll(1))
-    assert "High findings rose from 0 to 2 in audit.security (acme/svc)." in text
-    assert "Seen by the radar since 2026-11-03" in text
+    assert text == "🔴 <b>Proj</b> · security High 0→2 · 0d"
 
 
 def test_rise_n_to_n_plus_k_sends_once(tmp_path: Path) -> None:
@@ -408,7 +404,7 @@ def test_rise_n_to_n_plus_k_sends_once(tmp_path: Path) -> None:
     sim.poll(1)
     sim.add_run(high=5, day=2)
     (text,) = texts(sim.poll(2))
-    assert "High findings rose from 3 to 5 in audit.security (acme/svc)." in text
+    assert text == "🔴 <b>Proj</b> · security High 3→5 · 1d"
 
 
 def test_three_two_three_alerts_again(tmp_path: Path) -> None:
@@ -421,7 +417,7 @@ def test_three_two_three_alerts_again(tmp_path: Path) -> None:
     assert sim.high_record().count == 2
     sim.add_run(high=3, day=3)
     (text,) = texts(sim.poll(3))
-    assert "High findings rose from 2 to 3 in audit.security (acme/svc)." in text
+    assert text == "🔴 <b>Proj</b> · security High 2→3 · 2d"
 
 
 def test_clean_runs_clear_after_m_and_a_new_high_opens_an_episode(tmp_path: Path) -> None:
@@ -441,8 +437,7 @@ def test_clean_runs_clear_after_m_and_a_new_high_opens_an_episode(tmp_path: Path
     assert sim.history().open is False
     sim.add_run(high=1, day=4)
     (text,) = texts(sim.poll(4))
-    assert "High findings rose from 0 to 1 in audit.security (acme/svc)." in text
-    assert "Seen by the radar since 2026-11-06" in text
+    assert text == "🔴 <b>Proj</b> · security High 0→1 · 0d"
 
 
 def test_flap_inside_debounce_sends_the_rise_but_keeps_the_episode(tmp_path: Path) -> None:
@@ -458,8 +453,7 @@ def test_flap_inside_debounce_sends_the_rise_but_keeps_the_episode(tmp_path: Pat
     sim.add_run(high=3, day=3)
     back = sim.poll(3)
     (text,) = texts(back)
-    assert "High findings rose from 0 to 3 in audit.security (acme/svc)." in text
-    assert "Seen by the radar since 2026-11-03" in text
+    assert text == "🔴 <b>Proj</b> · security High 0→3 · 2d"
     assert back.resolved == ()
     assert sim.history().opened_at == opened_at
 
@@ -504,7 +498,7 @@ def test_unknown_report_no_history_creates_nothing_and_is_read_again(tmp_path: P
     assert sim.high_condition() is None
     sim.reports[task_id] = report_page(task_id, high=2)
     (text,) = texts(sim.poll(2))
-    assert "2 High findings in audit.security (acme/svc)." in text
+    assert text == "🔴 <b>Proj</b> · security High 0→2 · 1d"
 
 
 def test_partial_fetch_frozen_keeps_histories_and_conditions(tmp_path: Path) -> None:
@@ -573,7 +567,7 @@ def test_removed_repo_drops_its_series_and_resolves(tmp_path: Path) -> None:
     sim.poll(0)
     sim.add_run(high=3, day=1, rid=RID2)
     (text,) = texts(sim.poll(1))
-    assert "3 High findings in audit.security (acme/other)." in text
+    assert text == "🔴 <b>Proj</b> · security High 0→3 · 0d"
     sim.repos = [(RID, REPO)]
     del sim.runs[RID2]
     report = sim.poll(2)
@@ -591,8 +585,8 @@ def test_aged_no_send_without_a_rise(tmp_path: Path) -> None:
     assert texts(sim.poll(40)) == []
     sim.add_run(high=5, day=41)
     (text,) = texts(sim.poll(41))
-    assert "Long-standing: seen by the radar since 2026-11-03" in text
-    assert "High findings rose from 3 to 5 in audit.security (acme/svc)." in text
+    # a long-standing series reads like any other: the age is the only difference
+    assert text == "🔴 <b>Proj</b> · security High 3→5 · 40d"
 
 
 def test_stale_and_high_of_one_project_are_two_messages(tmp_path: Path) -> None:
@@ -603,8 +597,8 @@ def test_stale_and_high_of_one_project_are_two_messages(tmp_path: Path) -> None:
     assert len(report.messages) == 2
     levels = {key.level for message in report.messages for key in message.keys}
     assert levels == {"stale", "high"}
-    assert any(text.startswith("Stale Guard scans:") for text in texts(report))
-    assert any(text.startswith("High findings:") for text in texts(report))
+    assert any(text.startswith("🟡 <b>Proj</b> · no scan") for text in texts(report))
+    assert any(text.startswith("🔴 <b>Proj</b> · security High") for text in texts(report))
 
 
 def test_failed_send_retries_next_poll(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
@@ -632,9 +626,7 @@ def test_failed_send_retries_next_poll(tmp_path: Path, caplog: pytest.LogCapture
         report = sim.poll(3, notifier=telegram(retry))
     assert "retried 1, rearmed 0" in caplog.text
     assert len(retry.requests) == 1
-    assert "High findings rose from 3 to 5 in audit.security (acme/svc)." in str(
-        retry.requests[0][1]["text"]
-    )
+    assert str(retry.requests[0][1]["text"]) == "🔴 <b>Proj</b> · security High 3→5 · 2d"
     assert sim.high_record().alerted_at is not None
 
 
@@ -648,7 +640,7 @@ def test_unchanged_run_is_not_read_again(tmp_path: Path) -> None:
     assert sim.report_reads() == []  # the overview run is never read
     task_id = sim.add_run(high=2, day=1)
     (first,) = texts(sim.poll(1))
-    assert "2 High findings in audit.security (acme/svc)." in first
+    assert first == "🔴 <b>Proj</b> · security High 0→2 · 0d"
     assert sim.report_reads() == [task_id]
     after_first = sim.state().histories
     assert_quiet(sim.poll(2))
