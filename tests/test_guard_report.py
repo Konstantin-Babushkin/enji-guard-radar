@@ -235,11 +235,17 @@ def test_ambiguous_report_is_unknown_not_empty(content: str) -> None:
     assert isinstance(_parse(content), ReportUnknown)
 
 
-def test_findings_section_without_headings_is_zero_findings() -> None:
-    report = _parse(_doc(findings="Nothing was found."))
+def test_no_findings_with_full_score_is_zero_findings() -> None:
+    report = _parse(_doc(score="**Score: 100 / 100** · label", findings="Nothing was found."))
     assert isinstance(report, AuditReport)
     assert report.findings == ()
     assert report.high_count == 0
+
+
+def test_no_findings_with_a_lower_score_is_unknown() -> None:
+    result = _parse(_doc(findings="Nothing was found."))
+    assert isinstance(result, ReportUnknown)
+    assert result.reason == "score below 100 but no findings"
 
 
 def test_security_findings_heading_is_accepted() -> None:
@@ -248,11 +254,17 @@ def test_security_findings_heading_is_accepted() -> None:
     assert len(report.findings) == 1
 
 
-def test_findings_section_ends_at_the_next_second_level_heading() -> None:
+def test_findings_in_two_sections_are_unknown() -> None:
     content = _doc(findings=_finding() + "\n## Appendix\n\n" + _finding("### `F-9` — late"))
-    report = _parse(content)
+    result = _parse(content)
+    assert isinstance(result, ReportUnknown)
+    assert result.reason == "findings in more than one section"
+
+
+def test_findings_heading_is_recognised_by_shape_not_by_name() -> None:
+    report = _parse(_doc(heading="## Подтверждённые замечания", findings=_finding()))
     assert isinstance(report, AuditReport)
-    assert [f.finding_id for f in report.findings] == ["F-1"]
+    assert report.high_count == 1
 
 
 def test_finding_without_backticks_gets_unknown_id() -> None:
@@ -261,11 +273,18 @@ def test_finding_without_backticks_gets_unknown_id() -> None:
     assert report.findings[0].finding_id == "unknown"
 
 
-def test_finding_without_severity_line_is_unknown_severity() -> None:
-    report = _parse(_doc(findings=_finding(severity=None)))
+def test_heading_without_a_severity_line_is_not_a_finding() -> None:
+    # Recommendations and criteria are `###` blocks too; only a severity line makes a finding.
+    report = _parse(_doc(score="**Score: 100 / 100**", findings=_finding(severity=None)))
     assert isinstance(report, AuditReport)
-    assert report.findings[0].severity is Severity.UNKNOWN
-    assert report.findings[0].severity_raw == ""
+    assert report.findings == ()
+
+
+def test_severity_line_outside_a_finding_block_is_unknown() -> None:
+    content = _doc(findings=_finding()) + "\n**Severity:** High\n"
+    result = _parse(content)
+    assert isinstance(result, ReportUnknown)
+    assert result.reason == "severity line outside a finding"
 
 
 def test_critical_severity_is_kept_as_unknown_and_logged(
@@ -294,6 +313,55 @@ def test_findings_keep_report_order_and_duplicate_ids() -> None:
         ("F-1", Severity.HIGH),
     ]
     assert report.high_count == 1
+
+
+RUSSIAN_REPORT = """# Заголовок отчёта
+
+## Краткий вывод
+
+текст
+
+**Оценка: 76 / 100** · метка · Уверенность: Средняя
+
+## Подтверждённые проблемы
+
+### `F-003` — заголовок
+
+**Серьёзность:** Высокая · **Уверенность:** Средняя
+
+### `F-001` — заголовок
+
+**Серьёзность:** Средняя · **Уверенность:** Высокая
+
+### `F-004` — заголовок
+
+**Серьёзность:** Информация · **Уверенность:** Высокая
+
+## Как рассчитана оценка
+
+**Оценка: 76 / 100**
+"""
+
+
+def test_russian_report_with_the_score_repeated_is_read() -> None:
+    report = _parse(RUSSIAN_REPORT)
+    assert isinstance(report, AuditReport)
+    assert report.score == 76
+    assert [f.severity for f in report.findings] == [Severity.HIGH, Severity.MEDIUM, Severity.LOW]
+    assert report.high_count == 1
+
+
+def test_score_repeated_with_the_same_value_is_one_score() -> None:
+    content = _doc(score="**Score: 50 / 100** · a\n\n**Score: 50 / 100**", findings=_finding())
+    report = _parse(content)
+    assert isinstance(report, AuditReport)
+    assert report.score == 50
+
+
+def test_score_lines_that_differ_are_unknown() -> None:
+    result = _parse(_doc(score="**Score: 5 / 100**\n\n**Score: 6 / 100**", findings=_finding()))
+    assert isinstance(result, ReportUnknown)
+    assert result.reason == "score lines differ"
 
 
 def test_recon_is_an_overview_without_score_or_findings() -> None:

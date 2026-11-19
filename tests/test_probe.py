@@ -464,7 +464,7 @@ def test_summary_lists_severity_words_layouts_and_unknown_reasons() -> None:
         result_shapes={},
         dropped={},
     )
-    assert "no findings heading=1" in format_summary(unknown)
+    assert "score below 100 but no findings=1" in format_summary(unknown)
 
 
 # --- check 1: round trip -----------------------------------------------------------------------
@@ -510,7 +510,7 @@ def test_round_trip_fenced_heading_is_a_problem_naming_the_task_and_property() -
         FENCED, action_key="audit.security", repo_name="acme/service-1", sanitizer=Sanitizer()
     )
     problems = check_round_trip([report], fixtures_with("task-1", rebuilt))
-    assert problems == ["report task-1: round trip differs in finding count"]
+    assert problems == ["report task-1: round trip differs in outcome"]
 
 
 def test_round_trip_missing_findings_heading_is_unknown_on_both_sides() -> None:

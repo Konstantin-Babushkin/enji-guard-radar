@@ -30,6 +30,8 @@ from enji_guard_radar.guard_report import (
     ARG_TASK_ID,
     FINDINGS_HEADINGS,
     OVERVIEW_ACTION_KEYS,
+    SCORE_LINE,
+    SEVERITY_PREFIXES,
     TOOL_GET_AUDIT_REPORT,
     AuditReport,
     parse_report_markdown,
@@ -40,7 +42,7 @@ from enji_guard_radar.secret_guard import SECRET_PATTERNS
 PLACEHOLDER_PROJECT: Final = "00000000-0000-4000-8000-00000000a{:03d}"
 PLACEHOLDER_REPO: Final = "repo_00000000-0000-4000-8000-00000000b{:03d}"
 PLACEHOLDER_TASK: Final = "00000000-0000-4000-8000-00000000c{:03d}"
-KEPT_SEVERITY_WORD: Final = re.compile(r"[A-Za-z]{1,20}")
+KEPT_SEVERITY_WORD: Final = re.compile(r"[A-Za-z\u0400-\u04ff]{1,20}")  # Latin or Cyrillic
 MANIFEST_FILE: Final = "calls.json"
 TOOLS_FILE: Final = "tools.json"
 OTHER: Final = "<other>"
@@ -51,7 +53,6 @@ _ACTION_KEY: Final = re.compile(r"audit\.[a-z0-9-]{1,40}")
 _FINDING_ID: Final = re.compile(r"F-\d+")
 _REPORT_GROUP: Final = re.compile(r"[a-z-]{1,30}")
 _SCAFFOLD_FILES: Final = frozenset({"tools.json", "calls.json"})
-_SCORE: Final = re.compile(r"\*\*Score: *(\d{1,3}) */ *100\*\*")
 _CONFIDENCE_WORD: Final = re.compile(r"Confidence:\**\s*([A-Za-z]{1,20})")
 _ID: Final = re.compile(r"`([^`]+)`")
 _SEVERITY_PREFIX: Final = "**Severity:**"
@@ -253,39 +254,33 @@ def rebuild_report(content: str, *, action_key: str, repo_name: str, sanitizer: 
     out = [title, "", "## Executive summary", "", _PLACEHOLDER_LINE, ""]
     out += ["## Placeholder question", "", _PLACEHOLDER_LINE, ""]
     for line in lines:  # the parser counts score lines everywhere, fenced or not
-        for match in _SCORE.finditer(line):
+        for match in SCORE_LINE.finditer(line):
             confidence = _CONFIDENCE_WORD.search(line[match.end() :])
             word = sanitizer.word(confidence.group(1)) if confidence else _UNKNOWN_CONFIDENCE
             out += [f"**Score: {match.group(1)} / 100** · Placeholder · Confidence: {word}", ""]
     out += [f"`{repo_name}` · `main` · `{_ZERO_SHA}`", ""]
 
-    in_findings = False
-    finding: _Finding | None = None
+    findings: list[_Finding] = []
+    pending: str | None = None  # a `###` heading whose severity line has not been seen yet
     for line in _outside_fences(lines):
-        if line.rstrip() in FINDINGS_HEADINGS:
-            if finding is not None:
-                out += _emit_finding(finding, sanitizer)
-                finding = None
-            out += [line.rstrip(), "", _PLACEHOLDER_LINE, ""]
-            in_findings = True
-        elif line.startswith("## "):
-            if finding is not None:
-                out += _emit_finding(finding, sanitizer)
-                finding = None
-            in_findings = False
-        elif not in_findings:
+        if not line.strip():
             continue
-        elif line.startswith("### "):
-            if finding is not None:
-                out += _emit_finding(finding, sanitizer)
-            id_match = _ID.search(line)
-            finding = _Finding(heading_id=id_match.group(1) if id_match else None)
-        elif finding is not None and finding.severity is None and line.startswith(_SEVERITY_PREFIX):
-            words = line[len(_SEVERITY_PREFIX) :].split()
-            finding.severity = words[0] if words else ""
-            finding.confidence = _confidence_word(line)
-    if finding is not None:
-        out += _emit_finding(finding, sanitizer)
+        prefix = next((p for p in SEVERITY_PREFIXES if line.startswith(p)), None)
+        if pending is not None and prefix is not None:
+            id_match = _ID.search(pending)
+            words = line[len(prefix) :].split()
+            findings.append(
+                _Finding(
+                    heading_id=id_match.group(1) if id_match else None,
+                    severity=words[0] if words else "",
+                    confidence=_confidence_word(line),
+                )
+            )
+        pending = line if line.startswith("### ") else None
+    if findings:
+        out += [FINDINGS_HEADINGS[1], "", _PLACEHOLDER_LINE, ""]
+        for finding in findings:
+            out += _emit_finding(finding, sanitizer)
     return "\n".join(out) + "\n"
 
 
@@ -755,8 +750,10 @@ def find_taint(texts: Mapping[str, str], taint: Iterable[str]) -> list[str]:
     # A tainted string that only occurs inside scaffolding words (`_repo` in `list_repositories`)
     # is not a leak: blank those words out before looking for it.
     lowered = {
-        name: scaffold.sub(" ", text.casefold()) if scaffold else text.casefold()
+        name: scaffold.sub(" ", scrubbed) if scaffold else scrubbed
         for name, text in texts.items()
+        # A content_version is a hash of the raw text; a short token can sit in it by chance.
+        for scrubbed in [_CONTENT_VERSION.sub('"content_version": ""', text).casefold()]
     }
     for value in sorted(taint):
         if _is_structure(value, words):

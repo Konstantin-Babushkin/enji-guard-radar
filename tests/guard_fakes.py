@@ -98,8 +98,11 @@ def report_markdown(*, high: int, medium: int = 0, score: int = 50) -> str:
     """A scored report body with the given number of High and Medium findings."""
     lines = ["# Placeholder report title", "", f"**Score: {score} / 100** · Placeholder", ""]
     lines += ["## Security findings", ""]
-    for number in range(high + medium):
-        severity = "High" if number < high else "Medium"
+    # Guard deducts points only for findings, and the parser relies on it: a score below 100
+    # always comes with at least one finding (a Low one here, which no rule counts).
+    lows = 1 if score < 100 and high + medium == 0 else 0
+    for number in range(high + medium + lows):
+        severity = "High" if number < high else "Medium" if number < high + medium else "Low"
         lines += [f"### `F-{number + 1:03d}` — Placeholder finding", ""]
         lines += [f"**Severity:** {severity} · **Confidence:** High", ""]
     return "\n".join(lines)

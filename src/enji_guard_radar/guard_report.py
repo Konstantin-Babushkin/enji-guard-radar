@@ -28,9 +28,18 @@ MAX_REPORT_CHARS = 2_000_000
 OVERVIEW_ACTION_KEYS = frozenset({"audit.recon"})
 FINDINGS_HEADINGS = ("## Findings", "## Security findings")
 
-_SCORE = re.compile(r"\*\*Score: *(\d{1,3}) */ *100\*\*")
+# Guard writes the report in English or Russian per run (OBSERVED 2026-11-19: both, same repo).
+SCORE_LINE = re.compile(r"\*\*(?:Score|Оценка): *(\d{1,3}) */ *100\*\*")
 _ID = re.compile(r"`([^`]+)`")
-_SEVERITY_PREFIX = "**Severity:**"
+SEVERITY_PREFIXES = ("**Severity:**", "**Серьёзность:**")
+_SEVERITY_WORDS = {
+    "высокая": Severity.HIGH,
+    "средняя": Severity.MEDIUM,
+    "низкая": Severity.LOW,
+    # ASSUMPTION: "Information" (OBSERVED) sits below Low and never matters to a rule, so it is Low.
+    "information": Severity.LOW,
+    "информация": Severity.LOW,
+}
 
 
 class _Frozen(BaseModel):
@@ -70,11 +79,11 @@ class _BadPage(Exception):  # noqa: N818
 
 
 def parse_severity(word: str) -> Severity:
-    """High, Medium and Low (any case, padded) are known; every other word is unknown."""
+    """High, Medium, Low and their Russian forms are known; every other word is unknown."""
     cleaned = word.strip().casefold()
     if cleaned in {Severity.HIGH, Severity.MEDIUM, Severity.LOW}:
         return Severity(cleaned)
-    return Severity.UNKNOWN
+    return _SEVERITY_WORDS.get(cleaned, Severity.UNKNOWN)
 
 
 def _unknown(task_id: str, action_key: str, reason: str) -> ReportUnknown:
@@ -89,8 +98,9 @@ def _finding(task_id: str, block: list[str]) -> ReportFinding:
     finding_id = id_match.group(1) if id_match else "unknown"
     severity_raw = ""
     for line in block[1:]:
-        if line.startswith(_SEVERITY_PREFIX):
-            words = line[len(_SEVERITY_PREFIX) :].split()
+        prefix = next((p for p in SEVERITY_PREFIXES if line.startswith(p)), None)
+        if prefix is not None:
+            words = line[len(prefix) :].split()
             severity_raw = words[0] if words else ""
             break
     severity = parse_severity(severity_raw)
@@ -104,16 +114,31 @@ def _finding(task_id: str, block: list[str]) -> ReportFinding:
     return ReportFinding(finding_id=finding_id, severity=severity, severity_raw=severity_raw)
 
 
-def _findings_section(lines: list[str]) -> list[str] | str:
-    """The lines of the findings section, or the reason there is not exactly one."""
-    starts = [i for i, line in enumerate(lines) if line.rstrip() in FINDINGS_HEADINGS]
-    if not starts:
-        return "no findings heading"
-    if len(starts) > 1:
-        return "more than one findings heading"
-    rest = lines[starts[0] + 1 :]
-    end = next((i for i, line in enumerate(rest) if line.startswith("## ")), len(rest))
-    return rest[:end]
+def _finding_blocks(lines: list[str]) -> tuple[list[list[str]], int] | str:
+    """Finding blocks (a `###` heading whose next text line is a severity line) and the number of
+    severity lines seen anywhere, or the reason the blocks are ambiguous.
+
+    The findings heading is not matched by name: Guard words it many ways (OBSERVED: 23 forms in
+    two languages). A finding is recognised by its shape, and every severity line must belong to a
+    block that sits in one `##` section, or the report is unknown.
+    """
+    blocks: list[list[str]] = []
+    sections: set[int] = set()
+    section = -1
+    for index, line in enumerate(lines):
+        if line.startswith("## "):
+            section += 1
+        elif line.startswith("### "):
+            following = next((text for text in lines[index + 1 :] if text.strip()), "")
+            if following.startswith(SEVERITY_PREFIXES):
+                blocks.append([line, following])
+                sections.add(section)
+    severity_lines = sum(1 for line in lines if line.startswith(SEVERITY_PREFIXES))
+    if len(sections) > 1:
+        return "findings in more than one section"
+    if severity_lines != len(blocks):
+        return "severity line outside a finding"
+    return blocks, severity_lines
 
 
 def parse_report_markdown(
@@ -135,23 +160,21 @@ def parse_report_markdown(
             findings=(),
             content_version=content_version,
         )
-    scores = _SCORE.findall(content)
+    scores = set(SCORE_LINE.findall(content))
     if not scores:
         return _unknown(task_id, action_key, "score line missing")
     if len(scores) > 1:
-        return _unknown(task_id, action_key, "more than one score line")
-    score = int(scores[0])
+        return _unknown(task_id, action_key, "score lines differ")
+    score = int(next(iter(scores)))
     if score > 100:
         return _unknown(task_id, action_key, "score out of range")
-    section = _findings_section(lines)
-    if isinstance(section, str):
-        return _unknown(task_id, action_key, section)
-    blocks: list[list[str]] = []
-    for line in section:
-        if line.startswith("### "):
-            blocks.append([line])
-        elif blocks:
-            blocks[-1].append(line)
+    found = _finding_blocks(lines)
+    if isinstance(found, str):
+        return _unknown(task_id, action_key, found)
+    blocks, _seen = found
+    if not blocks and score < 100:
+        # Points go only for findings: a lower score with none means a layout we do not know.
+        return _unknown(task_id, action_key, "score below 100 but no findings")
     return AuditReport(
         task_id=task_id,
         action_key=action_key,
