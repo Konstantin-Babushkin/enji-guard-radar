@@ -39,7 +39,7 @@ from enji_guard_radar.secret_guard import SecretGatedNotifier
 from enji_guard_radar.state_store import DryRunStateStore, FileStateStore
 from enji_guard_radar.telegram import TelegramNotifier
 
-REMINDER_TITLE = "Reminder: High findings are still open"
+REMINDER_PREFIX = "<b>Radar reminder · "
 
 
 def test_reminder_comes_at_the_interval_and_not_before(tmp_path: Path) -> None:
@@ -58,9 +58,11 @@ def test_reminder_comes_at_the_interval_and_not_before(tmp_path: Path) -> None:
     assert first.messages == ()
     assert first.reminders_delivered == 1
     (message,) = first.reminder_messages
-    assert message.text.startswith(f"<b>{REMINDER_TITLE}")
-    assert "2 High findings in audit.security (acme/svc)." in message.text
-    assert "Seen by the radar since" in message.text
+    lines = message.text.split("\n")
+    assert lines[0] == "<b>Radar reminder · 1 open</b>"
+    assert len(lines) == 2
+    assert lines[1].startswith("🔴 <b>")
+    assert "· security High 2 · " in lines[1]
 
     assert sim.poll(8).reminder_messages == ()
     assert sim.poll(14).reminder_messages == ()
@@ -112,7 +114,7 @@ class Scripted:
 
 
 def is_reminder(message: OutboundMessage) -> bool:
-    return REMINDER_TITLE in message.text
+    return message.text.startswith(REMINDER_PREFIX)
 
 
 def test_failed_send_is_not_marked_and_retried_next_run(
@@ -135,7 +137,7 @@ def test_failed_send_is_not_marked_and_retried_next_run(
     report = sim.poll(9, notifier=telegram(retry))
     assert report.outcome is RunOutcome.COMPLETED
     assert report.reminders_delivered == 1
-    assert REMINDER_TITLE in str(retry.requests[0][1]["text"])
+    assert REMINDER_PREFIX in str(retry.requests[0][1]["text"])
     (clock,) = sim.state().reminders
     assert clock.last_reminded_at == poll_time(9)
 
@@ -337,7 +339,7 @@ def test_dry_run_prints_the_reminder_and_writes_nothing(tmp_path: Path) -> None:
     )
     (message,) = report.reminder_messages
     assert [m.text for m in printing.sent] == [message.text]
-    assert REMINDER_TITLE in message.text
+    assert REMINDER_PREFIX in message.text
     assert report.reminders_delivered == 0
     assert report.follow_up_not_delivered == 0
     assert (store.state_path.read_bytes(), store.backup_path.read_bytes()) == before

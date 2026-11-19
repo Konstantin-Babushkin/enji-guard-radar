@@ -96,12 +96,15 @@ def test_alerts_and_reminders_are_the_same_set_in_both_languages(tmp_path: Path)
 
     assert english[0].text == "🔴 <b>Proj</b> · security High 0→2 · 0d"
     assert english[1].text == "🔴 <b>Proj</b> · security High 2→4 · 1d"
-    assert english[2].text.startswith("<b>Reminder: High findings are still open</b>")
+    assert english[2].text == (
+        "<b>Radar reminder · 1 open</b>\n🔴 <b>Proj</b> · security High 4 · 8d"
+    )
 
     assert russian[0].text == "🔴 <b>Proj</b> · security высокие 0→2 · 0 д"
     assert russian[1].text == "🔴 <b>Proj</b> · security высокие 2→4 · 1 д"
-    assert russian[2].text.startswith("<b>Напоминание: находки высокой серьёзности")
-    assert "4 находки высокой серьёзности в audit.security (acme/svc)." in russian[2].text
+    assert russian[2].text == (
+        "<b>Радар · напоминание · открыто: 1</b>\n🔴 <b>Proj</b> · security высокие 4 · 8 д"
+    )
     assert not any(CYRILLIC.search(m.text) for m in english)
 
 

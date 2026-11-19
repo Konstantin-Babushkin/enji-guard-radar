@@ -5,7 +5,7 @@ Pure: the caller passes `now` and the clocks; marking a reminder as sent is the 
 
 import logging
 from collections.abc import Collection, Iterable, Mapping, Sequence
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta
 
 from enji_guard_radar.high_rules import HIGH_LEVEL
 from enji_guard_radar.ledger import ReminderClock, SeriesKey, State
@@ -13,11 +13,9 @@ from enji_guard_radar.messages import (
     DEFAULT_MAX_CHARS,
     MIN_MAX_CHARS,
     TELEGRAM_MAX_CHARS,
+    ambiguous_series,
     clean_name,
-    days_text,
-    escape,
-    high_findings_text,
-    high_where,
+    high_line,
     pack_items,
     telegram_length,
 )
@@ -25,8 +23,6 @@ from enji_guard_radar.model import Alert, AlertKey, AlertKind, OutboundMessage
 from enji_guard_radar.texts import DEFAULT_LANGUAGE, Language, text
 
 logger = logging.getLogger(__name__)
-
-REMINDER_TITLE = text("en", "reminder.title")  # the English title; the catalog has every language
 
 
 def _series(key: AlertKey) -> SeriesKey:
@@ -91,30 +87,13 @@ def reminders_due(
     return tuple(sorted(due.values(), key=_order))
 
 
-def _title(index: int, count: int, language: Language) -> str:
+def _title(index: int, count: int, total: int, language: Language) -> str:
     suffix = f" ({index}/{count})" if count > 1 else ""
-    return f"<b>{text(language, 'reminder.title')}{suffix}</b>"
+    return f"<b>{text(language, 'reminder.short_title', count=total)}{suffix}</b>"
 
 
-def _item(alert: Alert, language: Language) -> str:
-    if alert.count is None or alert.seen_since is None or alert.age_days is None:
-        message = "a reminder needs count, seen_since and age_days"
-        raise ValueError(message)
-    name = escape(clean_name(alert.project_name, language=language))
-    since = alert.seen_since.astimezone(UTC).date().isoformat()
-    what = text(
-        language,
-        "alert.high.count",
-        findings=high_findings_text(alert.count, language=language),
-        where=high_where(alert),
-    )
-    seen = text(
-        language,
-        "alert.high.seen",
-        since=since,
-        days=days_text(alert.age_days, language=language),
-    )
-    return f"- <b>{name}</b>: {what} {seen}"
+def _item(alert: Alert, language: Language, show_repo: bool) -> str:
+    return high_line(alert, language=language, show_repo=show_repo, arrow=False)
 
 
 def render_reminders(
@@ -129,8 +108,13 @@ def render_reminders(
         raise ValueError(message)
     if not alerts:
         return []
-    items = [_item(alert, language) for alert in alerts]
-    head_units = telegram_length(_title(1, 1, language))
+    ambiguous = ambiguous_series(alerts)
+    items = [
+        _item(alert, language, (alert.key.project_id, alert.key.action_key) in ambiguous)
+        for alert in alerts
+    ]
+    total = len(alerts)
+    head_units = telegram_length(_title(1, 1, total, language))
     chunks = pack_items(items, head_units, max_chars)
     if len(chunks) > 1:
         # Reserve room for the " (k/n)" suffix; more chunks widen it, so repack until stable.
@@ -143,7 +127,7 @@ def render_reminders(
             count = len(chunks)
     messages = []
     for number, indexes in enumerate(chunks, start=1):
-        title = _title(number, len(chunks), language)
+        title = _title(number, len(chunks), total, language)
         text_ = "\n".join([title, *(items[i] for i in indexes)])
         messages.append(OutboundMessage(text=text_, keys=tuple(alerts[i].key for i in indexes)))
     logger.info("reminders: %d series in %d message(s)", len(alerts), len(messages))

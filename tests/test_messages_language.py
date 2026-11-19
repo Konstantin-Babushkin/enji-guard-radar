@@ -384,35 +384,16 @@ def test_reminder_in_both_languages() -> None:
     (english,) = render_reminders(alerts)
     (russian,) = render_reminders(alerts, language="ru")
     assert english.text == (
-        "<b>Reminder: High findings are still open</b>\n"
-        f"- <b>Project A</b>: 1 High finding in {HIGH_WHERE}. "
-        "Seen by the radar since 2026-11-10 (8 days).\n"
-        f"- <b>Ёлка &amp; Ко</b>: 5 High findings in {HIGH_WHERE}. "
-        "Seen by the radar since 2026-10-27 (22 days)."
+        "<b>Radar reminder · 2 open</b>\n"
+        "🔴 <b>Project A</b> · security High 1 · 8d\n"
+        "🔴 <b>Ёлка &amp; Ко</b> · security High 5 · 22d"
     )
     assert russian.text == (
-        "<b>Напоминание: находки высокой серьёзности всё ещё открыты</b>\n"
-        f"- <b>Project A</b>: 1 находка высокой серьёзности в {HIGH_WHERE}. "
-        "Радар видит с 2026-11-10 (8 дней).\n"
-        f"- <b>Ёлка &amp; Ко</b>: 5 находок высокой серьёзности в {HIGH_WHERE}. "
-        "Радар видит с 2026-10-27 (22 дня)."
+        "<b>Радар · напоминание · открыто: 2</b>\n"
+        "🔴 <b>Project A</b> · security высокие 1 · 8 д\n"
+        "🔴 <b>Ёлка &amp; Ко</b> · security высокие 5 · 22 д"
     )
     assert english.keys == russian.keys == tuple(a.key for a in alerts)
-
-
-@pytest.mark.parametrize(
-    ("count", "phrase"),
-    [
-        (1, "1 находка"),
-        (2, "2 находки"),
-        (11, "11 находок"),
-        (21, "21 находка"),
-        (22, "22 находки"),
-    ],
-)
-def test_reminder_findings_plural_in_russian(count: int, phrase: str) -> None:
-    (message,) = render_reminders([high(count)], language="ru")
-    assert phrase in message.text
 
 
 def test_reminder_split_keeps_every_series_once_in_order_in_russian() -> None:
@@ -425,7 +406,7 @@ def test_reminder_split_keeps_every_series_once_in_order_in_russian() -> None:
     assert len(russian) > 1
     assert keys_of(russian) == keys_of(english) == [a.key for a in alerts]
     for number, message in enumerate(russian, start=1):
-        title = "Напоминание: находки высокой серьёзности всё ещё открыты"
+        title = "Радар · напоминание · открыто: 40"
         assert message.text.startswith(f"<b>{title} ({number}/{len(russian)})</b>\n")
         assert telegram_length(message.text) <= MIN_MAX_CHARS
         assert len(message.text.split("\n")) - 1 == len(message.keys)
