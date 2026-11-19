@@ -35,6 +35,11 @@ extend-exclude = [".planning"]
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "N", "UP", "B", "SIM", "C4", "PTH", "TRY", "LOG", "G", "PT", "RUF", "DTZ"]
 
+[tool.ruff.lint.per-file-ignores]
+# The Russian catalog and its tests hold real Russian words; a lone "с" is not a Latin "c".
+"src/enji_guard_radar/texts.py" = ["RUF001"]
+"tests/*" = ["RUF001"]
+
 [tool.mypy]
 python_version = "3.12"
 strict = true

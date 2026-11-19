@@ -36,6 +36,25 @@ _EN: dict[str, Entry] = {
     "severity.medium": "medium",
     "severity.low": "low",
     "severity.unknown": "unknown",
+    "name.unnamed": "(unnamed project)",
+    "alert.severity": "Severity: {severity}.",
+    "alert.stale.title": "Stale Guard scans: <b>{name}</b>",
+    "alert.stale.body": "No completed Guard run for {days} (last: {last}).",
+    "alert.never_ran.title": "No Guard runs: <b>{name}</b>",
+    "alert.never_ran.no_repos": "It has no repositories in Guard.",
+    "alert.never_ran.repos": "No completed Guard run found in its {repos}.",
+    "alert.high.title": "High findings: <b>{name}</b>",
+    "alert.high.rise": "High findings rose from {previous} to {count} in {where}.",
+    "alert.high.count": "{findings} in {where}.",
+    "alert.high.seen": "Seen by the radar since {since} ({days}).",
+    "alert.high.seen_long": "Long-standing: seen by the radar since {since} ({days}).",
+    "summary.header": "Guard radar: {problems} need attention",
+    "summary.item.stale": "- <b>{name}</b>: no completed Guard run for {days} ({severity})",
+    "summary.item.high": "- <b>{name}</b>: {count} High in {where} ({severity})",
+    "summary.item.high_rise": (
+        "- <b>{name}</b>: High rose from {previous} to {count} in {where} ({severity})"
+    ),
+    "summary.item.never_ran": "- <b>{name}</b>: no completed Guard run found ({severity})",
 }
 
 _RU: dict[str, Entry] = {
@@ -55,6 +74,30 @@ _RU: dict[str, Entry] = {
     "severity.medium": "средняя",
     "severity.low": "низкая",
     "severity.unknown": "не определена",
+    "name.unnamed": "(проект без названия)",
+    "alert.severity": "Серьёзность: {severity}.",
+    "alert.stale.title": "Устаревшие проверки Guard: <b>{name}</b>",
+    "alert.stale.body": "Нет завершённых запусков Guard уже {days} (последний: {last}).",
+    "alert.never_ran.title": "Нет запусков Guard: <b>{name}</b>",
+    "alert.never_ran.no_repos": "В Guard у проекта нет репозиториев.",
+    "alert.never_ran.repos": "Завершённых запусков Guard не найдено в {repos} проекта.",
+    "alert.high.title": "Находки высокой серьёзности: <b>{name}</b>",
+    "alert.high.rise": (
+        "Число находок высокой серьёзности выросло с {previous} до {count} в {where}."
+    ),
+    "alert.high.count": "{findings} в {where}.",
+    "alert.high.seen": "Радар видит с {since} ({days}).",
+    "alert.high.seen_long": "Давняя проблема: радар видит её с {since} ({days}).",
+    "summary.header": "Guard radar: требуется внимание — {problems}",
+    "summary.item.stale": "- <b>{name}</b>: нет завершённых запусков Guard уже {days} ({severity})",
+    "summary.item.high": (
+        "- <b>{name}</b>: находок высокой серьёзности: {count} в {where} ({severity})"
+    ),
+    "summary.item.high_rise": (
+        "- <b>{name}</b>: число находок высокой серьёзности выросло "
+        "с {previous} до {count} в {where} ({severity})"
+    ),
+    "summary.item.never_ran": "- <b>{name}</b>: завершённых запусков Guard не найдено ({severity})",
 }
 
 CATALOGS: Mapping[Language, Catalog] = {"en": _EN, "ru": _RU}
