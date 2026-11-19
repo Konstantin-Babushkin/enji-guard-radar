@@ -26,6 +26,7 @@ ENV_OPS_CHAT_ID = "TELEGRAM_OPS_CHAT_ID"
 NAME_SETTINGS = "settings"
 NAME_OPS_ID = "ops chat id"
 NAME_CONFIG = "config"
+NAME_MESSAGE_LANGUAGE = "message language"
 NAME_STATE = "state"
 NAME_UNEVALUATED = "unevaluated projects"
 NAME_DIGEST = "weekly digest"
@@ -169,6 +170,16 @@ def verdict_config(*, error: str | None, override_count: int) -> CheckResult:
     return _result(
         NAME_CONFIG, CheckStatus.PASS, f"config loads ({override_count} project entries)"
     )
+
+
+LANGUAGE_NAMES = {"en": "English", "ru": "Russian"}
+
+
+def verdict_message_language(config: RadarConfig) -> CheckResult:
+    """Which language Telegram messages are written in; doctor's own output stays English."""
+    language = config.messages.language
+    detail = f"{LANGUAGE_NAMES[language]} (messages.language: {language})"
+    return _result(NAME_MESSAGE_LANGUAGE, CheckStatus.PASS, detail)
 
 
 def verdict_state(load: StateLoad) -> CheckResult:

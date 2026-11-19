@@ -507,3 +507,37 @@ def test_phase3_example_documents_every_new_key() -> None:
         "tooling_window_days:",
     ):
         assert key in text, key
+
+
+def test_messages_language_defaults_to_english() -> None:
+    assert parse("").messages.language == "en"
+    assert RadarConfig().messages.language == "en"
+
+
+@pytest.mark.parametrize("language", ["en", "ru"])
+def test_messages_language_accepts_en_and_ru(language: str) -> None:
+    assert parse(f"messages:\n  language: {language}\n").messages.language == language
+
+
+@pytest.mark.parametrize("value", ["de", "RU", "'ru '", "5", "null", "[ru]", "true"])
+def test_messages_language_rejects(value: str) -> None:
+    with pytest.raises(ConfigError, match=r"test\.yaml: messages\.language") as caught:
+        parse(f"messages:\n  language: {value}\n")
+    assert "messages.language: Input should be 'en' or 'ru'" in str(caught.value)
+
+
+def test_messages_unknown_key_is_an_error() -> None:
+    with pytest.raises(ConfigError, match=r"test\.yaml: messages\.colour"):
+        parse("messages:\n  colour: x\n")
+
+
+@pytest.mark.parametrize("body", ["messages: ru\n", "messages:\n", "messages: [en]\n"])
+def test_messages_must_be_a_mapping(body: str) -> None:
+    with pytest.raises(ConfigError, match=r"test\.yaml: messages"):
+        parse(body)
+
+
+def test_example_documents_messages_language() -> None:
+    text = EXAMPLE.read_text(encoding="utf-8")
+    assert "messages:" in text
+    assert "language: en" in text

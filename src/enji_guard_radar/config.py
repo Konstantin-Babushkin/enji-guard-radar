@@ -11,6 +11,8 @@ from typing import Any, Literal
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, StrictInt, ValidationError, field_validator
 
+from enji_guard_radar.texts import DEFAULT_LANGUAGE, Language
+
 logger = logging.getLogger(__name__)
 
 
@@ -126,6 +128,14 @@ class OpsSettings(BaseModel):
     failures_before_alert: StrictInt = Field(default=3, ge=FAILURES_MIN, le=FAILURES_MAX)
 
 
+class MessageSettings(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    # Language of every Telegram message, group and ops chat.
+    # Logs, doctor and CLI errors stay English.
+    language: Language = DEFAULT_LANGUAGE
+
+
 class DigestSettings(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
@@ -185,6 +195,7 @@ class RadarConfig(BaseModel):
     alerts: AlertSettings = Field(default_factory=AlertSettings)
     high: HighSettings = Field(default_factory=HighSettings)
     ops: OpsSettings = Field(default_factory=OpsSettings)
+    messages: MessageSettings = Field(default_factory=MessageSettings)
     digest: DigestSettings = Field(default_factory=DigestSettings)
     reminders: ReminderSettings = Field(default_factory=ReminderSettings)
     scores: ScoreSettings = Field(default_factory=ScoreSettings)

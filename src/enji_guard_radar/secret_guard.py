@@ -7,6 +7,7 @@ from typing import TextIO
 
 from enji_guard_radar.model import OutboundMessage
 from enji_guard_radar.ports import DeliveryError, NotDelivered, Notifier, SendOutcome
+from enji_guard_radar.texts import ActionCode, ActionNotice, render_action
 
 logger = logging.getLogger(__name__)
 
@@ -33,10 +34,8 @@ LOG_FORMAT = "%(asctime)s %(levelname)s %(name)s: %(message)s"
 # "mcp" logs session ids at INFO.
 QUIET_LOGGERS = ("urllib3", "httpx", "httpcore", "httpx2", "httpcore2", "mcp")
 
-_BLOCKED_ACTION = (
-    "A message was withheld because it looked like it contained a secret; "
-    "check the radar log and the Guard data it came from"
-)
+_BLOCKED_NOTICE = ActionNotice(code=ActionCode.SECRET_WITHHELD)
+_BLOCKED_ACTION = render_action(_BLOCKED_NOTICE, "en")
 
 
 def _usable(known_secrets: Iterable[str]) -> list[str]:
@@ -83,6 +82,7 @@ class SecretGatedNotifier:
             detail=f"withheld by the secret gate (pattern {pattern})",
             stop_sending=False,
             operator_action=_BLOCKED_ACTION,
+            action_notice=_BLOCKED_NOTICE,
         )
 
 

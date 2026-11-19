@@ -13,17 +13,19 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 
 from enji_guard_radar.guard import ListingUnknown, ProjectListing, ProjectUnknown
-from enji_guard_radar.guard_auth import AUTH_COMMAND, AUTH_FAILURE_TEXT
+from enji_guard_radar.guard_auth import AUTH_COMMAND
 from enji_guard_radar.ledger import FailureCause, PollHealth
 from enji_guard_radar.messages import escape
 from enji_guard_radar.model import Audience, OutboundMessage
 from enji_guard_radar.ports import AuthFailureKind, GuardFailure
+from enji_guard_radar.texts import DEFAULT_LANGUAGE, Language, counted, text
 
 # When several projects fail for different reasons, the one the operator can act on wins.
 _CAUSE_PRECEDENCE = (GuardFailure.AUTH, GuardFailure.UNAVAILABLE, GuardFailure.DATA)
-_UNAVAILABLE_TEXT = "Guard is unreachable or failing"
-_DATA_TEXT = "Guard answered with data the radar does not accept; check the radar log"
-_AUTH_FALLBACK_TEXT = f"Guard login problem: run `{AUTH_COMMAND}`"
+# The English texts; the catalog holds them for every language.
+_UNAVAILABLE_TEXT = text("en", "ops.reason.unavailable")
+_DATA_TEXT = text("en", "ops.reason.data")
+_AUTH_FALLBACK_TEXT = text("en", "ops.reason.auth_fallback", command=AUTH_COMMAND)
 _TIME_FORMAT = "%Y-%m-%d %H:%M"
 
 
@@ -131,30 +133,29 @@ def mark_ops_delivered(health: PollHealth, action: OpsAction, now: datetime) -> 
     return health
 
 
-def ops_message(action: Outage | Recovered) -> OutboundMessage:
+def ops_message(
+    action: Outage | Recovered, *, language: Language = DEFAULT_LANGUAGE
+) -> OutboundMessage:
     if isinstance(action, Recovered):
-        text = (
-            "Guard radar recovered: Guard polls work again "
-            f"(failing since {_utc_text(action.since)} UTC)."
-        )
-        return OutboundMessage(text=escape(text), audience=Audience.OPS)
-    text = (
-        f"Guard radar cannot read Guard: {_reason_text(action)}. "
-        f"Failing since {_utc_text(action.since)} UTC "
-        f"({action.failures} failed polls in a row). "
-        "The radar keeps polling and reports here once when it recovers."
+        recovered = text(language, "ops.recovered", since=_utc_text(action.since))
+        return OutboundMessage(text=escape(recovered), audience=Audience.OPS)
+    outage = text(
+        language,
+        "ops.outage",
+        reason=_reason_text(action, language),
+        since=_utc_text(action.since),
+        failures=counted(language, "noun.failed_poll", action.failures),
     )
-    return OutboundMessage(text=escape(text), audience=Audience.OPS)
+    return OutboundMessage(text=escape(outage), audience=Audience.OPS)
 
 
-def _reason_text(action: Outage) -> str:
+def _reason_text(action: Outage, language: Language) -> str:
     if action.cause is GuardFailure.AUTH:
-        if action.auth_kind is None:
-            return _AUTH_FALLBACK_TEXT
-        return AUTH_FAILURE_TEXT[action.auth_kind]
+        key = "auth_fallback" if action.auth_kind is None else action.auth_kind.value
+        return text(language, f"ops.reason.{key}", command=AUTH_COMMAND)
     if action.cause is GuardFailure.UNAVAILABLE:
-        return _UNAVAILABLE_TEXT
-    return _DATA_TEXT
+        return text(language, "ops.reason.unavailable")
+    return text(language, "ops.reason.data")
 
 
 def _utc_text(moment: datetime) -> str:

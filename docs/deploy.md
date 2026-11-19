@@ -29,7 +29,10 @@ resolved or downloaded at run time.
 
 1. Copy the example config and edit it:
    `sudo install -D -m 0644 config/radar.example.yaml /etc/enji-guard-radar/radar.yaml`.
-   It holds no secrets. Check `ops.failures_before_alert` (default 3).
+   It holds no secrets. Check `ops.failures_before_alert` (default 3). To get every Telegram
+   message (group alerts, reminders, digest and the ops chat) in Russian, set
+   `messages.language: ru` (default `en`); logs, `doctor` and CLI errors stay English, and
+   changing the language re-sends nothing.
 2. Create `/etc/enji-guard-radar/radar.env`, plain `KEY=VALUE` lines, mode 0600, owned by the
    service user (`sudo install -m 0600 -o enji-guard-radar -g enji-guard-radar /dev/null /etc/enji-guard-radar/radar.env`):
 
