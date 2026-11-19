@@ -21,7 +21,6 @@ MIN_MAX_CHARS = 1000
 MAX_NAME_CHARS = 80
 # The English texts other modules and tests name; the catalog holds them for every language.
 UNNAMED_PROJECT = text("en", "name.unnamed")
-LONG_STANDING_PREFIX = "Long-standing: "
 
 
 def escape(text: str) -> str:

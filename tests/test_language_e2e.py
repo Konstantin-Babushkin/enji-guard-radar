@@ -70,7 +70,7 @@ def test_golden_default_dry_run_output(tmp_path: Path) -> None:
 ALERT_AT = "2026-12-01T12:00:00Z"
 CYRILLIC = re.compile("[А-Яа-яЁё]")
 ENGLISH_PHRASES = re.compile(
-    "weekly digest|Stale Guard scans|No Guard runs|High findings|Severity:|Open items|"
+    "weekly digest|no scan|need attention|Open items|"
     "Last successful|more open|could not be read|Resolved|Seen by the radar|No completed|"
     "Tooling gap|Stale:|High:"
 )
