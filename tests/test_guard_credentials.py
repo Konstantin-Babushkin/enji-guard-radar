@@ -556,3 +556,23 @@ def test_urllib_transport_posts_a_form(monkeypatch: pytest.MonkeyPatch) -> None:
     assert request.data == b"grant_type=refresh_token"
     assert request.get_header("Content-type") == "application/x-www-form-urlencoded"
     assert request.get_header("Accept") == "application/json"
+
+
+def test_urllib_transport_sends_its_own_user_agent(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Cloudflare blocks the default Python-urllib signature with a 403 (error 1010)."""
+    seen: list[urllib.request.Request] = []
+
+    def fake_urlopen(request: urllib.request.Request, **_kw: object) -> NoReturn:
+        seen.append(request)
+        raise urllib.error.HTTPError(
+            request.full_url, 400, "Bad Request", email.message.Message(), io.BytesIO(b"{}")
+        )
+
+    monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
+    transport = UrllibOAuthTransport()
+    transport.get_json("https://fleet.enji.ai/x", 1.0)
+    transport.post_json("https://fleet.enji.ai/x", {}, 1.0)
+    transport.post_form("https://fleet.enji.ai/x", {}, 1.0)
+
+    assert len(seen) == 3
+    assert {r.get_header("User-agent") for r in seen} == {"enji-guard-radar"}

@@ -133,6 +133,10 @@ class LoginTransport(FormTransport, Protocol):
         ...
 
 
+# Cloudflare in front of Guard answers 403 (error 1010) to the default "Python-urllib" signature.
+USER_AGENT = "enji-guard-radar"
+
+
 class UrllibOAuthTransport:
     """stdlib requests; default TLS verification, and no URL in any error it raises."""
 
@@ -143,20 +147,29 @@ class UrllibOAuthTransport:
             headers={
                 "Content-Type": "application/x-www-form-urlencoded",
                 "Accept": "application/json",
+                "User-Agent": USER_AGENT,
             },
             method="POST",
         )
         return self._send(request, timeout_s)
 
     def get_json(self, url: str, timeout_s: float) -> HttpResponse:
-        request = urllib.request.Request(url, headers={"Accept": "application/json"}, method="GET")
+        request = urllib.request.Request(
+            url,
+            headers={"Accept": "application/json", "User-Agent": USER_AGENT},
+            method="GET",
+        )
         return self._send(request, timeout_s)
 
     def post_json(self, url: str, payload: Mapping[str, object], timeout_s: float) -> HttpResponse:
         request = urllib.request.Request(
             url,
             data=json.dumps(payload).encode("utf-8"),
-            headers={"Content-Type": "application/json", "Accept": "application/json"},
+            headers={
+                "Content-Type": "application/json",
+                "Accept": "application/json",
+                "User-Agent": USER_AGENT,
+            },
             method="POST",
         )
         return self._send(request, timeout_s)
