@@ -7,7 +7,7 @@ import unicodedata
 from collections.abc import Sequence
 
 from enji_guard_radar.model import SEVERITY_ORDER, Alert, AlertKind, OutboundMessage
-from enji_guard_radar.texts import DEFAULT_LANGUAGE, Language, counted, severity_word, text
+from enji_guard_radar.texts import DEFAULT_LANGUAGE, Language, counted, text
 
 logger = logging.getLogger(__name__)
 
@@ -70,10 +70,6 @@ def _high_count(alert: Alert) -> int:
         message = "a High alert needs count"
         raise ValueError(message)
     return alert.count
-
-
-def _is_rise(alert: Alert) -> bool:
-    return alert.previous_count is not None and _high_count(alert) > alert.previous_count
 
 
 def high_findings_text(count: int, *, language: Language = DEFAULT_LANGUAGE) -> str:
@@ -163,39 +159,17 @@ def render_alert(
     raise ValueError(message)
 
 
-def render_summary_item(alert: Alert, *, language: Language = DEFAULT_LANGUAGE) -> str:
-    name = escape(clean_name(alert.project_name, language=language))
-    severity = severity_word(language, alert.severity)
-    if alert.kind is AlertKind.STALE:
-        if alert.age_days is None:
-            message = "a stale alert needs age_days"
-            raise ValueError(message)
-        days = days_text(alert.age_days, language=language)
-        return text(language, "summary.item.stale", name=name, days=days, severity=severity)
-    if alert.kind is AlertKind.HIGH_FINDINGS:
-        where = high_where(alert)
-        count = _high_count(alert)
-        if _is_rise(alert):
-            return text(
-                language,
-                "summary.item.high_rise",
-                name=name,
-                previous=alert.previous_count,
-                count=count,
-                where=where,
-                severity=severity,
-            )
-        return text(
-            language, "summary.item.high", name=name, count=count, where=where, severity=severity
-        )
-    return text(language, "summary.item.never_ran", name=name, severity=severity)
+def render_summary_item(
+    alert: Alert, *, language: Language = DEFAULT_LANGUAGE, show_repo: bool = False
+) -> str:
+    """One shape for single alerts and summary items."""
+    return render_alert(alert, language=language, show_repo=show_repo)
 
 
 def summary_header(
     total: int, index: int, count: int, *, language: Language = DEFAULT_LANGUAGE
 ) -> str:
-    problems = counted(language, "noun.problem", total)
-    header = text(language, "summary.header", problems=problems)
+    header = text(language, "summary.short_header", count=total)
     return f"{header} ({index}/{count})" if count > 1 else header
 
 
@@ -233,10 +207,16 @@ def pack_items(items: Sequence[str], header_units: int, max_chars: int) -> list[
 
 
 def _summary_messages(
-    ordered: Sequence[Alert], max_chars: int, language: Language
+    ordered: Sequence[Alert],
+    max_chars: int,
+    language: Language,
+    ambiguous: frozenset[tuple[str, str]],
 ) -> list[OutboundMessage]:
     total = len(ordered)
-    items = [render_summary_item(alert, language=language) for alert in ordered]
+    items = [
+        render_summary_item(alert, language=language, show_repo=_shows_repo(alert, ambiguous))
+        for alert in ordered
+    ]
     head_units = telegram_length(summary_header(total, 1, 1, language=language))
     chunks = pack_items(items, head_units, max_chars)
     if len(chunks) > 1:
@@ -280,6 +260,6 @@ def render_messages(
             )
             for alert in ordered
         ]
-    messages = _summary_messages(ordered, max_chars, language)
+    messages = _summary_messages(ordered, max_chars, language, ambiguous)
     logger.info("collapsed %d alerts into %d summary message(s)", len(ordered), len(messages))
     return messages

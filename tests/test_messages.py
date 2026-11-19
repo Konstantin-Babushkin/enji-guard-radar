@@ -1,4 +1,5 @@
 import random
+import re
 from datetime import UTC, datetime
 
 import pytest
@@ -238,13 +239,13 @@ def test_both_languages_send_the_same_keys_in_the_same_order() -> None:
     assert [m.text for m in english] != [m.text for m in russian]
 
 
-def test_summary_item_formats() -> None:
-    assert render_summary_item(stale("B")) == (
-        "- <b>B</b>: no completed Guard run for 27 days (medium)"
-    )
-    assert (
-        render_summary_item(never_ran("C")) == "- <b>C</b>: no completed Guard run found (medium)"
-    )
+def test_summary_item_is_the_single_alert_line() -> None:
+    for alert in (stale("B"), never_ran("C"), high(), high(count=3, previous=1)):
+        for language in ("en", "ru"):
+            assert render_summary_item(alert, language=language) == render_alert(
+                alert, language=language
+            )
+    assert render_summary_item(high(), show_repo=True) == render_alert(high(), show_repo=True)
 
 
 # --- collapse ---
@@ -264,8 +265,35 @@ def test_collapse_above_threshold_sends_one_summary_with_all_keys() -> None:
     alerts = many(4)
     messages = render_messages(alerts, collapse_above=3)
     assert len(messages) == 1
-    assert messages[0].text.startswith("Guard radar: 4 problems need attention\n")
+    assert messages[0].text.startswith("Radar · 4 need attention\n")
     assert sorted(k.as_text() for k in messages[0].keys) == sorted(a.key.as_text() for a in alerts)
+
+
+def test_collapse_header_and_items_worst_first() -> None:
+    alerts = [high(), stale("Project E", pid="pe", age=105), stale("Project B", age=28)]
+    (message,) = render_messages(alerts, collapse_above=2)
+    assert message.text.splitlines() == [
+        "Radar · 3 need attention",
+        "🔴 <b>Project A</b> · security High 0→1 · 8d",
+        "🟡 <b>Project E</b> · no scan 105d",
+        "🟡 <b>Project B</b> · no scan 28d",
+    ]
+    (russian,) = render_messages(alerts, collapse_above=2, language="ru")
+    assert russian.text.splitlines()[0] == "Радар · требуют внимания: 3"
+    separate = render_messages(alerts, collapse_above=3)
+    assert [m.text for m in separate] == message.text.splitlines()[1:]
+
+
+def test_repo_shown_inside_a_summary_for_two_repos_of_one_audit() -> None:
+    first = high(repo="r1", repo_name="acme/r1")
+    second = high(repo="r2", repo_name="acme/r2")
+    tests_alert = high(repo="r1", audit="audit.tests", count=2)
+    (message,) = render_messages([first, second, tests_alert, stale("B")], collapse_above=2)
+    lines = message.text.splitlines()
+    assert lines[0] == "Radar · 4 need attention"
+    assert "🔴 <b>Project A</b> · security (acme/r1) High 0→1 · 8d" in lines
+    assert "🔴 <b>Project A</b> · security (acme/r2) High 0→1 · 8d" in lines
+    assert "🔴 <b>Project A</b> · tests High 0→2 · 8d" in lines
 
 
 def test_alerts_are_ordered_worst_first_then_oldest_then_never_ran_last() -> None:
@@ -298,8 +326,8 @@ def test_split_boundary_is_exactly_max_chars() -> None:
     assert len(render_messages(alerts, collapse_above=3, max_chars=size)) == 1
     parts = render_messages(alerts, collapse_above=3, max_chars=size - 1)
     assert len(parts) == 2
-    assert parts[0].text.startswith("Guard radar: 30 problems need attention (1/2)\n")
-    assert parts[1].text.startswith("Guard radar: 30 problems need attention (2/2)\n")
+    assert parts[0].text.startswith("Radar · 30 need attention (1/2)\n")
+    assert parts[1].text.startswith("Radar · 30 need attention (2/2)\n")
     assert all(telegram_length(p.text) <= size - 1 for p in parts)
     keys = keys_of(parts)
     assert len(keys) == len(set(keys)) == 30
@@ -312,7 +340,20 @@ def test_split_each_chunk_carries_the_keys_of_its_items() -> None:
     for part in parts:
         item_lines = part.text.split("\n")[1:]
         assert len(item_lines) == len(part.keys)
-        assert all(line.startswith("- <b>") and line.endswith(")") for line in item_lines)
+        assert all(re.fullmatch(r"🟡 <b>.+</b> · no scan \d+d", line) for line in item_lines)
+
+
+@pytest.mark.parametrize("language", ["en", "ru"])
+def test_split_sixty_long_names_into_numbered_chunks(language: str) -> None:
+    alerts = [stale(f"{i:02d}" + "x" * 78, pid=f"p{i:02d}", age=30 + i) for i in range(60)]
+    parts = render_messages(alerts, collapse_above=2, max_chars=MIN_MAX_CHARS, language=language)  # type: ignore[arg-type]
+    assert len(parts) > 1
+    for number, part in enumerate(parts, start=1):
+        lines = part.text.splitlines()
+        assert lines[0].endswith(f" ({number}/{len(parts)})")
+        assert telegram_length(part.text) <= MIN_MAX_CHARS
+        assert len(lines) - 1 == len(part.keys)
+    assert sorted(k.project_id for k in keys_of(parts)) == sorted(a.key.project_id for a in alerts)
 
 
 @pytest.mark.parametrize("max_chars", [MIN_MAX_CHARS - 1, TELEGRAM_MAX_CHARS + 1])
@@ -330,6 +371,22 @@ def test_split_worst_case_alert_fits_alone_and_as_a_one_item_chunk(name: str) ->
     parts = render_messages([alert, *others], collapse_above=3, max_chars=MIN_MAX_CHARS)
     assert all(telegram_length(p.text) <= MIN_MAX_CHARS for p in parts)
     assert len(keys_of(parts)) == 4
+
+
+@pytest.mark.parametrize("language", ["en", "ru"])
+def test_worst_case_high_item_with_repo_fits_the_smallest_message(language: str) -> None:
+    name = "\U0001f600" * 80
+    first = high(name, repo="r1", repo_name="&" * 80, audit="audit." + "<" * 60, age=36500)
+    second = high(name, repo="r2", repo_name="&" * 80, audit="audit." + "<" * 60, age=36500)
+    for collapse_above in (5, 1):
+        messages = render_messages(
+            [first, second],
+            collapse_above=collapse_above,
+            max_chars=MIN_MAX_CHARS,
+            language=language,  # type: ignore[arg-type]
+        )
+        assert all(telegram_length(m.text) <= MIN_MAX_CHARS for m in messages)
+        assert len(keys_of(messages)) == 2
 
 
 def test_invariant_over_random_alert_sets() -> None:

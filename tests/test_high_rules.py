@@ -195,12 +195,8 @@ def test_alert_model_fields_carry_no_evidence() -> None:
 def test_summary_item_first_sight_and_rise() -> None:
     first = high_alert(series(previous_high=None), aged_after_days=14, now=NOW)
     rise = high_alert(series(), aged_after_days=14, now=NOW)
-    assert render_summary_item(first) == (
-        "- <b>Project A</b>: 3 High in audit.security (acme/service-a) (high)"
-    )
-    assert render_summary_item(rise) == (
-        "- <b>Project A</b>: High rose from 1 to 3 in audit.security (acme/service-a) (high)"
-    )
+    assert render_summary_item(first) == "🔴 <b>Project A</b> · security High 0→3 · 11d"
+    assert render_summary_item(rise) == "🔴 <b>Project A</b> · security High 1→3 · 11d"
 
 
 def test_collapse_puts_high_first() -> None:
@@ -220,8 +216,8 @@ def test_collapse_puts_high_first() -> None:
     messages = render_messages([*stale, high], collapse_above=3)
     assert len(messages) == 1
     body = messages[0].text.splitlines()
-    assert body[0] == "Guard radar: 4 problems need attention"
-    assert body[1].startswith("- <b>Project A</b>: High rose from 1 to 3")
+    assert body[0] == "Radar · 4 need attention"
+    assert body[1] == "🔴 <b>Project A</b> · security High 1→3 · 11d"
     assert messages[0].keys[0] == high.key
 
 

@@ -282,7 +282,8 @@ def test_dry_run_collapses_alerts_above_the_configured_threshold(tmp_path: Path)
     lines = out.splitlines()
     assert code == 0
     assert lines.count("--- would send to group ---") == 1
-    assert "Guard radar: 2 problems need attention" in lines
+    assert "Radar · 2 need attention" in lines
+    assert f"🟡 <b>{A_NAME}</b> · no scan 20d" in lines
     assert "1 message(s) would be sent" in out
 
 
@@ -294,6 +295,6 @@ def test_two_alerts_are_sent_individually_with_default_collapse(tmp_path: Path) 
     lines = out.splitlines()
     assert code == 0
     assert lines.count("--- would send to group ---") == 2
-    assert not any(line.startswith("Guard radar:") for line in lines)
+    assert not any(line.startswith("Radar ·") for line in lines)
     assert f"🟡 <b>{A_NAME}</b> · no scan 20d" in lines
     assert "2 message(s) would be sent" in out
