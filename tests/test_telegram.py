@@ -2,6 +2,7 @@ import email.message
 import io
 import json
 import logging
+import re
 import urllib.error
 import urllib.request
 from datetime import UTC, datetime
@@ -25,6 +26,7 @@ from enji_guard_radar.telegram import (
     classify_result,
     parse_telegram_response,
 )
+from enji_guard_radar.texts import ActionCode, render_action
 
 CHAT_ID = "-1001234567890"
 
@@ -411,3 +413,88 @@ def test_call_method_lets_a_transport_failure_through_without_the_url() -> None:
 )
 def test_chat_payload_id(chat_id: str, expected: int | str) -> None:
     assert chat_payload_id(chat_id) == expected
+
+
+# --- operator actions travel as typed notices, so the ops chat can translate them ---
+
+
+def assert_notice_matches(outcome: object, code: ActionCode, *, bits: tuple[str, ...]) -> None:
+    assert isinstance(outcome, Delivered | NotDelivered)
+    notice = outcome.action_notice
+    assert notice is not None
+    assert notice.code is code
+    assert outcome.operator_action == render_action(notice, "en")
+    russian = render_action(notice, "ru")
+    assert re.search("[А-Яа-яЁё]", russian)
+    for bit in bits:  # ids, codes and env names are inserted verbatim in both languages
+        assert bit in outcome.operator_action
+        assert bit in russian
+    assert FAKE_TOKEN not in russian
+
+
+def test_notice_for_a_rejected_token() -> None:
+    outcome, *_ = send_with([error_response(401, 401, f"Unauthorized {FAKE_TOKEN}")])
+    assert_notice_matches(outcome, ActionCode.TOKEN_REJECTED, bits=("401", "TELEGRAM_BOT_TOKEN"))
+    assert isinstance(outcome, NotDelivered)
+    assert outcome.operator_action == (
+        "Telegram rejected the bot token (HTTP 401); check TELEGRAM_BOT_TOKEN"
+    )
+
+
+def test_notice_for_a_forbidden_chat() -> None:
+    outcome, *_ = send_with([error_response(403, 403, "Forbidden: bot was kicked")])
+    assert_notice_matches(
+        outcome, ActionCode.CHAT_FORBIDDEN, bits=("-1001234567890", "403", "TELEGRAM_CHAT_ID")
+    )
+    assert isinstance(outcome, NotDelivered)
+    assert outcome.operator_action == (
+        "Telegram refused to post to chat -1001234567890 (HTTP 403): the bot was removed, "
+        "blocked or cannot post there; add it back or fix TELEGRAM_CHAT_ID"
+    )
+
+
+def test_notice_for_a_bad_request_keeps_the_telegram_description() -> None:
+    outcome, *_ = send_with([error_response(400, 400, "Bad Request: can't parse entities")])
+    assert_notice_matches(
+        outcome, ActionCode.BAD_REQUEST, bits=("Bad Request: can't parse entities",)
+    )
+    assert isinstance(outcome, NotDelivered)
+    assert outcome.detail == outcome.operator_action
+    assert outcome.operator_action.startswith("Telegram rejected the message: ")
+
+
+def test_notice_for_a_migrated_chat_on_success_and_on_failure() -> None:
+    delivered, *_ = send_with([migrated(), ok_response(7)])
+    assert_notice_matches(
+        delivered,
+        ActionCode.CHAT_MIGRATED,
+        bits=(str(NEW_CHAT), "-1001234567890", "TELEGRAM_CHAT_ID"),
+    )
+    assert isinstance(delivered, Delivered)
+    assert delivered.operator_action == (
+        f"Telegram chat -1001234567890 was upgraded to {NEW_CHAT}; set TELEGRAM_CHAT_ID={NEW_CHAT}"
+    )
+    failed, *_ = send_with([migrated(), migrated(403)])
+    assert_notice_matches(failed, ActionCode.CHAT_MIGRATED, bits=(str(NEW_CHAT),))
+
+
+def test_a_transient_failure_has_no_notice() -> None:
+    outcome, *_ = send_with([error_response(500, 500, "Internal Server Error")])
+    assert isinstance(outcome, NotDelivered)
+    assert outcome.operator_action is None
+    assert outcome.action_notice is None
+
+
+def test_the_secret_gate_attaches_a_notice() -> None:
+    class Inner:
+        def send(self, message: OutboundMessage) -> Delivered:
+            return Delivered()
+
+    gate = SecretGatedNotifier(Inner(), [FAKE_TOKEN])
+    outcome = gate.send(OutboundMessage(text=f"leak {FAKE_TOKEN}"))
+    assert_notice_matches(outcome, ActionCode.SECRET_WITHHELD, bits=())
+    assert isinstance(outcome, NotDelivered)
+    assert outcome.operator_action == (
+        "A message was withheld because it looked like it contained a secret; "
+        "check the radar log and the Guard data it came from"
+    )

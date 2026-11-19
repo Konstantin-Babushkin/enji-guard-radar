@@ -9,6 +9,7 @@ from typing import Protocol
 from pydantic import BaseModel, ConfigDict
 
 from enji_guard_radar.model import OutboundMessage
+from enji_guard_radar.texts import ActionNotice
 
 
 class GuardFailure(StrEnum):
@@ -98,6 +99,8 @@ class Delivered(BaseModel):
 
     message_id: int | None = None
     operator_action: str | None = None
+    # The same action as data, so the ops chat can show it in its language.
+    action_notice: ActionNotice | None = None
 
 
 class Printed(BaseModel):
@@ -111,6 +114,7 @@ class NotDelivered(BaseModel):
     detail: str
     stop_sending: bool
     operator_action: str | None = None
+    action_notice: ActionNotice | None = None
 
 
 SendOutcome = Delivered | Printed | NotDelivered

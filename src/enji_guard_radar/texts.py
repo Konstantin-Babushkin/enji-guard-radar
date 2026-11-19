@@ -8,7 +8,10 @@ literal `<b>` / `</b>` tags only. `parity_problems` keeps the two catalogs in st
 
 import string
 from collections.abc import Mapping
+from enum import StrEnum
 from typing import Literal
+
+from pydantic import BaseModel, ConfigDict
 
 Language = Literal["en", "ru"]
 DEFAULT_LANGUAGE: Language = "en"
@@ -84,6 +87,18 @@ _EN: dict[str, Entry] = {
     "digest.resolved.stale": "- <b>{name}</b>: no longer stale.",
     "digest.resolved.never_ran": "- <b>{name}</b>: now has completed Guard runs.",
     "digest.resolved.other": "- <b>{name}</b>: no longer open.",
+    "action.token_rejected": "Telegram rejected the bot token (HTTP {code}); check {env}",
+    "action.chat_forbidden": (
+        "Telegram refused to post to chat {chat} (HTTP 403): the bot was removed, blocked or "
+        "cannot post there; add it back or fix {env}"
+    ),
+    "action.chat_migrated": "Telegram chat {old} was upgraded to {new}; set {env}={new}",
+    "action.bad_request": "Telegram rejected the message: {description}",
+    "action.secret_withheld": (
+        "A message was withheld because it looked like it contained a secret; "
+        "check the radar log and the Guard data it came from"
+    ),
+    "ops.attention": "Guard radar needs attention:",
 }
 
 _RU: dict[str, Entry] = {
@@ -158,6 +173,18 @@ _RU: dict[str, Entry] = {
     "digest.resolved.stale": "- <b>{name}</b>: проверки больше не устарели.",
     "digest.resolved.never_ran": "- <b>{name}</b>: появились завершённые запуски Guard.",
     "digest.resolved.other": "- <b>{name}</b>: больше не открыто.",
+    "action.token_rejected": "Telegram отклонил токен бота (HTTP {code}); проверьте {env}",
+    "action.chat_forbidden": (
+        "Telegram не разрешил писать в чат {chat} (HTTP 403): бота удалили, заблокировали "
+        "или он не может там писать; верните его в чат или поправьте {env}"
+    ),
+    "action.chat_migrated": "Чат Telegram {old} преобразован в {new}; задайте {env}={new}",
+    "action.bad_request": "Telegram отклонил сообщение: {description}",
+    "action.secret_withheld": (
+        "Сообщение задержано: оно похоже на секрет; "
+        "проверьте лог радара и данные Guard, из которых оно взято"
+    ),
+    "ops.attention": "Guard radar: нужно вмешательство оператора:",
 }
 
 CATALOGS: Mapping[Language, Catalog] = {"en": _EN, "ru": _RU}
@@ -199,6 +226,31 @@ def counted(language: Language, key: str, count: int) -> str:
 
 def severity_word(language: Language, value: str) -> str:
     return text(language, f"severity.{value}")
+
+
+class ActionCode(StrEnum):
+    TOKEN_REJECTED = "token_rejected"
+    CHAT_FORBIDDEN = "chat_forbidden"
+    CHAT_MIGRATED = "chat_migrated"
+    BAD_REQUEST = "bad_request"
+    SECRET_WITHHELD = "secret_withheld"
+
+
+class ActionNotice(BaseModel):
+    """One thing the operator must do, as data: the code picks the text, `params` fill it.
+
+    Ids, codes, env names and the already sanitised Telegram description go in `params`
+    verbatim; the sentence around them comes from the catalog in the message language.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    code: ActionCode
+    params: dict[str, str] = {}
+
+
+def render_action(notice: ActionNotice, language: Language) -> str:
+    return text(language, f"action.{notice.code.value}", **notice.params)
 
 
 def placeholders(template: str) -> frozenset[str]:

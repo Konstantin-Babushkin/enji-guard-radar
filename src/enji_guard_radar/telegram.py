@@ -15,6 +15,7 @@ from pydantic import SecretStr
 from enji_guard_radar.model import OutboundMessage
 from enji_guard_radar.ports import Delivered, DeliveryError, NotDelivered, SendOutcome
 from enji_guard_radar.secret_guard import redact
+from enji_guard_radar.texts import ActionCode, ActionNotice, render_action
 
 logger = logging.getLogger(__name__)
 
@@ -224,14 +225,18 @@ class TelegramNotifier:
         detail: str,
         *,
         stop_sending: bool,
-        operator_action: str | None = None,
+        notice: ActionNotice | None = None,
     ) -> NotDelivered:
         if error in (DeliveryError.RATE_LIMITED, DeliveryError.TRANSIENT):
             logger.warning("telegram delivery failed (%s): %s", error.value, detail)
         else:
             logger.error("telegram delivery failed (%s): %s", error.value, detail)
         return NotDelivered(
-            error=error, detail=detail, stop_sending=stop_sending, operator_action=operator_action
+            error=error,
+            detail=detail,
+            stop_sending=stop_sending,
+            operator_action=None if notice is None else render_action(notice, "en"),
+            action_notice=notice,
         )
 
     def _failure_outcome(self, error: DeliveryError, result: TelegramResult) -> NotDelivered:
@@ -243,8 +248,9 @@ class TelegramNotifier:
                 error,
                 f"Telegram rejected the bot token (HTTP {code}): {description}",
                 stop_sending=True,
-                operator_action=(
-                    f"Telegram rejected the bot token (HTTP {code}); check {ENV_BOT_TOKEN_NAME}"
+                notice=ActionNotice(
+                    code=ActionCode.TOKEN_REJECTED,
+                    params={"code": str(code), "env": ENV_BOT_TOKEN_NAME},
                 ),
             )
         if error is DeliveryError.FORBIDDEN:
@@ -252,15 +258,19 @@ class TelegramNotifier:
                 error,
                 f"Telegram refused to post: {description}",
                 stop_sending=True,
-                operator_action=(
-                    f"Telegram refused to post to chat {self.chat_id} (HTTP 403): the bot was "
-                    f"removed, blocked or cannot post there; add it back or fix "
-                    f"{self._chat_env_name}"
+                notice=ActionNotice(
+                    code=ActionCode.CHAT_FORBIDDEN,
+                    params={"chat": str(self.chat_id), "env": self._chat_env_name},
                 ),
             )
         if error is DeliveryError.BAD_REQUEST:
-            detail = f"Telegram rejected the message: {description}"
-            return self._fail(error, detail, stop_sending=False, operator_action=detail)
+            notice = ActionNotice(code=ActionCode.BAD_REQUEST, params={"description": description})
+            return self._fail(
+                error,
+                render_action(notice, "en"),
+                stop_sending=False,
+                notice=notice,
+            )
         return self._fail(
             DeliveryError.TRANSIENT,
             f"Telegram answered HTTP {result.status}; left for the next run: {description}",
@@ -271,7 +281,7 @@ class TelegramNotifier:
         # The URL carries the token: keep it in this local variable only.
         url = f"{TELEGRAM_API_BASE}/bot{self._token.get_secret_value()}/{SEND_MESSAGE_METHOD}"
         original_chat = self.chat_id
-        migration_action: str | None = None
+        migration_notice: ActionNotice | None = None
         for attempt in range(1, self._max_attempts + 1):
             self._wait_for_interval()
             self._last_request_at = self._monotonic()
@@ -295,14 +305,24 @@ class TelegramNotifier:
             result = parse_telegram_response(response)
             error = classify_result(result)
             if error is None:
-                return Delivered(message_id=result.message_id, operator_action=migration_action)
+                return Delivered(
+                    message_id=result.message_id,
+                    operator_action=None
+                    if migration_notice is None
+                    else render_action(migration_notice, "en"),
+                    action_notice=migration_notice,
+                )
 
             if error is DeliveryError.CHAT_MIGRATED:
-                if migration_action is None:
+                if migration_notice is None:
                     new_chat = str(result.migrate_to_chat_id)
-                    migration_action = (
-                        f"Telegram chat {original_chat} was upgraded to {new_chat}; "
-                        f"set {self._chat_env_name}={new_chat}"
+                    migration_notice = ActionNotice(
+                        code=ActionCode.CHAT_MIGRATED,
+                        params={
+                            "old": original_chat,
+                            "new": new_chat,
+                            "env": self._chat_env_name,
+                        },
                     )
                     logger.error(
                         "Telegram chat %s was upgraded to %s; update %s",
@@ -317,7 +337,7 @@ class TelegramNotifier:
                     error,
                     "Telegram chat was upgraded; the message was left for the next run",
                     stop_sending=True,
-                    operator_action=migration_action,
+                    notice=migration_notice,
                 )
 
             if error is DeliveryError.RATE_LIMITED:
