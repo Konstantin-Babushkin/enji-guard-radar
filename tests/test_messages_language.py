@@ -6,6 +6,8 @@ from datetime import UTC, datetime, timedelta
 import pytest
 
 from enji_guard_radar.digest import DigestInput, build_digest, render_digest
+from enji_guard_radar.guard_auth import AUTH_FAILURE_TEXT
+from enji_guard_radar.health import Outage, Recovered, ops_message
 from enji_guard_radar.ledger import ResolvedItem
 from enji_guard_radar.messages import (
     DEFAULT_MAX_CHARS,
@@ -21,10 +23,12 @@ from enji_guard_radar.messages import (
     telegram_length,
 )
 from enji_guard_radar.model import Alert, AlertKey, AlertKind, OutboundMessage, Severity
+from enji_guard_radar.pipeline import ops_message_for_actions, ops_message_for_halt
+from enji_guard_radar.ports import AuthFailureKind, GuardFailure
 from enji_guard_radar.reminders import render_reminders
 from enji_guard_radar.score_rules import LowScore
 from enji_guard_radar.secret_guard import find_secret
-from enji_guard_radar.texts import Language
+from enji_guard_radar.texts import ActionCode, ActionNotice, Language, render_action
 from enji_guard_radar.tooling_rules import ToolingGap
 
 NOW = datetime(2026, 11, 18, 6, 0, tzinfo=UTC)
@@ -705,3 +709,146 @@ def test_digest_split_with_cyrillic_names_is_numbered_and_whole() -> None:
         assert not re.search(r"<(?!/?b>)", message.text)
     body = [line for m in messages for line in m.text.split("\n")[2:]]
     assert sum(line.startswith("- Устарело: <b>Проект &amp; &lt;тест&gt;") for line in body) == 40
+
+
+# --- ops chat ---
+
+SINCE = datetime(2026, 11, 18, 5, 0, tzinfo=UTC)
+RAW_LT = re.compile(r"<(?!/?b>)")
+
+
+def outage(failures: int = 3, cause: GuardFailure = GuardFailure.UNAVAILABLE) -> Outage:
+    return Outage(cause=cause, auth_kind=None, since=SINCE, failures=failures)
+
+
+def test_outage_message_in_both_languages() -> None:
+    assert ops_message(outage()).text == (
+        "Guard radar cannot read Guard: Guard is unreachable or failing. "
+        "Failing since 2026-11-18 05:00 UTC (3 failed polls in a row). "
+        "The radar keeps polling and reports here once when it recovers."
+    )
+    assert ops_message(outage(), language="ru").text == (
+        "Guard radar не может прочитать данные Guard: Guard недоступен или сбоит. "
+        "Сбои с 2026-11-18 05:00 UTC (3 неудачных опроса подряд). "
+        "Радар продолжает опрос и один раз сообщит здесь, когда связь восстановится."
+    )
+
+
+@pytest.mark.parametrize(
+    ("failures", "russian"),
+    [
+        (1, "1 неудачный опрос"),
+        (2, "2 неудачных опроса"),
+        (5, "5 неудачных опросов"),
+        (11, "11 неудачных опросов"),
+        (21, "21 неудачный опрос"),
+        (22, "22 неудачных опроса"),
+        (25, "25 неудачных опросов"),
+    ],
+)
+def test_outage_failed_poll_plurals(failures: int, russian: str) -> None:
+    assert f"({russian} подряд)" in ops_message(outage(failures), language="ru").text
+    assert f"({failures} failed polls in a row)" in ops_message(outage(failures)).text
+
+
+def test_recovery_message_in_both_languages() -> None:
+    assert ops_message(Recovered(since=SINCE)).text == (
+        "Guard radar recovered: Guard polls work again (failing since 2026-11-18 05:00 UTC)."
+    )
+    assert ops_message(Recovered(since=SINCE), language="ru").text == (
+        "Guard radar восстановился: опросы Guard снова работают (сбои с 2026-11-18 05:00 UTC)."
+    )
+
+
+@pytest.mark.parametrize("kind", list(AuthFailureKind))
+def test_auth_outage_reason_in_both_languages(kind: AuthFailureKind) -> None:
+    action = Outage(cause=GuardFailure.AUTH, auth_kind=kind, since=SINCE, failures=3)
+    english = ops_message(action).text
+    russian = ops_message(action, language="ru").text
+    assert english.startswith(f"Guard radar cannot read Guard: {AUTH_FAILURE_TEXT[kind]}.")
+    assert "`enji-guard-radar auth`" in russian
+    assert CYRILLIC.search(russian.split(": ", 1)[1])
+    assert not re.search("Guard login|Guard refused", russian)
+
+
+def test_auth_outage_without_a_kind_and_data_outage_in_russian() -> None:
+    unknown = Outage(cause=GuardFailure.AUTH, auth_kind=None, since=SINCE, failures=3)
+    assert "проблема со входом в Guard: выполните `enji-guard-radar auth`" in (
+        ops_message(unknown, language="ru").text
+    )
+    assert (
+        "посмотрите лог радара" in ops_message(outage(cause=GuardFailure.DATA), language="ru").text
+    )
+
+
+def test_halt_message_in_both_languages_escapes_the_reason_once() -> None:
+    english = ops_message_for_halt("bad <json> & more", True)
+    russian = ops_message_for_halt("bad <json> & more", False, language="ru")
+    assert english.text == (
+        "Guard radar halted: the state file is corrupt (bad &lt;json&gt; &amp; more). "
+        "Nothing was sent and nothing was reset. Backup valid: yes. "
+        "Check the file and restore the backup by hand only if it is right."
+    )
+    assert russian.text == (
+        "Guard radar остановлен: файл состояния повреждён (bad &lt;json&gt; &amp; more). "
+        "Ничего не отправлено и ничего не сброшено. Резервная копия цела: нет. "
+        "Проверьте файл и восстановите копию вручную, только если она верна."
+    )
+    assert english.audience.value == russian.audience.value == "ops"
+
+
+def test_action_notice_message_in_both_languages() -> None:
+    notices = (
+        ActionNotice(
+            code=ActionCode.CHAT_FORBIDDEN,
+            params={"chat": "-100123", "env": "TELEGRAM_CHAT_ID"},
+        ),
+        ActionNotice(code=ActionCode.BAD_REQUEST, params={"description": "Bad Request: <b> & co"}),
+        None,
+    )
+    actions = tuple(
+        a if n is None else render_action(n, "en")
+        for a, n in zip(("", "", "check the bot token <now>"), notices, strict=True)
+    )
+    english = ops_message_for_actions(actions, notices=notices)
+    russian = ops_message_for_actions(actions, notices=notices, language="ru")
+    assert english.text == (
+        "Guard radar needs attention:\n"
+        "- Telegram refused to post to chat -100123 (HTTP 403): the bot was removed, blocked or "
+        "cannot post there; add it back or fix TELEGRAM_CHAT_ID\n"
+        "- Telegram rejected the message: Bad Request: &lt;b&gt; &amp; co\n"
+        "- check the bot token &lt;now&gt;"
+    )
+    assert russian.text == (
+        "Guard radar: нужно вмешательство оператора:\n"
+        "- Telegram не разрешил писать в чат -100123 (HTTP 403): бота удалили, заблокировали "
+        "или он не может там писать; верните его в чат или поправьте TELEGRAM_CHAT_ID\n"
+        "- Telegram отклонил сообщение: Bad Request: &lt;b&gt; &amp; co\n"
+        "- check the bot token &lt;now&gt;"
+    )
+
+
+def test_plain_action_strings_keep_the_old_behaviour() -> None:
+    assert ops_message_for_actions(("a <b>", "c")).text == (
+        "Guard radar needs attention:\n- a &lt;b&gt;\n- c"
+    )
+
+
+def test_every_ops_text_is_clean() -> None:
+    notice = ActionNotice(code=ActionCode.SECRET_WITHHELD)
+    messages = [ops_message(outage(), language=language) for language in ("en", "ru")] + [
+        ops_message_for_actions(("x",), notices=(notice,), language="ru"),
+        ops_message_for_halt("r", True, language="ru"),
+        ops_message(Recovered(since=SINCE), language="ru"),
+    ]
+    for message in messages:
+        assert not RAW_LT.search(message.text)
+        assert find_secret(message.text, []) is None
+
+
+@pytest.mark.parametrize("code", list(ActionCode))
+def test_every_action_notice_renders_in_both_languages(code: ActionCode) -> None:
+    params = {"code": "401", "env": "E", "chat": "-1", "old": "-1", "new": "-2", "description": "d"}
+    notice = ActionNotice(code=code, params=params)
+    assert not CYRILLIC.search(render_action(notice, "en"))
+    assert CYRILLIC.search(render_action(notice, "ru"))

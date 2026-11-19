@@ -34,7 +34,8 @@ _EN: dict[str, Entry] = {
     "noun.project": ("project", "projects"),
     "noun.problem": ("problem", "problems"),
     "noun.item": ("item", "items"),
-    "noun.failed_poll": ("failed poll", "failed polls"),
+    # Plural for one as well: the English text has always said "1 failed polls in a row".
+    "noun.failed_poll": ("failed polls", "failed polls"),
     "severity.high": "high",
     "severity.medium": "medium",
     "severity.low": "low",
@@ -99,6 +100,28 @@ _EN: dict[str, Entry] = {
         "check the radar log and the Guard data it came from"
     ),
     "ops.attention": "Guard radar needs attention:",
+    "ops.recovered": "Guard radar recovered: Guard polls work again (failing since {since} UTC).",
+    "ops.outage": (
+        "Guard radar cannot read Guard: {reason}. Failing since {since} UTC "
+        "({failures} in a row). "
+        "The radar keeps polling and reports here once when it recovers."
+    ),
+    "ops.reason.unavailable": "Guard is unreachable or failing",
+    "ops.reason.data": "Guard answered with data the radar does not accept; check the radar log",
+    "ops.reason.auth_fallback": "Guard login problem: run `{command}`",
+    "ops.reason.not_authenticated": "Guard login missing or unreadable: run `{command}`",
+    "ops.reason.auth_expired": "Guard login expired or revoked: run `{command}`",
+    "ops.reason.auth_client_gone": "Guard login client registration is gone: run `{command}`",
+    "ops.reason.auth_rejected": "Guard login rejected: run `{command}`",
+    "ops.reason.auth_forbidden": "Guard refused access (scope or permission): run `{command}`",
+    "ops.halt": (
+        "Guard radar halted: the state file is corrupt ({reason}). "
+        "Nothing was sent and nothing was reset. "
+        "Backup valid: {backup}. "
+        "Check the file and restore the backup by hand only if it is right."
+    ),
+    "ops.yes": "yes",
+    "ops.no": "no",
 }
 
 _RU: dict[str, Entry] = {
@@ -185,6 +208,34 @@ _RU: dict[str, Entry] = {
         "проверьте лог радара и данные Guard, из которых оно взято"
     ),
     "ops.attention": "Guard radar: нужно вмешательство оператора:",
+    "ops.recovered": "Guard radar восстановился: опросы Guard снова работают (сбои с {since} UTC).",
+    "ops.outage": (
+        "Guard radar не может прочитать данные Guard: {reason}. Сбои с {since} UTC "
+        "({failures} подряд). "
+        "Радар продолжает опрос и один раз сообщит здесь, когда связь восстановится."
+    ),
+    "ops.reason.unavailable": "Guard недоступен или сбоит",
+    "ops.reason.data": "Guard ответил данными, которые радар не принимает; посмотрите лог радара",
+    "ops.reason.auth_fallback": "проблема со входом в Guard: выполните `{command}`",
+    "ops.reason.not_authenticated": (
+        "вход в Guard не найден или не читается: выполните `{command}`"
+    ),
+    "ops.reason.auth_expired": "вход в Guard истёк или отозван: выполните `{command}`",
+    "ops.reason.auth_client_gone": (
+        "регистрация клиента входа в Guard пропала: выполните `{command}`"
+    ),
+    "ops.reason.auth_rejected": "вход в Guard отклонён: выполните `{command}`",
+    "ops.reason.auth_forbidden": (
+        "Guard отказал в доступе (права или область): выполните `{command}`"
+    ),
+    "ops.halt": (
+        "Guard radar остановлен: файл состояния повреждён ({reason}). "
+        "Ничего не отправлено и ничего не сброшено. "
+        "Резервная копия цела: {backup}. "
+        "Проверьте файл и восстановите копию вручную, только если она верна."
+    ),
+    "ops.yes": "да",
+    "ops.no": "нет",
 }
 
 CATALOGS: Mapping[Language, Catalog] = {"en": _EN, "ru": _RU}

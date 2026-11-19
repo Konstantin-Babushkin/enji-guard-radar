@@ -73,6 +73,13 @@ from enji_guard_radar.recurring_rules import is_recurring, trailing_high_runs
 from enji_guard_radar.reminders import mark_reminded, reminders_due, render_reminders
 from enji_guard_radar.score_rules import SCORE_ACTION_KEYS, LowScore, evaluate_scores
 from enji_guard_radar.stale import StaleResult, alert_for, evaluate_stale
+from enji_guard_radar.texts import (
+    DEFAULT_LANGUAGE,
+    ActionNotice,
+    Language,
+    render_action,
+    text,
+)
 from enji_guard_radar.tooling_rules import ToolingGap, evaluate_tooling
 
 logger = logging.getLogger(__name__)
@@ -89,6 +96,15 @@ class Deps:
     clock: Clock
     store: StateStore
     ops_notifier: Notifier | None = None
+
+
+@dataclass(frozen=True)
+class _OperatorAction:
+    """What the operator must do: the English text (log, report) and, when the notifier gave
+    one, the notice the ops chat renders in its language."""
+
+    text: str
+    notice: ActionNotice | None = None
 
 
 class ProjectStatus(StrEnum):
@@ -189,19 +205,28 @@ def _empty_report(
     )
 
 
-def ops_message_for_halt(reason: str, backup_valid: bool) -> OutboundMessage:
-    backup = "yes" if backup_valid else "no"
-    text = (
-        f"Guard radar halted: the state file is corrupt ({escape(reason)}). "
-        "Nothing was sent and nothing was reset. "
-        f"Backup valid: {backup}. "
-        "Check the file and restore the backup by hand only if it is right."
-    )
-    return OutboundMessage(text=text, audience=Audience.OPS)
+def ops_message_for_halt(
+    reason: str, backup_valid: bool, *, language: Language = DEFAULT_LANGUAGE
+) -> OutboundMessage:
+    backup = text(language, "ops.yes" if backup_valid else "ops.no")
+    halted = text(language, "ops.halt", reason=escape(reason), backup=backup)
+    return OutboundMessage(text=halted, audience=Audience.OPS)
 
 
-def ops_message_for_actions(actions: tuple[str, ...]) -> OutboundMessage:
-    lines = ["Guard radar needs attention:", *(f"- {escape(action)}" for action in actions)]
+def ops_message_for_actions(
+    actions: tuple[str, ...],
+    *,
+    language: Language = DEFAULT_LANGUAGE,
+    notices: tuple[ActionNotice | None, ...] | None = None,
+) -> OutboundMessage:
+    """One bullet per action. An action with a notice is shown in `language`; a plain string
+    (the English text of an action nobody gave a notice) is passed on unchanged."""
+    shown = notices if notices is not None else (None,) * len(actions)
+    bullets = [
+        f"- {escape(action if notice is None else render_action(notice, language))}"
+        for action, notice in zip(actions, shown, strict=True)
+    ]
+    lines = [text(language, "ops.attention"), *bullets]
     return OutboundMessage(text="\n".join(lines), audience=Audience.OPS)
 
 
@@ -279,7 +304,7 @@ def _run_locked(deps: Deps, now: datetime) -> RunReport:
     deps.store.save(rec.state)
 
     messages = render_messages(rec.to_send, collapse_above=deps.config.alerts.collapse_above)
-    actions: list[str] = []
+    actions: list[_OperatorAction] = []
     alert_delivery = _deliver(
         deps,
         messages,
@@ -360,7 +385,7 @@ def _run_locked(deps: Deps, now: datetime) -> RunReport:
         not_delivered=not_delivered,
         baselined=rec.baselined,
         resolved=rec.resolved,
-        operator_actions=tuple(actions),
+        operator_actions=tuple(a.text for a in actions),
         poll_failed=poll_failed,
         ops_sent=ops_sent,
         low_scores=polled.low_scores,
@@ -464,7 +489,7 @@ def _digest_step(
     polled: "PollData",
     state: State,
     now: datetime,
-    actions: list[str],
+    actions: list[_OperatorAction],
     *,
     poll_failed: bool,
     delivery_stopped: bool,
@@ -508,7 +533,7 @@ def _send_digest(
     deps: Deps,
     state: State,
     now: datetime,
-    actions: list[str],
+    actions: list[_OperatorAction],
     planned_for: datetime,
     messages: list[OutboundMessage],
 ) -> _DigestResult:
@@ -596,7 +621,7 @@ def _deliver(
     messages: Sequence[OutboundMessage],
     state: State,
     now: datetime,
-    actions: list[str],
+    actions: list[_OperatorAction],
     mark: Callable[[State, OutboundMessage], State] | None,
 ) -> _Delivery:
     """Send each message; after an acknowledgement apply `mark` and save before the next send.
@@ -628,18 +653,24 @@ def _deliver(
     return _Delivery(state, delivered, printed, not_delivered, unauthorized, fatal, last_error)
 
 
-def _note_action(outcome: SendOutcome, actions: list[str]) -> None:
+def _note_action(outcome: SendOutcome, actions: list[_OperatorAction]) -> None:
     action = None if isinstance(outcome, Printed) else outcome.operator_action
     if action is not None:
-        actions.append(action)
+        notice = None if isinstance(outcome, Printed) else outcome.action_notice
+        actions.append(_OperatorAction(action, notice))
         logger.error("operator action needed: %s", action)
 
 
-def _notify_ops_of_actions(deps: Deps, actions: list[str], *, unauthorized: bool) -> None:
+def _notify_ops_of_actions(
+    deps: Deps, actions: list[_OperatorAction], *, unauthorized: bool
+) -> None:
     # With a rejected bot token the ops chat uses the same token, so a message cannot arrive.
     if not actions or deps.ops_notifier is None or unauthorized:
         return
-    outcome = deps.ops_notifier.send(ops_message_for_actions(tuple(actions)))
+    message = ops_message_for_actions(
+        tuple(a.text for a in actions), notices=tuple(a.notice for a in actions)
+    )
+    outcome = deps.ops_notifier.send(message)
     logger.info("ops message about operator actions: %s", type(outcome).__name__)
 
 
