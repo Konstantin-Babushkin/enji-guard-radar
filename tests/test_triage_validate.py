@@ -120,3 +120,83 @@ def test_schema_priority_is_case_insensitive_and_stored_lowercase() -> None:
 def test_not_json_deep_nesting_is_caught() -> None:
     result = validate_reply(built_for(), "[" * (64 * 1024))
     assert result.failure is TriageFailure.NOT_JSON
+
+
+def _one_bad_cause(cause: str) -> tuple[BuiltRequest, str]:
+    return built_for(), reply(("i1", "p1", cause), ("i2", "p2", "Weak password hashing"))
+
+
+@pytest.mark.parametrize(
+    "cause",
+    [
+        "",
+        "   ",
+        "x" * 61,
+        " " + "x" * 61,
+        "a\nb",
+        "a\rb",
+        "a b",
+        "a\u0007b",
+        "a\tb",
+        "x · y",
+        "see http x",
+        "HTTP x",
+        "www x",
+        "WWW.x",
+        "t.me x",
+        "T.ME/x",
+        "@team",
+        "<b>x",
+        "a > b",
+        "3 findings",
+        "level 2",
+        "٣",
+        "१ issue",
+    ],
+)
+def test_cause_rejected_alone(cause: str) -> None:
+    built, text = _one_bad_cause(cause)
+    result = validate_reply(built, text)
+    assert result.failure is None
+    assert set(result.accepted) == {built.ids["i2"]}
+    assert result.rejected == {TriageFailure.ITEM_REJECTED: 1}
+
+
+@pytest.mark.parametrize(
+    ("cause", "stored"),
+    [
+        ("x" * 60, "x" * 60),
+        ("  padded cause  ", "padded cause"),
+        ("Внедрение SQL в поиске заказов", "Внедрение SQL в поиске заказов"),
+        ("В" * 60, "В" * 60),
+        ("tab-free, plain: ok!", "tab-free, plain: ok!"),
+    ],
+)
+def test_cause_accepted_and_stored_trimmed(cause: str, stored: str) -> None:
+    built, text = _one_bad_cause(cause)
+    result = validate_reply(built, text)
+    assert result.rejected == {}
+    assert result.accepted[built.ids["i1"]].cause == stored
+
+
+def test_cause_both_rejected_counts_two() -> None:
+    built = built_for()
+    result = validate_reply(built, reply(("i1", "p1", ""), ("i2", "p1", "@x")))
+    assert result.accepted == {}
+    assert result.failure is None
+    assert result.rejected == {TriageFailure.ITEM_REJECTED: 2}
+
+
+def test_missing_item_stays_rule_only() -> None:
+    built = built_for()
+    result = validate_reply(built, reply(("i1", "p1", "SQL injection in order search")))
+    assert set(result.accepted) == {built.ids["i1"]}
+    assert result.failure is None
+    assert result.rejected == {}
+
+
+def test_missing_all_items_is_empty_without_failure() -> None:
+    result = validate_reply(built_for(), '{"items":[]}')
+    assert result.accepted == {}
+    assert result.failure is None
+    assert result.rejected == {}
