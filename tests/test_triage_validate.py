@@ -1,6 +1,8 @@
 """validate_reply: Claude's reply in, accepted triage per alert out. Offline, no Guard data."""
 
 import json
+import logging
+import random
 
 import pytest
 from triage_fakes import reply_for
@@ -10,6 +12,7 @@ from enji_guard_radar.triage import (
     BuiltRequest,
     TriageCandidate,
     TriageFailure,
+    TriageValidation,
     build_request,
     validate_reply,
 )
@@ -200,3 +203,65 @@ def test_missing_all_items_is_empty_without_failure() -> None:
     assert result.accepted == {}
     assert result.failure is None
     assert result.rejected == {}
+
+
+def test_never_raises_on_random_text() -> None:
+    rng = random.Random(42)
+    built = built_for()
+    for _ in range(200):
+        text = bytes(rng.randrange(256) for _ in range(rng.randrange(0, 200))).decode(
+            "utf-8", "replace"
+        )
+        result = validate_reply(built, text)
+        assert isinstance(result, TriageValidation)
+        assert result.failure is not None
+    assert validate_reply(built, "\ud800").failure is TriageFailure.NOT_JSON
+
+
+def test_never_raises_on_one_megabyte() -> None:
+    result = validate_reply(built_for(), "a" * 1_000_000)
+    assert result.failure is TriageFailure.NOT_JSON
+
+
+def test_never_raises_on_deep_nesting_objects() -> None:
+    result = validate_reply(built_for(), '{"items":' * 20000 + "1")
+    assert result.failure is TriageFailure.NOT_JSON
+
+
+def _triage_records(caplog: pytest.LogCaptureFixture) -> list[logging.LogRecord]:
+    return [r for r in caplog.records if r.name == "enji_guard_radar.triage"]
+
+
+def test_log_counts_without_cause_text(caplog: pytest.LogCaptureFixture) -> None:
+    built = built_for()
+    text = reply(("i1", "p1", "SECRETCAUSE 7"), ("i2", "p2", "Weak password hashing"))
+    with caplog.at_level(logging.INFO, logger="enji_guard_radar.triage"):
+        validate_reply(built, text)
+    records = _triage_records(caplog)
+    assert len(records) == 1
+    message = records[0].getMessage()
+    assert records[0].levelno == logging.INFO
+    assert "accepted=1 of 2" in message
+    assert "item_rejected=1" in message
+    assert "SECRETCAUSE" not in message
+    assert "Weak password" not in message
+    assert "Broken access" not in message
+
+
+@pytest.mark.parametrize(
+    ("text", "reason"),
+    [
+        ("nope", "not_json"),
+        ('{"items":[],"summary":"x"}', "schema_invalid"),
+        (reply(("i9", "p1", "LEAKME")), "unknown_or_duplicate_ids"),
+    ],
+)
+def test_log_names_whole_reply_reason(
+    caplog: pytest.LogCaptureFixture, text: str, reason: str
+) -> None:
+    with caplog.at_level(logging.INFO, logger="enji_guard_radar.triage"):
+        validate_reply(built_for(), text)
+    records = _triage_records(caplog)
+    assert len(records) == 1
+    assert reason in records[0].getMessage()
+    assert "LEAKME" not in records[0].getMessage()
