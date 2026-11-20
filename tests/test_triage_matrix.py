@@ -27,6 +27,7 @@ from test_triage_pipeline import (
 )
 from triage_fakes import FakeTriager
 
+from enji_guard_radar.messages import telegram_length
 from enji_guard_radar.model import AlertKey
 from enji_guard_radar.pipeline import RunReport
 from enji_guard_radar.ports import DeliveryError, NotDelivered, Notifier, SendOutcome
@@ -299,3 +300,67 @@ def test_same_alerts_on_or_off(scenario: str, variant: str, tmp_path: Path) -> N
     else:
         assert on.claude_lines == 0
         assert on.messages == off.messages
+
+
+# ---- splitting -------------------------------------------------------------------------------
+
+
+def split_sim(tmp_path: Path, triager: FakeTriager | None) -> TriageSim:
+    """40 repositories, each with one fresh High alert (collapse is on at the default of 3)."""
+    config = TRIAGE_OFF if triager is None else TRIAGE_ON + "  max_items_per_call: 100\n"
+    sim = TriageSim(tmp_path, config, triager=triager, cost_store=None)
+    ids = add_repos(sim, 40)
+    sim.poll(0)
+    for number, rid in enumerate(ids):
+        letters = f"{chr(97 + number % 26)}{chr(97 + number // 26)}"
+        sim.add_titled_run([f"Finding number {letters} problem"], day=1, rid=rid)
+    return sim
+
+
+def item_lines(texts: list[str]) -> list[str]:
+    """Every line of every chunk except the header, Claude lines removed."""
+    return [
+        line
+        for text in texts
+        for line in strip_claude_lines(text).split("\n")[1:]  # [0] is the chunk header
+    ]
+
+
+def test_split_chunks_keep_the_off_item_sequence(tmp_path: Path) -> None:
+    cause = "a" * 20 + " " + "b" * 20 + " " + "c" * 18  # 60 characters, no digits
+    assert len(cause) == 60
+    triager = FakeTriager(
+        lambda r: TriageReply(
+            text=json.dumps(
+                {
+                    "items": [
+                        {"item_id": i.item_id, "priority": "p2", "cause": cause} for i in r.items
+                    ]
+                }
+            ),
+            seconds=1.0,
+        )
+    )
+    off_sim = split_sim(tmp_path / "off", None)
+    on_sim = split_sim(tmp_path / "on", triager)
+    off_report = off_sim.poll(1)
+    on_report = on_sim.poll(1)
+    assert triager.calls == 1
+    assert len(triager.requests[0].items) == 40
+    off_texts = [m.text for m in off_report.messages]
+    on_texts = [m.text for m in on_report.messages]
+    # The Claude lines make the summary longer: the on-run splits where the off-run does not.
+    assert len(on_texts) > len(off_texts)
+    assert all(telegram_length(text) <= 4096 for text in on_texts)
+    assert sum(claude_lines(text) for text in on_texts) == 40
+    # Same items in the same order, the same keys in the same order, the same state.
+    assert item_lines(on_texts) == item_lines(off_texts)
+    assert len(item_lines(off_texts)) == 40
+    assert [k for m in on_report.messages for k in m.keys] == [
+        k for m in off_report.messages for k in m.keys
+    ]
+    assert on_sim.state_bytes() == off_sim.state_bytes()
+    assert on_report.exit_code == off_report.exit_code
+    # `delivered` counts messages, and the on-run has more chunks; everything is delivered.
+    assert (on_report.delivered, on_report.not_delivered) == (len(on_texts), 0)
+    assert (off_report.delivered, off_report.not_delivered) == (len(off_texts), 0)
