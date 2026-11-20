@@ -1,13 +1,16 @@
 from pathlib import Path
 
 import pytest
+from pydantic import SecretStr
 from telegram_fakes import FAKE_TOKEN
 
 from enji_guard_radar.settings import (
+    ENV_CLAUDE_TOKEN,
     LiveTelegram,
     SettingsError,
     TelegramSettings,
     known_secrets,
+    load_claude_token,
     load_settings,
     read_dotenv,
     require_live,
@@ -136,3 +139,76 @@ def test_settings_repr_and_str_never_contain_the_token() -> None:
     for obj in (settings, live):
         assert FAKE_TOKEN not in repr(obj)
         assert FAKE_TOKEN not in str(obj)
+
+
+# --- Claude token (D-15) ---
+
+ENV_TOKEN = "claude-env-token-1234"
+DOTENV_TOKEN = "claude-dotenv-token-5678"
+
+
+def reveal(token: SecretStr | None) -> str | None:
+    return None if token is None else token.get_secret_value()
+
+
+def test_claude_token_name() -> None:
+    assert ENV_CLAUDE_TOKEN == "CLAUDE_CODE_OAUTH_TOKEN"
+
+
+def test_claude_token_from_env_only(tmp_path: Path) -> None:
+    token = load_claude_token({ENV_CLAUDE_TOKEN: ENV_TOKEN}, tmp_path / "none.env")
+    assert reveal(token) == ENV_TOKEN
+
+
+def test_claude_token_from_dotenv_only(tmp_path: Path) -> None:
+    path = write(tmp_path, f"{ENV_CLAUDE_TOKEN}={DOTENV_TOKEN}\n")
+    assert reveal(load_claude_token(NO_ENV, path)) == DOTENV_TOKEN
+
+
+def test_claude_token_env_beats_dotenv(tmp_path: Path) -> None:
+    path = write(tmp_path, f"{ENV_CLAUDE_TOKEN}={DOTENV_TOKEN}\n")
+    assert reveal(load_claude_token({ENV_CLAUDE_TOKEN: ENV_TOKEN}, path)) == ENV_TOKEN
+
+
+def test_claude_token_empty_or_absent_is_none(tmp_path: Path) -> None:
+    missing = tmp_path / "none.env"
+    assert load_claude_token(NO_ENV, missing) is None
+    assert load_claude_token({ENV_CLAUDE_TOKEN: ""}, missing) is None
+    assert load_claude_token({ENV_CLAUDE_TOKEN: "   "}, None) is None
+    assert load_claude_token(NO_ENV, write(tmp_path, f"{ENV_CLAUDE_TOKEN}=\n")) is None
+
+
+def test_claude_token_empty_env_falls_back_to_dotenv(tmp_path: Path) -> None:
+    path = write(tmp_path, f"{ENV_CLAUDE_TOKEN}={DOTENV_TOKEN}\n")
+    assert reveal(load_claude_token({ENV_CLAUDE_TOKEN: ""}, path)) == DOTENV_TOKEN
+
+
+def test_claude_token_never_shows_in_repr_or_logs(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    caplog.set_level("INFO")
+    token = load_claude_token({ENV_CLAUDE_TOKEN: ENV_TOKEN}, None)
+    assert token is not None
+    assert ENV_TOKEN not in repr(token)
+    assert ENV_TOKEN not in str(token)
+    assert ENV_TOKEN not in caplog.text
+    assert "claude token: set" in caplog.text
+
+
+def test_claude_token_malformed_dotenv_names_the_line(tmp_path: Path) -> None:
+    path = write(tmp_path, "this is not a variable\n")
+    with pytest.raises(SettingsError) as caught:
+        load_claude_token(NO_ENV, path)
+    assert "this is not a variable" not in str(caught.value)
+
+
+def test_known_secrets_includes_the_claude_token() -> None:
+    settings = TelegramSettings(bot_token=SecretStr(FAKE_TOKEN), chat_id=None, ops_chat_id=None)
+    assert known_secrets(settings) == (FAKE_TOKEN,)
+    assert known_secrets(settings, SecretStr(ENV_TOKEN)) == (FAKE_TOKEN, ENV_TOKEN)
+
+
+def test_known_secrets_claude_token_without_a_bot_token() -> None:
+    settings = TelegramSettings(bot_token=None, chat_id=None, ops_chat_id=None)
+    assert known_secrets(settings) == ()
+    assert known_secrets(settings, SecretStr(ENV_TOKEN)) == (ENV_TOKEN,)

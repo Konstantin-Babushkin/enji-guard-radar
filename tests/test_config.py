@@ -1,15 +1,20 @@
+import os
 import re
+import subprocess
+import sys
 from pathlib import Path
 
 import pytest
 
 from enji_guard_radar import config as config_module
 from enji_guard_radar.cli import read_config
-from enji_guard_radar.config import ConfigError, RadarConfig, parse_config
+from enji_guard_radar.config import ConfigError, RadarConfig, TriageSettings, parse_config
 from enji_guard_radar.high_history import HISTORY_WINDOW
 
 EXAMPLE = Path(__file__).resolve().parents[1] / "config" / "radar.example.yaml"
 PROJECT = "00000000-0000-4000-8000-00000000a002"
+FIXTURES = Path(__file__).resolve().parents[1] / "fixtures" / "guard"
+LAUNCH = "import sys; from enji_guard_radar import main; sys.exit(main(sys.argv[1:]))"
 
 
 def parse(text: str) -> RadarConfig:
@@ -541,3 +546,132 @@ def test_example_documents_messages_language() -> None:
     text = EXAMPLE.read_text(encoding="utf-8")
     assert "messages:" in text
     assert "language: en" in text
+
+
+# --- triage section (D-03, D-13, D-16) ---
+
+
+def test_triage_defaults() -> None:
+    triage = parse("triage: {enabled: true}").triage
+    assert triage.enabled is True
+    assert triage.backend == "claude_cli"
+    assert triage.model == "haiku"
+    assert triage.max_items_per_call == 30
+    assert triage.timeout_seconds == 60
+    assert triage.max_cost_usd_per_call == 0.5
+    assert parse("").triage.enabled is False
+    assert RadarConfig().triage.enabled is False
+
+
+@pytest.mark.parametrize(
+    ("key", "value"),
+    [
+        ("max_items_per_call", 1),
+        ("max_items_per_call", 100),
+        ("timeout_seconds", 5),
+        ("timeout_seconds", 300),
+        ("max_cost_usd_per_call", 0.01),
+        ("max_cost_usd_per_call", 5),
+        ("max_cost_usd_per_call", 5.0),
+    ],
+)
+def test_triage_accepts_bounds(key: str, value: float) -> None:
+    assert getattr(parse(f"triage:\n  {key}: {value}\n").triage, key) == value
+
+
+@pytest.mark.parametrize(
+    ("key", "value"),
+    [
+        ("max_items_per_call", "0"),
+        ("max_items_per_call", "101"),
+        ("max_items_per_call", "'30'"),
+        ("max_items_per_call", "30.0"),
+        ("max_items_per_call", "true"),
+        ("timeout_seconds", "4"),
+        ("timeout_seconds", "301"),
+        ("timeout_seconds", "60.5"),
+        ("max_cost_usd_per_call", "0"),
+        ("max_cost_usd_per_call", "5.01"),
+        ("max_cost_usd_per_call", "true"),
+        ("max_cost_usd_per_call", "'0.5'"),
+        ("enabled", "'yes'"),
+        ("enabled", "1"),
+    ],
+)
+def test_triage_rejects_bad_values(key: str, value: str) -> None:
+    with pytest.raises(ConfigError, match=rf"test\.yaml: triage\.{key}"):
+        parse(f"triage:\n  {key}: {value}\n")
+
+
+@pytest.mark.parametrize("enabled", ["true", "false"])
+@pytest.mark.parametrize("backend", ["t3", "anthropic_api", "''", "Claude_CLI"])
+def test_triage_backend_accepts_only_claude_cli(enabled: str, backend: str) -> None:
+    with pytest.raises(ConfigError, match=r"test\.yaml: triage\.backend"):
+        parse(f"triage:\n  enabled: {enabled}\n  backend: {backend}\n")
+
+
+@pytest.mark.parametrize("model", ["claude-haiku-4-5", "haiku", "sonnet", "a" * 64, "m1.2_x-y"])
+def test_triage_model_accepts_short_tokens(model: str) -> None:
+    assert parse(f"triage:\n  model: {model}\n").triage.model == model
+
+
+@pytest.mark.parametrize("model", ["''", '"a b"', '"x;rm"', "a" * 65, "-x", '"haiku\\n"', "null"])
+def test_triage_model_rejects(model: str) -> None:
+    with pytest.raises(ConfigError, match=r"test\.yaml: triage\.model"):
+        parse(f"triage:\n  model: {model}\n")
+
+
+def test_triage_unknown_key_is_an_error() -> None:
+    with pytest.raises(ConfigError, match=r"test\.yaml: triage\.summary"):
+        parse("triage:\n  summary: x\n")
+
+
+def test_triage_duplicate_key_is_an_error() -> None:
+    with pytest.raises(ConfigError, match="duplicated key"):
+        parse("triage:\n  enabled: true\n  enabled: false\n")
+
+
+@pytest.mark.parametrize("body", ["triage: true\n", "triage: [a]\n", "triage: ru\n"])
+def test_triage_must_be_a_mapping(body: str) -> None:
+    with pytest.raises(ConfigError, match=r"test\.yaml: triage"):
+        parse(body)
+
+
+def test_example_documents_triage() -> None:
+    text = EXAMPLE.read_text(encoding="utf-8")
+    assert re.search(r"^triage:", text, re.MULTILINE)
+    for name in TriageSettings.model_fields:
+        assert f"  {name}:" in text
+    assert parse_config(text, source="example").triage == TriageSettings()
+
+
+def test_triage_unknown_key_exits_2_from_the_cli(tmp_path: Path) -> None:
+    config = tmp_path / "bad.yaml"
+    config.write_text("triage:\n  bogus: 1\n", encoding="utf-8")
+    state_dir = tmp_path / "state"
+    args = [
+        "run",
+        "--dry-run",
+        "--fixtures",
+        str(FIXTURES),
+        "--config",
+        str(config),
+        "--state-dir",
+        str(state_dir),
+        "--env-file",
+        str(tmp_path / "none.env"),
+    ]
+    env = {"PATH": os.environ.get("PATH", ""), "PYTHONUTF8": "1", "PYTHONIOENCODING": "utf-8"}
+    done = subprocess.run(
+        [sys.executable, "-c", LAUNCH, *args],
+        env=env,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        check=False,
+    )
+    assert done.returncode == 2
+    error_lines = [line for line in done.stderr.splitlines() if line.startswith("error:")]
+    assert len(error_lines) == 1
+    assert "triage" in error_lines[0]
+    assert not state_dir.exists()

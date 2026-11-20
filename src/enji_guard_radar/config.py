@@ -9,7 +9,16 @@ from collections.abc import Hashable
 from typing import Any, Literal
 
 import yaml
-from pydantic import BaseModel, ConfigDict, Field, StrictInt, ValidationError, field_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    StrictBool,
+    StrictFloat,
+    StrictInt,
+    ValidationError,
+    field_validator,
+)
 
 from enji_guard_radar.texts import DEFAULT_LANGUAGE, Language
 
@@ -44,6 +53,14 @@ RECURRING_AFTER_MIN = 2
 RECURRING_AFTER_MAX = 20
 TOOLING_WINDOW_MIN = 7
 TOOLING_WINDOW_MAX = 365
+TRIAGE_ITEMS_MIN = 1
+TRIAGE_ITEMS_MAX = 100
+TRIAGE_TIMEOUT_MIN = 5
+TRIAGE_TIMEOUT_MAX = 300
+TRIAGE_COST_MIN = 0.01
+TRIAGE_COST_MAX = 5.0
+# A short token: it later becomes a CLI argument, so no spaces or shell characters (T-04-10).
+TRIAGE_MODEL_PATTERN = r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$"
 WEEKDAY_NAMES = ("monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday")
 AI_READINESS_ACTION_KEY = "audit.ai-readiness"
 TESTS_ACTION_KEY = "audit.tests"
@@ -188,6 +205,24 @@ class ToolingGapSettings(BaseModel):
         return _check_audit_types(value)
 
 
+# Only the local Claude CLI; no T3 or API value until a route is verified (D-01).
+TriageBackend = Literal["claude_cli"]
+
+
+class TriageSettings(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    # Triage ships off (D-03): the operator turns it on by config only.
+    enabled: StrictBool = False
+    backend: TriageBackend = "claude_cli"
+    # ASSUMPTION: haiku is the default model until plan 04-01 confirms or changes it.
+    model: str = Field(default="haiku", pattern=TRIAGE_MODEL_PATTERN)
+    # One call per run: at most this many items, this long, this expensive (D-13).
+    max_items_per_call: StrictInt = Field(default=30, ge=TRIAGE_ITEMS_MIN, le=TRIAGE_ITEMS_MAX)
+    timeout_seconds: StrictInt = Field(default=60, ge=TRIAGE_TIMEOUT_MIN, le=TRIAGE_TIMEOUT_MAX)
+    max_cost_usd_per_call: StrictFloat = Field(default=0.50, ge=TRIAGE_COST_MIN, le=TRIAGE_COST_MAX)
+
+
 class RadarConfig(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
@@ -201,6 +236,7 @@ class RadarConfig(BaseModel):
     scores: ScoreSettings = Field(default_factory=ScoreSettings)
     recurring: RecurringSettings = Field(default_factory=RecurringSettings)
     tooling_gaps: ToolingGapSettings = Field(default_factory=ToolingGapSettings)
+    triage: TriageSettings = Field(default_factory=TriageSettings)
     projects: dict[str, ProjectSettings] = Field(default_factory=dict)
 
     def mode_for(self, project_id: str) -> ProjectMode:

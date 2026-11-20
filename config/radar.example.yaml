@@ -1,6 +1,6 @@
 # enji-guard-radar example config: every key with its default.
 # Unknown keys, duplicated keys and out-of-range values stop the run (exit 2).
-# Secrets (TELEGRAM_BOT_TOKEN, Guard credentials) never go in this file:
+# Secrets (TELEGRAM_BOT_TOKEN, CLAUDE_CODE_OAUTH_TOKEN, Guard credentials) never go in this file:
 # they come from the environment or .env.
 
 defaults:
@@ -69,6 +69,24 @@ tooling_gaps:
     - audit.implementation-unification
     - audit.security
     - audit.dependency-hygiene
+
+# Claude triage (D-03, D-13): one extra Claude line on fresh High alerts. Ships OFF.
+# Needs the verified Claude CLI route (plan 04-01) and CLAUDE_CODE_OAUTH_TOKEN in the env file.
+# Rules still decide whether to alert; Claude only explains and prioritises. A bad or missing
+# reply leaves the plain rule message.
+triage:
+  # true turns triage on.
+  enabled: false
+  # Only claude_cli (the local `claude` CLI) is supported.
+  backend: claude_cli
+  # A short model name or alias: letters, digits, . _ - ; up to 64 characters, no spaces.
+  model: haiku
+  # At most this many items go to Claude in one call (1..100).
+  max_items_per_call: 30
+  # One call may take at most this many seconds (5..300).
+  timeout_seconds: 60
+  # Budget for one call in US dollars (0.01..5).
+  max_cost_usd_per_call: 0.50
 
 # Per-project settings, keyed by Guard project id. Override beats defaults.
 # mode: active (default) | paused (listed as "not checked", no Guard calls) | excluded (ignored).
