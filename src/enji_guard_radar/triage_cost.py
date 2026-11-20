@@ -104,5 +104,5 @@ def serialize_days(days: tuple[CostDay, ...]) -> bytes:
 
 
 def deserialize_days(data: bytes) -> tuple[CostDay, ...]:
-    """Raises ValueError on a bad document: bad JSON, version other than 1, missing or extra field."""
+    """Raises ValueError on a bad document (bad JSON, other version, missing or extra field)."""
     return _Document.model_validate_json(data).days
