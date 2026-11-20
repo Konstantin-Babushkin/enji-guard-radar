@@ -70,9 +70,8 @@ def test_golden_default_dry_run_output(tmp_path: Path) -> None:
 ALERT_AT = "2026-12-01T12:00:00Z"
 CYRILLIC = re.compile("[А-Яа-яЁё]")
 ENGLISH_PHRASES = re.compile(
-    "weekly digest|no scan|need attention|Open items|"
-    "Last successful|more open|could not be read|Resolved|Seen by the radar|No completed|"
-    "Tooling gap|Stale:|High:"
+    "weekly|no scan|need attention|Last poll|no runs|Ages count|"
+    "more open|could not be read|Resolved|closed|Open items|Tooling gap|Stale:|High:"
 )
 FRAME = re.compile(r"^(---|summary:|follow-ups:|DRY RUN)", re.MULTILINE)
 PROJECT_A = 'Project A &lt;core&gt; &amp; "tools"'
@@ -148,13 +147,16 @@ def test_digest_and_baseline_in_russian_match_the_english_run(
     assert names(english.stdout) == names(russian.stdout)
     assert FRAME.findall(english.stdout) == FRAME.findall(russian.stdout)
     assert "--- baseline, not sent (4) ---" in russian.stdout
-    for kept in ("audit.security", "acme/service-a", PROJECT_A):
+    for kept in ("security", "acme/web-a", PROJECT_A):
         assert kept in russian.stdout
     lines = [without_timing(o).count("\n") for o in (english.stdout, russian.stdout)]
     assert lines[0] == lines[1]
     assert russian.stdout.startswith(f"DRY RUN at {FIRST_NOW}: nothing is sent")
     digest = blocks(russian.stdout, "")[0]
-    assert digest[0] == "<b>Еженедельный дайджест Guard radar</b>"
+    assert digest[0] == "<b>Радар · дайджест · открыто: 8</b>"
+    assert digest[1] == "Последний опрос: 2026-11-18 06:00 UTC"
+    assert digest[-1] == "Возраст считается с первого появления в радаре."
+    assert sum(line.startswith(("🔴", "🟡")) for line in digest) == 8
     assert not (tmp_path / "state").exists()
 
 

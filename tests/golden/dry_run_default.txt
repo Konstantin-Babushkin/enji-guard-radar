@@ -1,20 +1,17 @@
 DRY RUN at 2026-11-18T06:00:00Z: nothing is sent and no state is written.
 --- would send to group ---
-<b>Guard radar weekly digest</b>
-Last successful Guard poll: 2026-11-18 06:00 UTC.
-Open items: 18.
+<b>Radar weekly · 8 open</b>
+Last poll: 2026-11-18 06:00 UTC
 1 project could not be read in that poll.
-- High: <b>Project A &lt;core&gt; &amp; "tools"</b>: 1 High finding in audit.security (acme/service-a). Seen by the radar since 2026-11-09 (8 days).
-- Stale: <b>Project E (paused in config)</b>: no completed Guard run for 105 days (last: 2026-08-04).
-- Stale: <b>Project B</b>: no completed Guard run for 28 days (last: 2026-10-20).
-- Stale: <b>Project C (no repositories)</b>: no completed Guard run found.
-- Tooling gap: <b>Project A &lt;core&gt; &amp; "tools"</b>: no completed audit.dead-code run in the last 60 days in acme/web-a (none seen).
-- Tooling gap: <b>Project A &lt;core&gt; &amp; "tools"</b>: no completed audit.dependency-hygiene run in the last 60 days in acme/web-a (none seen).
-- Tooling gap: <b>Project A &lt;core&gt; &amp; "tools"</b>: no completed audit.implementation-unification run in the last 60 days in acme/web-a (none seen).
-- Tooling gap: <b>Project A &lt;core&gt; &amp; "tools"</b>: no completed audit.security run in the last 60 days in acme/web-a (none seen).
-- Tooling gap: <b>Project B</b>: no completed audit.dead-code run in the last 60 days in acme/service-b (none seen).
-- Tooling gap: <b>Project B</b>: no completed audit.dependency-hygiene run in the last 60 days in acme/service-b (none seen).
-+8 more open items not shown.
+🔴 <b>Project A &lt;core&gt; &amp; "tools"</b> · security High 1 · 8d
+🟡 <b>Project E (paused in config)</b> · no scan 105d
+🟡 <b>Project B</b> · no scan 28d
+🟡 <b>Project C (no repositories)</b> · no scan yet
+🟡 <b>Project A &lt;core&gt; &amp; "tools"</b> · acme/web-a · no runs 60d: dead-code, dependency-hygiene, implementation-unification, security
+🟡 <b>Project B</b> · acme/service-b · no runs 60d: dead-code, dependency-hygiene, implementation-unification
+🟡 <b>Project E (paused in config)</b> · acme/legacy-e · no runs 60d: dead-code, dependency-hygiene, implementation-unification, security
+🟡 <b>Project F (excluded in config)</b> · acme/tools-f · no runs 60d: dependency-hygiene, implementation-unification, security
+Ages count from the radar's first sight.
 
 --- baseline, not sent (4) ---
 🔴 <b>Project A &lt;core&gt; &amp; "tools"</b> · security High 0→1 · 8d

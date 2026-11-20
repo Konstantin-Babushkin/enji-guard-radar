@@ -29,7 +29,6 @@ from test_reminders_pipeline import Scripted
 
 from enji_guard_radar import cli, pipeline
 from enji_guard_radar.config import parse_config
-from enji_guard_radar.digest import DIGEST_TITLE
 from enji_guard_radar.guard import ARG_PROJECT_ID, TOOL_LIST_PROJECTS, TOOL_LIST_REPOSITORIES
 from enji_guard_radar.ledger import DigestRecord, Loaded, State, deserialize_state
 from enji_guard_radar.model import Audience, OutboundMessage
@@ -46,6 +45,7 @@ from enji_guard_radar.secret_guard import SecretGatedNotifier
 from enji_guard_radar.state_store import DryRunStateStore, FileStateStore
 from enji_guard_radar.telegram import HttpTransport
 
+DIGEST_MARK = "<b>Radar weekly"  # starts both the titled digest and the all-clear line
 FIXTURES = Path(__file__).resolve().parents[1] / "fixtures" / "guard"
 ENVIRON = {"TELEGRAM_BOT_TOKEN": FAKE_TOKEN, "TELEGRAM_CHAT_ID": "-1001234567890"}
 
@@ -89,7 +89,7 @@ def load_state(tmp_path: Path) -> State:
 
 def digest_texts(transport: FakeTransport) -> list[str]:
     texts = [str(payload["text"]) for _, payload in transport.requests]
-    return [text for text in texts if text.startswith("<b>Guard radar weekly digest")]
+    return [text for text in texts if text.startswith("<b>Radar weekly")]
 
 
 def state_digests(tmp_path: Path) -> dict[str, str]:
@@ -108,10 +108,10 @@ def test_weekly_digest_is_sent_once_on_the_first_run_at_or_after_the_planned_mom
 
     assert len(transport.requests) == 1
     text = str(transport.requests[0][1]["text"])
-    assert text.startswith("<b>Guard radar weekly digest</b>")
-    assert "Last successful Guard poll: 2026-11-18 06:00 UTC." in text
-    assert "Open items:" in text
-    assert "1 High finding in audit.security (acme/service-a)." in text
+    assert text.startswith("<b>Radar weekly · ")
+    assert "Last poll: 2026-11-18 06:00 UTC" in text
+    assert " open</b>" in text.split("\n")[0]
+    assert "· security High 1 · 8d" in text
     digest = load_state(tmp_path).digest
     assert digest.outcome == "sent"
     assert digest.planned_for == datetime(2026, 11, 18, 5, tzinfo=UTC)
@@ -137,7 +137,7 @@ def test_weekly_digest_is_sent_once_on_the_first_run_at_or_after_the_planned_mom
     assert dry.requests == []
     lines = out.splitlines()
     assert lines.count("--- would send to group ---") == 1
-    assert "Guard radar weekly digest" in out
+    assert "<b>Radar weekly · " in out
     assert "follow-ups: 0 reminder message(s), digest printed" in out
     assert state_digests(tmp_path) == before
 
@@ -173,12 +173,12 @@ def add_repo(sim: Sim, rid: str, name: str, *, high: int, day: int = 0) -> None:
 
 def only_digest(report: RunReport) -> str:
     (message,) = report.digest_messages
-    assert DIGEST_TITLE in message.text
+    assert DIGEST_MARK in message.text
     return message.text
 
 
 def digests_sent(notifier: Scripted) -> list[OutboundMessage]:
-    return [m for m in notifier.sent if DIGEST_TITLE in m.text]
+    return [m for m in notifier.sent if DIGEST_MARK in m.text]
 
 
 def test_window_failed_send_is_retried_inside_the_window_and_then_marked(tmp_path: Path) -> None:
@@ -366,13 +366,13 @@ def test_resolved_items_are_listed_once_in_the_next_digest(tmp_path: Path) -> No
     sim.poll(4)
 
     week2 = only_digest(sim.poll(9))
-    assert "Resolved since the last digest (1):" in week2
-    assert "High findings in audit.security are closed." in week2
-    assert week2.startswith(f"<b>{DIGEST_TITLE}</b>: nothing open.")
+    assert "Resolved · 1" in week2.split("\n")
+    assert "<b>Proj</b> · security closed" in week2.split("\n")
+    assert week2.startswith("<b>Radar weekly</b> · nothing open · last poll ")
 
     week3 = only_digest(sim.poll(16))
-    assert "Resolved since" not in week3
-    assert "are closed" not in week3
+    assert "Resolved" not in week3
+    assert "closed" not in week3
 
 
 def test_resolved_stale_project_is_listed_once(tmp_path: Path) -> None:
@@ -383,10 +383,10 @@ def test_resolved_stale_project_is_listed_once(tmp_path: Path) -> None:
     assert sim.poll(6).resolved != ()
 
     week2 = only_digest(sim.poll(9))
-    assert "Resolved since the last digest (1):" in week2
-    assert "no longer stale." in week2
+    assert "Resolved · 1" in week2.split("\n")
+    assert "<b>Proj</b> · no scan closed" in week2.split("\n")
     week3 = only_digest(sim.poll(16))
-    assert "no longer stale" not in week3
+    assert "no scan closed" not in week3
 
 
 def test_resolved_items_of_a_skipped_week_stay_pending(tmp_path: Path) -> None:
@@ -401,7 +401,7 @@ def test_resolved_items_of_a_skipped_week_stay_pending(tmp_path: Path) -> None:
     assert len(sim.state().resolved) == 1
 
     text = only_digest(sim.poll(16))
-    assert "Resolved since the last digest (1):" in text
+    assert "Resolved · 1" in text.split("\n")
     assert sim.state().resolved == ()
 
 
@@ -416,22 +416,21 @@ def test_open_items_show_alerted_and_baselined_series_with_the_recurring_marker(
     sim.add_run(high=2, day=2)  # the second run in a row with High findings
     text = only_digest(sim.poll(WED))
 
-    assert "Open items: 2." in text
-    assert "2 High findings in audit.security (acme/svc)." in text
-    assert "1 High finding in audit.security (acme/other)." in text
-    assert "Seen by the radar since 2026-11-" in text
-    marked = [line for line in text.splitlines() if "Recurring" in line]
+    assert text.split("\n")[0] == "<b>Radar weekly · 2 open</b>"
+    assert "security (acme/svc) High 2" in text
+    assert "security (acme/other) High 1" in text
+    marked = [line for line in text.splitlines() if "recurring" in line]
     assert len(marked) == 1
     assert "(acme/svc)" in marked[0]
-    assert "each of the last 2 runs" in marked[0]
+    assert marked[0].endswith("recurring 2 runs")
 
 
 def test_open_items_show_a_stale_project(tmp_path: Path) -> None:
     sim = digest_sim(tmp_path, base="defaults:\n  stale_after_days: 1\n")
     sim.poll(0)
     text = only_digest(sim.poll(WED))
-    assert "Open items: 1." in text
-    assert "- Stale: <b>Proj</b>: no completed Guard run for 2 days (last: 2026-11-02)." in text
+    assert text.split("\n")[0] == "<b>Radar weekly · 1 open</b>"
+    assert "🟡 <b>Proj</b> · no scan 2d" in text.split("\n")
 
 
 def test_open_items_show_a_low_score_and_a_tooling_gap(tmp_path: Path) -> None:
@@ -445,11 +444,11 @@ def test_open_items_show_a_low_score_and_a_tooling_gap(tmp_path: Path) -> None:
     sim.poll(0)
     add_scored_run(sim, AI_READINESS, 40, day=1)
     text = only_digest(sim.poll(WED))
-    assert "Open items: 2." in text
-    assert "- Low score: <b>Proj</b>: audit.ai-readiness score 40/100 in acme/svc" in text
-    assert "(run 2026-11-03)" in text
-    assert f"- Tooling gap: <b>Proj</b>: no completed {DEAD_CODE} run" in text
-    assert text.index("Low score") < text.index("Tooling gap")  # worst first
+    assert text.split("\n")[0] == "<b>Radar weekly · 2 open</b>"
+    assert "🟡 <b>Proj</b> · ai-readiness 40/100 · " in text
+    assert "· ai-readiness 40/100 · 1d" in text
+    assert "🟡 <b>Proj</b> · acme/svc · no runs 60d: dead-code" in text.split("\n")
+    assert text.index("ai-readiness") < text.index("no runs")  # worst first
 
 
 def test_open_items_leave_out_a_paused_project(tmp_path: Path) -> None:
@@ -466,8 +465,8 @@ def test_cap_shows_max_items_and_an_exact_remainder(tmp_path: Path) -> None:
     for number in range(2, 7):
         add_repo(sim, f"repo_r-{number}", f"acme/r{number}", high=number)
     text = only_digest(sim.poll(WED))
-    assert "Open items: 6." in text
-    assert len([line for line in text.splitlines() if line.startswith("- High:")]) == 3
+    assert text.split("\n")[0] == "<b>Radar weekly · 6 open</b>"
+    assert len([line for line in text.splitlines() if line.startswith("🔴")]) == 3
     assert "+3 more open items not shown." in text
 
 
@@ -478,9 +477,7 @@ def test_all_clear_is_one_line_with_the_poll_time(tmp_path: Path) -> None:
     assert report.digest is DigestStatus.SENT
     (message,) = digests_sent(notifier)
     assert message.audience is Audience.GROUP
-    assert message.text == (
-        f"<b>{DIGEST_TITLE}</b>: nothing open. Last successful Guard poll: 2026-11-04 12:00 UTC."
-    )
+    assert message.text == ("<b>Radar weekly</b> · nothing open · last poll 2026-11-04 12:00 UTC")
 
 
 def test_secret_gate_withholds_the_digest_and_nothing_is_marked(
@@ -531,7 +528,7 @@ def test_multi_message_digest_is_marked_only_when_every_part_was_acknowledged(
 ) -> None:
     sim = digest_sim(tmp_path, "digest:\n  grace_hours: 48\n")
     parts = [
-        OutboundMessage(text=f"{DIGEST_TITLE} part {number}", audience=Audience.GROUP)
+        OutboundMessage(text=f"{DIGEST_MARK} part {number}", audience=Audience.GROUP)
         for number in (1, 2)
     ]
     monkeypatch.setattr(pipeline, "render_digest", lambda digest: parts)
@@ -568,5 +565,5 @@ def test_dry_run_builds_the_digest_and_writes_nothing(tmp_path: Path) -> None:
         )
     )
     assert report.digest is DigestStatus.PRINTED
-    assert "2 High findings in audit.security (acme/svc)." in only_digest(report)
+    assert "· security High 2 · 1d" in only_digest(report)
     assert (store.state_path.read_bytes(), store.backup_path.read_bytes()) == before
