@@ -6,9 +6,9 @@ saved right after that mark (at-least-once delivery).
 """
 
 import logging
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Collection, Mapping, Sequence
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from enum import StrEnum
 
 from pydantic import AwareDatetime, BaseModel, ConfigDict
@@ -30,6 +30,7 @@ from enji_guard_radar.guard import (
     fetch_project,
     list_projects,
 )
+from enji_guard_radar.guard_report import AuditReport
 from enji_guard_radar.health import (
     NoOpsAction,
     OpsAction,
@@ -40,13 +41,14 @@ from enji_guard_radar.health import (
     mark_ops_delivered,
     ops_message,
 )
-from enji_guard_radar.high_rules import HIGH_LEVEL, evaluate_high, skip_report_for
+from enji_guard_radar.high_rules import HIGH_LEVEL, evaluate_high, in_scope, skip_report_for
 from enji_guard_radar.ledger import (
     Corrupt,
     DigestRecord,
     EvaluationOutcome,
     Loaded,
     ProjectEvaluation,
+    Reconciliation,
     ScoreRecord,
     SeriesHistory,
     SeriesKey,
@@ -58,7 +60,14 @@ from enji_guard_radar.ledger import (
     reconcile,
 )
 from enji_guard_radar.messages import escape, render_messages
-from enji_guard_radar.model import Alert, AlertKey, AlertKind, Audience, OutboundMessage
+from enji_guard_radar.model import (
+    Alert,
+    AlertKey,
+    AlertKind,
+    Audience,
+    OutboundMessage,
+    Severity,
+)
 from enji_guard_radar.ports import (
     Clock,
     Delivered,
@@ -68,6 +77,7 @@ from enji_guard_radar.ports import (
     Notifier,
     Printed,
     SendOutcome,
+    Triager,
 )
 from enji_guard_radar.recurring_rules import is_recurring, trailing_high_runs
 from enji_guard_radar.reminders import mark_reminded, reminders_due, render_reminders
@@ -81,6 +91,15 @@ from enji_guard_radar.texts import (
     text,
 )
 from enji_guard_radar.tooling_rules import ToolingGap, evaluate_tooling
+from enji_guard_radar.triage import (
+    ItemTriage,
+    TriageCandidate,
+    TriageFailed,
+    TriageOutcome,
+    build_request,
+    validate_reply,
+)
+from enji_guard_radar.triage_cost import TriageCostStore, add_call, call_line, daily_line
 
 logger = logging.getLogger(__name__)
 
@@ -96,6 +115,11 @@ class Deps:
     clock: Clock
     store: StateStore
     ops_notifier: Notifier | None = None
+    # Triage (D-03): with `triager` None or `config.triage.enabled` false the run never asks Claude
+    # and never touches `cost_store`.
+    triager: Triager | None = None
+    cost_store: TriageCostStore | None = None
+    known_secrets: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -303,10 +327,12 @@ def _run_locked(deps: Deps, now: datetime) -> RunReport:
     )
     deps.store.save(rec.state)
 
+    accepted = _triage_step(deps, rec, polled.titles, now)
     messages = render_messages(
         rec.to_send,
         collapse_above=deps.config.alerts.collapse_above,
         language=deps.config.messages.language,
+        triage=accepted,
     )
     actions: list[_OperatorAction] = []
     alert_delivery = _deliver(
@@ -696,6 +722,103 @@ class PollData:
     unknown: tuple[ProjectUnknown, ...]
     low_scores: tuple[LowScore, ...]
     tooling_gaps: tuple[ToolingGap, ...]
+    # Raw finding titles of the reports read in this run (D-06): memory only, never in State,
+    # never serialised, never logged.
+    titles: Mapping[SeriesKey, tuple[tuple[Severity, str], ...]]
+
+
+def _collect_titles(
+    project_id: str, data: ProjectOk, audit_types: Collection[str] | None
+) -> dict[SeriesKey, tuple[tuple[Severity, str], ...]]:
+    """High finding titles per series, from the reports read in this run for tracked audit types."""
+    found: dict[SeriesKey, tuple[tuple[Severity, str], ...]] = {}
+    for repo in data.repositories:
+        for report in repo.reports:
+            if not isinstance(report, AuditReport) or report.layout != "scored":
+                continue
+            if not in_scope(report.action_key, audit_types):
+                continue
+            pairs = tuple(
+                (finding.severity, finding.title)
+                for finding in report.findings
+                if finding.severity is Severity.HIGH and finding.title
+            )
+            if pairs:
+                found[(project_id, repo.repository.id, report.action_key)] = pairs
+    return found
+
+
+def _fresh_candidates(
+    rec: Reconciliation, titles: Mapping[SeriesKey, tuple[tuple[Severity, str], ...]]
+) -> list[TriageCandidate]:
+    """Fresh High alerts only (D-05): not re-armed, not retried, with titles read in this run."""
+    candidates: list[TriageCandidate] = []
+    for alert in rec.to_send:
+        key = alert.key
+        if alert.kind is not AlertKind.HIGH_FINDINGS:
+            continue
+        if key in rec.rearmed or key in rec.retried:
+            continue
+        found = titles.get((key.project_id, key.repo_id, key.action_key))
+        if not found:
+            continue
+        candidates.append(
+            TriageCandidate(
+                key=key,
+                action_key=key.action_key,
+                high_count=alert.count or 0,
+                age_days=alert.age_days or 0,
+                titles=found,
+            )
+        )
+    return candidates
+
+
+def _record_triage_cost(deps: Deps, outcome: TriageOutcome, items: int, now: datetime) -> None:
+    """Log the call and today's total; add the call to the cost file when there is a store.
+
+    The store never raises (one WARNING on a bad file), so no cost problem reaches the run.
+    """
+    logger.info(call_line(items, outcome))
+    today = now.astimezone(UTC).date()
+    store = deps.cost_store
+    days = add_call(store.load() if store is not None else (), outcome, today=today)
+    if store is not None:
+        store.save(days)
+    logger.info(daily_line(next(day for day in days if day.day == today)))
+
+
+def _triage_step(
+    deps: Deps,
+    rec: Reconciliation,
+    titles: Mapping[SeriesKey, tuple[tuple[Severity, str], ...]],
+    now: datetime,
+) -> Mapping[AlertKey, ItemTriage]:
+    """At most one triage call for the fresh High alerts; {} on every path that gives no lines.
+
+    The triager's contract is never to raise (D-11), so there is no try/except here.
+    """
+    triager = deps.triager
+    if triager is None or not deps.config.triage.enabled:
+        return {}
+    candidates = _fresh_candidates(rec, titles)
+    if not candidates:
+        logger.info("triage skipped: no fresh High alerts")
+        return {}
+    built = build_request(
+        candidates,
+        language=deps.config.messages.language,
+        max_items=deps.config.triage.max_items_per_call,
+        known_secrets=deps.known_secrets,
+    )
+    if not built.request.items:
+        logger.info("triage skipped: no usable titles")
+        return {}
+    outcome = triager.triage(built.request)
+    _record_triage_cost(deps, outcome, len(built.request.items), now)
+    if isinstance(outcome, TriageFailed):
+        return {}
+    return dict(validate_reply(built, outcome.text).accepted)
 
 
 def _evaluate_projects(
@@ -717,6 +840,7 @@ def _evaluate_projects(
     low_scores: list[LowScore] = []
     tooling_gaps: list[ToolingGap] = []
     unknown: list[ProjectUnknown] = []
+    titles: dict[SeriesKey, tuple[tuple[Severity, str], ...]] = {}
     for project in sorted(listing.projects, key=lambda p: (p.name.casefold(), p.id)):
         mode = deps.config.mode_for(project.id)
         if mode == "excluded":
@@ -775,6 +899,7 @@ def _evaluate_projects(
                     high.unknown_reports,
                     len(high.alerts),
                 )
+            titles.update(_collect_titles(project.id, data, deps.config.high.audit_types))
             _fold_scores_and_tooling(
                 deps, data, now, scores=scores, tooling=tooling, low=low_scores, gaps=tooling_gaps
             )
@@ -803,6 +928,7 @@ def _evaluate_projects(
         unknown=tuple(unknown),
         low_scores=tuple(low_scores),
         tooling_gaps=tuple(tooling_gaps),
+        titles=titles,
     )
 
 
