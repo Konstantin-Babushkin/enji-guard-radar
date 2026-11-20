@@ -5,7 +5,7 @@ import pytest
 
 from enji_guard_radar import config as config_module
 from enji_guard_radar.cli import read_config
-from enji_guard_radar.config import ConfigError, RadarConfig, parse_config
+from enji_guard_radar.config import ConfigError, RadarConfig, TriageSettings, parse_config
 from enji_guard_radar.high_history import HISTORY_WINDOW
 
 EXAMPLE = Path(__file__).resolve().parents[1] / "config" / "radar.example.yaml"
@@ -630,3 +630,11 @@ def test_triage_duplicate_key_is_an_error() -> None:
 def test_triage_must_be_a_mapping(body: str) -> None:
     with pytest.raises(ConfigError, match=r"test\.yaml: triage"):
         parse(body)
+
+
+def test_example_documents_triage() -> None:
+    text = EXAMPLE.read_text(encoding="utf-8")
+    assert re.search(r"^triage:", text, re.MULTILINE)
+    for name in TriageSettings.model_fields:
+        assert f"  {name}:" in text
+    assert parse_config(text, source="example").triage == TriageSettings()
