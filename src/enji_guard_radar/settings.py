@@ -1,5 +1,6 @@
 """Secrets and chat ids, read only from the environment or a `.env` file. Shell module."""
 
+import logging
 import re
 from collections.abc import Mapping
 from pathlib import Path
@@ -11,6 +12,11 @@ from enji_guard_radar.env_file import EnvFileError, read_env_file
 ENV_BOT_TOKEN = "TELEGRAM_BOT_TOKEN"
 ENV_CHAT_ID = "TELEGRAM_CHAT_ID"
 ENV_OPS_CHAT_ID = "TELEGRAM_OPS_CHAT_ID"
+# ASSUMPTION: CLAUDE_CODE_OAUTH_TOKEN is the name the claude CLI reads; plan 04-13 corrects it
+# if docs/triage-notes.md shows another.
+ENV_CLAUDE_TOKEN = "CLAUDE_CODE_OAUTH_TOKEN"
+
+logger = logging.getLogger(__name__)
 
 _CHAT_ID = re.compile(r"-?\d+|@[A-Za-z0-9_]{5,32}")
 
@@ -87,7 +93,20 @@ def require_live(settings: TelegramSettings) -> LiveTelegram:
     )
 
 
-def known_secrets(settings: TelegramSettings) -> tuple[str, ...]:
-    if settings.bot_token is None:
-        return ()
-    return (settings.bot_token.get_secret_value(),)
+def load_claude_token(environ: Mapping[str, str], dotenv_path: Path | None) -> SecretStr | None:
+    """The Claude token from the environment, else `.env`; unset or empty gives None (D-15)."""
+    dotenv = read_dotenv(dotenv_path) if dotenv_path is not None else {}
+    token = _pick(ENV_CLAUDE_TOKEN, environ, dotenv)
+    logger.info("claude token: %s", "set" if token is not None else "not set")
+    return SecretStr(token) if token is not None else None
+
+
+def known_secrets(
+    settings: TelegramSettings, claude_token: SecretStr | None = None
+) -> tuple[str, ...]:
+    secrets: list[str] = []
+    if settings.bot_token is not None:
+        secrets.append(settings.bot_token.get_secret_value())
+    if claude_token is not None:
+        secrets.append(claude_token.get_secret_value())
+    return tuple(secrets)
