@@ -4,10 +4,11 @@ import html
 import logging
 import re
 import unicodedata
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 
-from enji_guard_radar.model import SEVERITY_ORDER, Alert, AlertKind, OutboundMessage
+from enji_guard_radar.model import SEVERITY_ORDER, Alert, AlertKey, AlertKind, OutboundMessage
 from enji_guard_radar.texts import DEFAULT_LANGUAGE, Language, counted, text
+from enji_guard_radar.triage import ItemTriage
 
 logger = logging.getLogger(__name__)
 
@@ -165,6 +166,41 @@ def render_summary_item(
     return render_alert(alert, language=language, show_repo=show_repo)
 
 
+def triage_line(item: ItemTriage, *, language: Language = DEFAULT_LANGUAGE) -> str:
+    """The Claude line under an item: `   P1 · <cause>`. The cause is escaped here."""
+    return text(
+        language,
+        "alert.triage_line",
+        priority=item.priority.upper(),
+        cause=escape(item.cause),
+    )
+
+
+def _item_text(alert: Alert, *, language: Language, show_repo: bool, extra: str | None) -> str:
+    """The rule line of an item, plus its Claude line (if any) on its own line below."""
+    line = render_summary_item(alert, language=language, show_repo=show_repo)
+    return line if extra is None else f"{line}\n{extra}"
+
+
+def _triage_extras(
+    ordered: Sequence[Alert],
+    triage: Mapping[AlertKey, ItemTriage] | None,
+    language: Language,
+) -> dict[AlertKey, str]:
+    """Claude lines by alert key. Entries for keys that are not alerts here are only counted."""
+    if not triage:
+        return {}
+    present = {alert.key for alert in ordered}
+    stray = len(triage.keys() - present)
+    if stray:
+        logger.warning("ignored %d triage entries for alerts that are not in this set", stray)
+    return {
+        key: triage_line(entry, language=language)
+        for key, entry in triage.items()
+        if key in present
+    }
+
+
 def summary_header(
     total: int, index: int, count: int, *, language: Language = DEFAULT_LANGUAGE
 ) -> str:
@@ -210,10 +246,16 @@ def _summary_messages(
     max_chars: int,
     language: Language,
     ambiguous: frozenset[tuple[str, str]],
+    extras: Mapping[AlertKey, str],
 ) -> list[OutboundMessage]:
     total = len(ordered)
     items = [
-        render_summary_item(alert, language=language, show_repo=_shows_repo(alert, ambiguous))
+        _item_text(
+            alert,
+            language=language,
+            show_repo=_shows_repo(alert, ambiguous),
+            extra=extras.get(alert.key),
+        )
         for alert in ordered
     ]
     head_units = telegram_length(summary_header(total, 1, 1, language=language))
@@ -241,24 +283,33 @@ def render_messages(
     collapse_above: int,
     max_chars: int = DEFAULT_MAX_CHARS,
     language: Language = DEFAULT_LANGUAGE,
+    triage: Mapping[AlertKey, ItemTriage] | None = None,
 ) -> list[OutboundMessage]:
     """Worst first. Up to `collapse_above` alerts go one by one, more become one summary that is
-    split between items into numbered chunks of at most `max_chars` UTF-16 units."""
+    split between items into numbered chunks of at most `max_chars` UTF-16 units.
+
+    `triage` only adds a Claude line under an item. Order, the collapse decision, keys and every
+    rule-text part are settled before the map is read, so it cannot change which alerts go out."""
     if not MIN_MAX_CHARS <= max_chars <= TELEGRAM_MAX_CHARS:
         message = f"max_chars must be between {MIN_MAX_CHARS} and {TELEGRAM_MAX_CHARS}"
         raise ValueError(message)
     ordered = sorted(alerts, key=_sort_key)
     ambiguous = ambiguous_series(ordered)
-    if len(ordered) <= collapse_above:
+    collapse = len(ordered) > collapse_above
+    extras = _triage_extras(ordered, triage, language)
+    if not collapse:
         return [
             OutboundMessage(
-                text=render_alert(
-                    alert, language=language, show_repo=_shows_repo(alert, ambiguous)
+                text=_item_text(
+                    alert,
+                    language=language,
+                    show_repo=_shows_repo(alert, ambiguous),
+                    extra=extras.get(alert.key),
                 ),
                 keys=(alert.key,),
             )
             for alert in ordered
         ]
-    messages = _summary_messages(ordered, max_chars, language, ambiguous)
+    messages = _summary_messages(ordered, max_chars, language, ambiguous, extras)
     logger.info("collapsed %d alerts into %d summary message(s)", len(ordered), len(messages))
     return messages
