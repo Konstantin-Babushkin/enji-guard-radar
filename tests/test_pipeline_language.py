@@ -164,13 +164,11 @@ def test_digest_is_sent_in_the_configured_language_with_the_same_state(tmp_path:
 
     (english,) = sent["en"].requests
     (russian,) = sent["ru"].requests
-    assert text_of(english).startswith("<b>Guard radar weekly digest</b>\nLast successful")
-    assert text_of(russian).startswith(
-        "<b>Еженедельный дайджест Guard radar</b>\nПоследний успешный"
-    )
+    assert re.match(r"<b>Radar weekly · \d+ open</b>\nLast poll: ", text_of(english))
+    assert re.match(r"<b>Радар · дайджест · открыто: \d+</b>\nПоследний опрос: ", text_of(russian))
     assert english[1]["chat_id"] == russian[1]["chat_id"] == GROUP_CHAT
     assert 'Project A &lt;core&gt; &amp; "tools"' in text_of(russian)
-    assert "1 находка высокой серьёзности в audit.security (acme/service-a)." in text_of(russian)
+    assert "· security высокие 1 · 8 д" in text_of(russian)
     assert (tmp_path / "state-en" / "state.json").read_bytes() == (
         tmp_path / "state-ru" / "state.json"
     ).read_bytes()

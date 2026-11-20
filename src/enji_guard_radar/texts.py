@@ -51,37 +51,24 @@ _EN: dict[str, Entry] = {
     "alert.where_repo": "{audit} ({repo})",
     "alert.triage_line": "   {priority} · {cause}",
     "summary.short_header": "Radar · {count} need attention",
-    "alert.high.count": "{findings} in {where}.",
-    "alert.high.seen": "Seen by the radar since {since} ({days}).",
     "reminder.short_title": "Radar reminder · {count} open",
-    "digest.title": "Guard radar weekly digest",
-    "digest.poll": "Last successful Guard poll: {stamp} UTC.",
-    "digest.open_items": "Open items: {total}.",
+    "digest.short_title": "Radar weekly · {count} open",
+    "digest.short_poll": "Last poll: {stamp} UTC",
+    "digest.short_clear": "<b>Radar weekly</b> · {what} · last poll {stamp} UTC",
+    "digest.short_recurring": "recurring {runs} runs",
+    "digest.short_score": "{audit} {score}/100",
+    "digest.short_gap": "no runs {age}: {audits}",
+    "digest.short_resolved_head": "Resolved · {total}",
+    "digest.short_resolved": "<b>{name}</b> · {what} closed",
+    "digest.short_what.stale": "no scan",
+    "digest.short_what.never_ran": "no scan yet",
+    "digest.short_what.other": "item",
+    "digest.footer_age": "Ages count from the radar's first sight.",
     "digest.unread": "{projects} could not be read in that poll.",
     "digest.more_items": "+{hidden} more open {noun} not shown.",
-    "digest.resolved_head": "Resolved since the last digest ({total}):",
     "digest.resolved_more": "+{hidden} more resolved.",
     "digest.nothing_open": "nothing open",
     "digest.nothing_open_read": "nothing open in the projects read",
-    "digest.item.high": "- High: <b>{name}</b>: {what} {seen}",
-    "digest.item.recurring": "Recurring: High findings in each of the last {runs} runs.",
-    "digest.item.stale": (
-        "- Stale: <b>{name}</b>: no completed Guard run for {days} (last: {last})."
-    ),
-    "digest.item.stale_never": "- Stale: <b>{name}</b>: no completed Guard run found.",
-    "digest.item.low_score": (
-        "- Low score: <b>{name}</b>: {audit} score {score}/100 in {repo} (run {day})."
-    ),
-    "digest.item.gap": (
-        "- Tooling gap: <b>{name}</b>: no completed {audit} run in the last {days} "
-        "in {repo} {tail}."
-    ),
-    "digest.gap.none": "(none seen)",
-    "digest.gap.last": "(last run: {day})",
-    "digest.resolved.high": "- <b>{name}</b>: High findings in {audit} are closed.",
-    "digest.resolved.stale": "- <b>{name}</b>: no longer stale.",
-    "digest.resolved.never_ran": "- <b>{name}</b>: now has completed Guard runs.",
-    "digest.resolved.other": "- <b>{name}</b>: no longer open.",
     "action.token_rejected": "Telegram rejected the bot token (HTTP {code}); check {env}",
     "action.chat_forbidden": (
         "Telegram refused to post to chat {chat} (HTTP 403): the bot was removed, blocked or "
@@ -146,39 +133,24 @@ _RU: dict[str, Entry] = {
     "alert.where_repo": "{audit} ({repo})",
     "alert.triage_line": "   {priority} · {cause}",
     "summary.short_header": "Радар · требуют внимания: {count}",
-    "alert.high.count": "{findings} в {where}.",
-    "alert.high.seen": "Радар видит с {since} ({days}).",
     "reminder.short_title": "Радар · напоминание · открыто: {count}",
-    "digest.title": "Еженедельный дайджест Guard radar",
-    "digest.poll": "Последний успешный опрос Guard: {stamp} UTC.",
-    "digest.open_items": "Открытых пунктов: {total}.",
+    "digest.short_title": "Радар · дайджест · открыто: {count}",
+    "digest.short_poll": "Последний опрос: {stamp} UTC",
+    "digest.short_clear": "<b>Радар · дайджест</b> · {what} · последний опрос {stamp} UTC",
+    "digest.short_recurring": "повторяется, запусков подряд: {runs}",
+    "digest.short_score": "{audit} {score}/100",
+    "digest.short_gap": "нет запусков {age}: {audits}",
+    "digest.short_resolved_head": "Закрыто · {total}",
+    "digest.short_resolved": "<b>{name}</b> · {what}: закрыто",
+    "digest.short_what.stale": "нет проверок",
+    "digest.short_what.never_ran": "проверок ещё не было",
+    "digest.short_what.other": "пункт",
+    "digest.footer_age": "Возраст считается с первого появления в радаре.",
     "digest.unread": "В этом опросе не удалось прочитать: {projects}.",
     "digest.more_items": "Не показано ещё: {hidden} {noun}.",
-    "digest.resolved_head": "Закрыто с прошлого дайджеста ({total}):",
     "digest.resolved_more": "Закрыто ещё: {hidden}.",
     "digest.nothing_open": "ничего не открыто",
     "digest.nothing_open_read": "ничего не открыто в прочитанных проектах",
-    "digest.item.high": "- Высокая: <b>{name}</b>: {what} {seen}",
-    "digest.item.recurring": (
-        "Повторяется: находки высокой серьёзности в каждом из последних {runs} запусков."
-    ),
-    "digest.item.stale": (
-        "- Устарело: <b>{name}</b>: нет завершённых запусков Guard уже {days} (последний: {last})."
-    ),
-    "digest.item.stale_never": "- Устарело: <b>{name}</b>: завершённых запусков Guard не найдено.",
-    "digest.item.low_score": (
-        "- Низкий балл: <b>{name}</b>: {audit}: оценка {score}/100 в {repo} (запуск {day})."
-    ),
-    "digest.item.gap": (
-        "- Нет проверки: <b>{name}</b>: нет завершённых запусков {audit} "
-        "за последние {days} в {repo} {tail}."
-    ),
-    "digest.gap.none": "(запусков не видно)",
-    "digest.gap.last": "(последний запуск: {day})",
-    "digest.resolved.high": "- <b>{name}</b>: находки высокой серьёзности в {audit} закрыты.",
-    "digest.resolved.stale": "- <b>{name}</b>: проверки больше не устарели.",
-    "digest.resolved.never_ran": "- <b>{name}</b>: появились завершённые запуски Guard.",
-    "digest.resolved.other": "- <b>{name}</b>: больше не открыто.",
     "action.token_rejected": "Telegram отклонил токен бота (HTTP {code}); проверьте {env}",
     "action.chat_forbidden": (
         "Telegram не разрешил писать в чат {chat} (HTTP 403): бота удалили, заблокировали "

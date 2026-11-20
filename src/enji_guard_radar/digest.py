@@ -7,7 +7,7 @@ or evidence, so none can be rendered.
 
 import logging
 from collections.abc import Mapping, Sequence
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from enum import StrEnum
 
 from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, StrictInt
@@ -17,12 +17,14 @@ from enji_guard_radar.messages import (
     DEFAULT_MAX_CHARS,
     MIN_MAX_CHARS,
     TELEGRAM_MAX_CHARS,
+    age_text,
+    ambiguous_series,
+    audit_short,
     clean_name,
-    days_text,
     escape,
-    high_findings_text,
-    high_where,
+    high_line,
     pack_items,
+    render_alert,
     telegram_length,
 )
 from enji_guard_radar.model import Alert, AlertKind, Audience, OutboundMessage
@@ -32,7 +34,6 @@ from enji_guard_radar.tooling_rules import ToolingGap
 
 logger = logging.getLogger(__name__)
 
-DIGEST_TITLE = text("en", "digest.title")  # the English title; the catalog has every language
 RESOLVED_LINE_CAP = 5
 
 
@@ -81,6 +82,8 @@ class Digest(BaseModel):
     resolved_hidden: int
     resolved_total: int
     unread_projects: int
+    # A High line is shown: the digest then ends with the footer about how ages are counted.
+    has_high: bool
     last_poll_at: AwareDatetime
     # The language its lines were built in; `render_digest` writes the rest of the text in it.
     language: Language = DEFAULT_LANGUAGE
@@ -94,8 +97,17 @@ def _name(name: str, language: Language) -> str:
     return escape(clean_name(name, language=language))
 
 
+def _line(language: Language, name: str, *parts: str) -> str:
+    """`<marker> <b>name</b> · part · part`: every non-High item line has this shape."""
+    marker = text(language, "marker.other")
+    return " · ".join([f"{marker} <b>{_name(name, language)}</b>", *parts])
+
+
 def _high_item(
-    alert: Alert, recurring: Mapping[SeriesKey, int], language: Language
+    alert: Alert,
+    recurring: Mapping[SeriesKey, int],
+    ambiguous: frozenset[tuple[str, str]],
+    language: Language,
 ) -> tuple[tuple[object, ...], str]:
     if (
         alert.kind is not AlertKind.HIGH_FINDINGS
@@ -106,29 +118,12 @@ def _high_item(
     ):
         message = "digest high alerts need count, repo_name, seen_since and age_days"
         raise ValueError(message)
-    what = text(
-        language,
-        "alert.high.count",
-        findings=high_findings_text(alert.count, language=language),
-        where=high_where(alert),
-    )
-    seen = text(
-        language,
-        "alert.high.seen",
-        since=_day(alert.seen_since),
-        days=days_text(alert.age_days, language=language),
-    )
-    line = text(
-        language,
-        "digest.item.high",
-        name=_name(alert.project_name, language),
-        what=what,
-        seen=seen,
-    )
+    show_repo = (alert.key.project_id, alert.key.action_key) in ambiguous
+    line = high_line(alert, language=language, show_repo=show_repo, arrow=False)
     series = (alert.key.project_id, alert.key.repo_id, alert.key.action_key)
     runs = recurring.get(series)
     if runs is not None:
-        line += " " + text(language, "digest.item.recurring", runs=runs)
+        line += " · " + text(language, "digest.short_recurring", runs=runs)
     order = (
         -alert.count,
         -alert.age_days,
@@ -139,38 +134,41 @@ def _high_item(
 
 
 def _stale_item(alert: Alert, language: Language) -> tuple[tuple[object, ...], str]:
-    name = _name(alert.project_name, language)
     if alert.kind is AlertKind.STALE:
         if alert.age_days is None or alert.last_run_at is None:
             message = "a stale digest alert needs age_days and last_run_at"
             raise ValueError(message)
-        line = text(
-            language,
-            "digest.item.stale",
-            name=name,
-            days=days_text(alert.age_days, language=language),
-            last=_day(alert.last_run_at),
-        )
         age, never = alert.age_days, 0
     elif alert.kind is AlertKind.NEVER_RAN:
-        line = text(language, "digest.item.stale_never", name=name)
         age, never = 0, 1
     else:
         message = "digest stale alerts must be STALE or NEVER_RAN"
         raise ValueError(message)
     order = (never, -age, clean_name(alert.project_name).casefold(), alert.key.as_text())
-    return order, line
+    return order, render_alert(alert, language=language)
 
 
-def _low_score_item(item: LowScore, language: Language) -> tuple[tuple[object, ...], str]:
-    line = text(
+def _ambiguous_scores(scores: Sequence[LowScore]) -> frozenset[tuple[str, str]]:
+    """(project_id, action_key) pairs that more than one repo holds among the low scores."""
+    repos: dict[tuple[str, str], set[str]] = {}
+    for item in scores:
+        repos.setdefault((item.project_id, item.action_key), set()).add(item.repo_id)
+    return frozenset(pair for pair, ids in repos.items() if len(ids) > 1)
+
+
+def _low_score_item(
+    item: LowScore, poll_day: date, ambiguous: frozenset[tuple[str, str]], language: Language
+) -> tuple[tuple[object, ...], str]:
+    audit = audit_short(item.action_key)
+    if (item.project_id, item.action_key) in ambiguous:
+        repo = escape(clean_name(item.repo_name, language=language))
+        audit = text(language, "alert.where_repo", audit=audit, repo=repo)
+    age = max((poll_day - item.completed_at.astimezone(UTC).date()).days, 0)
+    line = _line(
         language,
-        "digest.item.low_score",
-        name=_name(item.project_name, language),
-        audit=escape(item.action_key),
-        score=item.score,
-        repo=escape(clean_name(item.repo_name, language=language)),
-        day=_day(item.completed_at),
+        item.project_name,
+        text(language, "digest.short_score", audit=audit, score=item.score),
+        age_text(age, language),
     )
     order = (
         item.completed_at.astimezone(UTC),
@@ -182,31 +180,43 @@ def _low_score_item(item: LowScore, language: Language) -> tuple[tuple[object, .
     return order, line
 
 
-def _gap_item(item: ToolingGap, language: Language) -> tuple[tuple[object, ...], str]:
-    if item.last_completed_at is None:
-        tail = text(language, "digest.gap.none")
-    else:
-        tail = text(language, "digest.gap.last", day=_day(item.last_completed_at))
-    line = text(
-        language,
-        "digest.item.gap",
-        name=_name(item.project_name, language),
-        audit=escape(item.action_key),
-        days=days_text(item.window_days, language=language),
-        repo=escape(clean_name(item.repo_name, language=language)),
-        tail=tail,
-    )
+def _gap_order(item: ToolingGap) -> tuple[object, ...]:
     moment = datetime.min.replace(tzinfo=UTC)
     if item.last_completed_at is not None:
         moment = item.last_completed_at.astimezone(UTC)
-    order = (
+    return (
         0 if item.last_completed_at is None else 1,
         moment,
         clean_name(item.project_name).casefold(),
         clean_name(item.repo_name).casefold(),
         item.action_key,
     )
-    return order, line
+
+
+def _gap_items(
+    gaps: Sequence[ToolingGap], language: Language
+) -> list[tuple[tuple[object, ...], str]]:
+    """One item per (project, repo): its audit names sorted, ordered by its oldest member."""
+    unique = {(g.project_id, g.repo_id, g.action_key): g for g in gaps}
+    groups: dict[tuple[str, str], list[ToolingGap]] = {}
+    for gap in unique.values():
+        groups.setdefault((gap.project_id, gap.repo_id), []).append(gap)
+    items = []
+    for members in groups.values():
+        first = members[0]
+        audits = ", ".join(
+            escape(n) for n in sorted(g.action_key.removeprefix("audit.") for g in members)
+        )
+        window = min(g.window_days for g in members)
+        line = _line(
+            language,
+            first.project_name,
+            escape(clean_name(first.repo_name, language=language)),
+            text(language, "digest.short_gap", age=age_text(window, language), audits=audits),
+        )
+        items.append((min(_gap_order(g) for g in members), line))
+    logger.info("tooling gaps: %d gap(s) in %d repo line(s)", len(unique), len(items))
+    return items
 
 
 def _sorted_lines(rows: Sequence[tuple[tuple[object, ...], str]]) -> list[str]:
@@ -218,30 +228,32 @@ def _resolved_line(item: ResolvedItem, names: Mapping[str, str], language: Langu
     name = _name(names.get(item.key.project_id, ""), language)
     level = item.key.level
     if level == "high":
-        return text(language, "digest.resolved.high", name=name, audit=escape(item.key.action_key))
-    if level == "stale":
-        return text(language, "digest.resolved.stale", name=name)
-    if level == "never_ran":
-        return text(language, "digest.resolved.never_ran", name=name)
-    return text(language, "digest.resolved.other", name=name)
+        what = audit_short(item.key.action_key)
+    elif level in ("stale", "never_ran"):
+        what = text(language, f"digest.short_what.{level}")
+    else:
+        what = text(language, "digest.short_what.other")
+    return text(language, "digest.short_resolved", name=name, what=what)
 
 
 def build_digest(inp: DigestInput, *, language: Language = DEFAULT_LANGUAGE) -> Digest:
     """Order the open items by tier, keep one line per key, cap at `max_items`."""
-    high = {a.key: _high_item(a, inp.recurring_runs, language) for a in inp.high}
+    ambiguous_high = ambiguous_series(inp.high)
+    high = {a.key: _high_item(a, inp.recurring_runs, ambiguous_high, language) for a in inp.high}
     stale = {a.key: _stale_item(a, language) for a in inp.stale}
+    poll_day = inp.last_poll_at.astimezone(UTC).date()
+    ambiguous_low = _ambiguous_scores(inp.low_scores)
     low = {
-        (s.project_id, s.repo_id, s.action_key): _low_score_item(s, language)
+        (s.project_id, s.repo_id, s.action_key): _low_score_item(
+            s, poll_day, ambiguous_low, language
+        )
         for s in inp.low_scores
-    }
-    gaps = {
-        (g.project_id, g.repo_id, g.action_key): _gap_item(g, language) for g in inp.tooling_gaps
     }
     by_tier = {
         DigestTier.HIGH: _sorted_lines(list(high.values())),
         DigestTier.STALE: _sorted_lines(list(stale.values())),
         DigestTier.LOW_SCORE: _sorted_lines(list(low.values())),
-        DigestTier.TOOLING_GAP: _sorted_lines(list(gaps.values())),
+        DigestTier.TOOLING_GAP: _sorted_lines(_gap_items(inp.tooling_gaps, language)),
     }
     everything = [DigestItem(tier=t, line=line) for t in TIER_ORDER for line in by_tier[t]]
     shown = everything[: inp.max_items]
@@ -261,14 +273,14 @@ def build_digest(inp: DigestInput, *, language: Language = DEFAULT_LANGUAGE) -> 
         resolved_hidden=len(resolved) - len(lines),
         resolved_total=len(resolved),
         unread_projects=inp.unread_projects,
+        has_high=any(item.tier is DigestTier.HIGH for item in shown),
         last_poll_at=inp.last_poll_at,
         language=language,
     )
 
 
-def _poll_text(digest: Digest, language: Language) -> str:
-    stamp = digest.last_poll_at.astimezone(UTC).strftime("%Y-%m-%d %H:%M")
-    return text(language, "digest.poll", stamp=stamp)
+def _stamp(digest: Digest) -> str:
+    return digest.last_poll_at.astimezone(UTC).strftime("%Y-%m-%d %H:%M")
 
 
 def _unread_line(count: int, language: Language) -> str:
@@ -283,28 +295,29 @@ def _more_line(hidden: int, language: Language) -> str:
 
 def _body(digest: Digest, language: Language) -> list[str]:
     lines: list[str] = []
-    if digest.total_items:
-        lines.append(text(language, "digest.open_items", total=digest.total_items))
     if digest.unread_projects:
         lines.append(_unread_line(digest.unread_projects, language))
     lines.extend(item.line for item in digest.items)
     if digest.hidden_items:
         lines.append(_more_line(digest.hidden_items, language))
     if digest.resolved_total:
-        lines.append(text(language, "digest.resolved_head", total=digest.resolved_total))
+        lines.append(text(language, "digest.short_resolved_head", total=digest.resolved_total))
         lines.extend(digest.resolved_lines)
         if digest.resolved_hidden:
             lines.append(text(language, "digest.resolved_more", hidden=digest.resolved_hidden))
+    if digest.has_high:
+        lines.append(text(language, "digest.footer_age"))
     return lines
 
 
 def _header(digest: Digest, index: int, count: int, language: Language) -> str:
+    if not digest.total_items:
+        # One line, never numbered: with at most 7 resolved lines it always fits one message.
+        key = "digest.nothing_open_read" if digest.unread_projects else "digest.nothing_open"
+        return text(language, "digest.short_clear", what=text(language, key), stamp=_stamp(digest))
     suffix = f" ({index}/{count})" if count > 1 else ""
-    title = f"<b>{text(language, 'digest.title')}{suffix}</b>"
-    if digest.total_items:
-        return f"{title}\n{_poll_text(digest, language)}"
-    key = "digest.nothing_open_read" if digest.unread_projects else "digest.nothing_open"
-    return f"{title}: {text(language, key)}. {_poll_text(digest, language)}"
+    title = f"<b>{text(language, 'digest.short_title', count=digest.total_items)}{suffix}</b>"
+    return f"{title}\n{text(language, 'digest.short_poll', stamp=_stamp(digest))}"
 
 
 def render_digest(
