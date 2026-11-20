@@ -1,4 +1,7 @@
+import os
 import re
+import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -10,6 +13,8 @@ from enji_guard_radar.high_history import HISTORY_WINDOW
 
 EXAMPLE = Path(__file__).resolve().parents[1] / "config" / "radar.example.yaml"
 PROJECT = "00000000-0000-4000-8000-00000000a002"
+FIXTURES = Path(__file__).resolve().parents[1] / "fixtures" / "guard"
+LAUNCH = "import sys; from enji_guard_radar import main; sys.exit(main(sys.argv[1:]))"
 
 
 def parse(text: str) -> RadarConfig:
@@ -638,3 +643,35 @@ def test_example_documents_triage() -> None:
     for name in TriageSettings.model_fields:
         assert f"  {name}:" in text
     assert parse_config(text, source="example").triage == TriageSettings()
+
+
+def test_triage_unknown_key_exits_2_from_the_cli(tmp_path: Path) -> None:
+    config = tmp_path / "bad.yaml"
+    config.write_text("triage:\n  bogus: 1\n", encoding="utf-8")
+    state_dir = tmp_path / "state"
+    args = [
+        "run",
+        "--dry-run",
+        "--fixtures",
+        str(FIXTURES),
+        "--config",
+        str(config),
+        "--state-dir",
+        str(state_dir),
+        "--env-file",
+        str(tmp_path / "none.env"),
+    ]
+    env = {"PATH": os.environ.get("PATH", ""), "PYTHONUTF8": "1", "PYTHONIOENCODING": "utf-8"}
+    done = subprocess.run(
+        [sys.executable, "-c", LAUNCH, *args],
+        env=env,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        check=False,
+    )
+    assert done.returncode == 2
+    error_lines = [line for line in done.stderr.splitlines() if line.startswith("error:")]
+    assert len(error_lines) == 1
+    assert "triage" in error_lines[0]
+    assert not state_dir.exists()
