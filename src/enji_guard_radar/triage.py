@@ -6,16 +6,24 @@ The adapter that moves the bytes lives behind the `Triager` port in `ports.py`.
 """
 
 import json
+import logging
 import re
+import unicodedata
 from collections.abc import Iterable, Mapping, Sequence
 from enum import StrEnum
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from enji_guard_radar.model import AlertKey, Severity
 from enji_guard_radar.texts import Language
 from enji_guard_radar.titles import pick_titles
+
+logger = logging.getLogger(__name__)
+
+MAX_CAUSE_CHARS = 60
+# Longer replies are not parsed (threat T-04-17); counted in characters so it never fails.
+_MAX_REPLY_CHARS = 64 * 1024
 
 
 class TriageFailure(StrEnum):
@@ -190,3 +198,97 @@ def render_prompt(request: TriageRequest, nonce: str) -> tuple[str, str]:
 def triage_json_schema() -> str:
     """Compact JSON Schema of the expected reply, generated from the models."""
     return json.dumps(TriageResult.model_json_schema(), separators=(",", ":"))
+
+
+class TriageValidation(BaseModel):
+    """What survived validation. `accepted` holds only items that may carry a cause."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    accepted: Mapping[AlertKey, ItemTriage]
+    failure: TriageFailure | None = None
+    rejected: Mapping[TriageFailure, int] = Field(default_factory=dict)
+
+
+def _reject_all(reason: TriageFailure) -> TriageValidation:
+    logger.info("triage reply rejected: reason=%s", reason.value)
+    return TriageValidation(accepted={}, failure=reason)
+
+
+def _lowercase_priorities(data: dict[str, object]) -> dict[str, object]:
+    items = data.get("items")
+    if not isinstance(items, list):
+        return data
+    fixed: list[object] = []
+    for item in items:
+        if isinstance(item, dict) and isinstance(item.get("priority"), str):
+            item = {**item, "priority": item["priority"].lower()}
+        fixed.append(item)
+    return {**data, "items": fixed}
+
+
+_LINE_BREAKS = frozenset("\u2028\u2029")
+# Substring checks on the lowercased cause: links, handles and markup have no place in it.
+_FORBIDDEN_PARTS = (
+    ("separator", "\u00b7"),
+    ("link", "http"),
+    ("link", "www"),
+    ("link", "t.me"),
+    ("handle", "@"),
+    ("markup", "<"),
+    ("markup", ">"),
+)
+
+
+def _cause_problem(cause: str) -> str | None:
+    """Name of the first rule the cause breaks, or None. Counted in characters (D-09)."""
+    text = cause.strip()
+    if not text:
+        return "empty"
+    if len(text) > MAX_CAUSE_CHARS:
+        return "too_long"
+    if any(unicodedata.category(c) == "Cc" or c in _LINE_BREAKS for c in text):
+        return "control"
+    lowered = text.lower()
+    for name, part in _FORBIDDEN_PARTS:
+        if part in lowered:
+            return name
+    if any(c.isdigit() for c in text):
+        return "digit"
+    return None
+
+
+def validate_reply(built: BuiltRequest, text: str) -> TriageValidation:
+    """Pure and never raises. Whole reply rejected for bad shape or ids (D-09)."""
+    if len(text) > _MAX_REPLY_CHARS:
+        return _reject_all(TriageFailure.NOT_JSON)
+    try:
+        data = json.loads(text)
+    except (ValueError, RecursionError):
+        return _reject_all(TriageFailure.NOT_JSON)
+    if not isinstance(data, dict):
+        return _reject_all(TriageFailure.NOT_JSON)
+    try:
+        result = TriageResult.model_validate(_lowercase_priorities(data))
+    except ValidationError:
+        return _reject_all(TriageFailure.SCHEMA_INVALID)
+    seen = [item.item_id for item in result.items]
+    if len(seen) > len(built.ids) or len(set(seen)) != len(seen) or not set(seen) <= set(built.ids):
+        return _reject_all(TriageFailure.UNKNOWN_OR_DUPLICATE_IDS)
+    accepted: dict[AlertKey, ItemTriage] = {}
+    rejected = 0
+    for item in result.items:
+        if _cause_problem(item.cause) is not None:
+            rejected += 1
+            continue
+        accepted[built.ids[item.item_id]] = item.model_copy(update={"cause": item.cause.strip()})
+    logger.info(
+        "triage reply validated: accepted=%d of %d, item_rejected=%d",
+        len(accepted),
+        len(built.ids),
+        rejected,
+    )
+    return TriageValidation(
+        accepted=accepted,
+        rejected={TriageFailure.ITEM_REJECTED: rejected} if rejected else {},
+    )
