@@ -33,6 +33,7 @@ from enji_guard_radar.ports import (
     GuardTools,
     Notifier,
     Printed,
+    Triager,
 )
 from enji_guard_radar.secret_guard import SecretGatedNotifier, configure_logging, redact
 from enji_guard_radar.settings import (
@@ -41,6 +42,7 @@ from enji_guard_radar.settings import (
     SettingsError,
     TelegramSettings,
     known_secrets,
+    load_claude_token,
     load_settings,
     require_live,
 )
@@ -48,6 +50,8 @@ from enji_guard_radar.stale import StaleVerdict
 from enji_guard_radar.state_store import DryRunStateStore, FileStateStore
 from enji_guard_radar.telegram import HttpTransport, TelegramNotifier, UrllibTransport
 from enji_guard_radar.texts import DEFAULT_LANGUAGE, Language
+from enji_guard_radar.triage_cost import TriageCostStore
+from enji_guard_radar.triage_cost_store import FileTriageCostStore, ReadOnlyTriageCostStore
 
 logger = logging.getLogger(__name__)
 
@@ -240,6 +244,31 @@ class _LazyGuard:
             self._session.__exit__(None, None, None)
 
 
+def _triage_wiring(
+    config: RadarConfig,
+    settings: TelegramSettings,
+    environ: Mapping[str, str],
+    env_file: Path,
+    state_dir: Path,
+    *,
+    dry_run: bool,
+) -> tuple[Triager, TriageCostStore, tuple[str, ...]]:
+    """The Claude triager, its cost store and the secrets to redact. Only called when enabled."""
+    # Lazy: with triage off the adapter module is never imported (D-03).
+    from enji_guard_radar.claude_cli_triager import ClaudeCliTriager
+
+    token = load_claude_token(environ, env_file)
+    triager = ClaudeCliTriager(
+        token=token.get_secret_value() if token is not None else None,
+        model=config.triage.model,
+        timeout_seconds=config.triage.timeout_seconds,
+        max_cost_usd=config.triage.max_cost_usd_per_call,
+    )
+    file_store = FileTriageCostStore(state_dir)
+    cost_store: TriageCostStore = ReadOnlyTriageCostStore(file_store) if dry_run else file_store
+    return triager, cost_store, known_secrets(settings, token)
+
+
 def _run(
     args: argparse.Namespace,
     out: TextIO,
@@ -284,6 +313,17 @@ def _run(
         print(f"error: {error}", file=sys.stderr)
         return 2
 
+    triager: Triager | None = None
+    cost_store: TriageCostStore | None = None
+    triage_secrets: tuple[str, ...] = ()
+    if config.triage.enabled:
+        triager, cost_store, secrets = _triage_wiring(
+            config, settings, environ, env_file, args.state_dir, dry_run=args.dry_run
+        )
+        triage_secrets = secrets
+        # The Claude token must be redacted from logs and output too (D-15).
+        configure_logging(level=logging.INFO, known_secrets=secrets, stream=sys.stderr)
+
     printer = PrintNotifier()
     notifier: Notifier
     ops_notifier: Notifier | None
@@ -309,6 +349,9 @@ def _run(
         clock=clock,
         store=store,
         ops_notifier=ops_notifier,
+        triager=triager,
+        cost_store=cost_store,
+        known_secrets=triage_secrets,
     )
     try:
         report = run_once(deps)
