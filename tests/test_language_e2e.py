@@ -70,7 +70,7 @@ def test_golden_default_dry_run_output(tmp_path: Path) -> None:
 ALERT_AT = "2026-12-01T12:00:00Z"
 CYRILLIC = re.compile("[А-Яа-яЁё]")
 ENGLISH_PHRASES = re.compile(
-    "weekly|no scan|need attention|Last poll|no runs|Ages count|"
+    "weekly|no scan|problems|need attention|Last poll|no runs|Ages count|"
     "more open|could not be read|Resolved|closed|Open items|Tooling gap|Stale:|High:"
 )
 FRAME = re.compile(r"^(---|summary:|follow-ups:|DRY RUN)", re.MULTILINE)
@@ -129,6 +129,35 @@ def test_alerts_in_russian_match_the_english_ones(tmp_path: Path, ru_config: Pat
     assert FRAME.findall(english.stdout) == FRAME.findall(russian.stdout)
     # A dry-run writes nothing, in either language.
     assert sorted(p.name for p in (tmp_path / "state").iterdir()) == seeded
+
+
+def test_collapsed_alerts_are_one_line_per_project_in_both_languages(
+    tmp_path: Path, ru_config: Path
+) -> None:
+    collapse = tmp_path / "collapse.yaml"
+    collapse.write_text("alerts:\n  collapse_above: 1\n", encoding="utf-8")
+    ru_collapse = tmp_path / "ru-collapse.yaml"
+    ru_collapse.write_text("messages:\n  language: ru\nalerts:\n  collapse_above: 1\n", "utf-8")
+    seed_live_baseline(tmp_path)
+    english = run_cli(tmp_path, ALERT_AT, "--config", str(collapse))
+    russian = run_cli(tmp_path, ALERT_AT, "--config", str(ru_collapse))
+    assert english.returncode == russian.returncode == 0
+
+    assert blocks(english.stdout, "") == [
+        [
+            "Radar · problems: 2 projects",
+            f"🟡 <b>{PROJECT_A}</b> · no scan 20d",
+            "🟡 <b>Project F (excluded in config)</b> · no scan 16d",
+        ]
+    ]
+    assert blocks(russian.stdout, "") == [
+        [
+            "Радар · проблемы: 2 проекта",
+            f"🟡 <b>{PROJECT_A}</b> · нет проверок 20 д",
+            "🟡 <b>Project F (excluded in config)</b> · нет проверок 16 д",
+        ]
+    ]
+    assert not ENGLISH_PHRASES.search(russian.stdout)
 
 
 def test_digest_and_baseline_in_russian_match_the_english_run(

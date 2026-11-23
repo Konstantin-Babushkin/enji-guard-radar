@@ -12,7 +12,7 @@ from pathlib import Path
 
 import pytest
 from guard_fakes import InMemoryGuardTools, world
-from test_high_pipeline import BASE, PID, RID2, Accepting
+from test_high_pipeline import BASE, PID, Accepting
 from test_triage_matrix import claude_lines, strip_claude_lines
 from test_triage_pipeline import (
     HASH,
@@ -22,6 +22,7 @@ from test_triage_pipeline import (
     TriageSim,
     ok_reply,
     state_files,
+    two_project_sim,
 )
 from triage_fakes import DEFAULT_CAUSE, FakeTriager
 
@@ -224,12 +225,7 @@ OBEYING: list[tuple[str, Callable[[TriageRequest], TriageOutcome], int]] = [
 
 def two_alert_sim(tmp_path: Path, triager: FakeTriager | None) -> TriageSim:
     config = TRIAGE_OFF if triager is None else TRIAGE_ON
-    sim = TriageSim(tmp_path, config, triager=triager, cost_store=None)
-    sim.add_second_repo()
-    sim.poll(0)
-    sim.add_titled_run([SQL], day=1)
-    sim.add_titled_run([HASH], day=1, rid=RID2)
-    return sim
+    return two_project_sim(tmp_path, triager, config)
 
 
 @pytest.mark.parametrize(

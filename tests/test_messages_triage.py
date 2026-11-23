@@ -6,7 +6,7 @@ import pytest
 from test_messages import high, never_ran, stale
 
 from enji_guard_radar.messages import MIN_MAX_CHARS, render_messages, telegram_length
-from enji_guard_radar.model import Alert, AlertKey
+from enji_guard_radar.model import Alert, AlertKey, AlertKind
 from enji_guard_radar.texts import Language, text
 from enji_guard_radar.triage import ItemTriage
 
@@ -19,7 +19,7 @@ def test_single_alert_with_cause() -> None:
     alert = high()
     messages = render_messages([alert], collapse_above=3, triage={alert.key: item()})
     assert [m.text for m in messages] == [
-        "🔴 <b>Project A</b> · security High 0→1 · 8d\n   P1 · SQL injection in order search"
+        "🔴 <b>Project A</b> · High 1 in 1 audit · 8d\n   P1 · SQL injection in order search"
     ]
     assert messages[0].keys == (alert.key,)
 
@@ -57,26 +57,31 @@ def test_no_triage_output_is_identical(
     assert render_messages(alerts, collapse_above=3, language=language, triage=triage) == plain
 
 
-def test_summary_items_carry_their_claude_line() -> None:
+def test_summary_lines_carry_their_claude_line() -> None:
     alerts = mixed(5)
     plain = render_messages(alerts, collapse_above=3)
-    ordered_keys = [key for message in plain for key in message.keys]
-    chosen = {ordered_keys[1]: item("first cause"), ordered_keys[3]: item("second cause", "p3")}
+    highs = [alert for alert in alerts if alert.kind is AlertKind.HIGH_FINDINGS]
+    assert len(highs) == 2
+    chosen = {highs[0].key: item("first cause"), highs[1].key: item("second cause", "p3")}
     with_triage = render_messages(alerts, collapse_above=3, triage=chosen)
     assert [m.keys for m in with_triage] == [m.keys for m in plain]
     assert len(with_triage) == 1
     lines = with_triage[0].text.split("\n")
-    assert lines[0] == plain[0].text.split("\n")[0]
-    assert indented(with_triage[0].text) == ["   P1 · first cause", "   P3 · second cause"]
+    # the older project (highs[1], 4 days) is listed first
+    assert indented(with_triage[0].text) == ["   P3 · second cause", "   P1 · first cause"]
     for number, line in enumerate(lines):
         if line.startswith("   "):
             assert not lines[number - 1].startswith("   ")
-    plain_lines = plain[0].text.split("\n")
-    assert lines[2] == plain_lines[2]
-    assert lines[3] == "   P1 · first cause"
-    assert lines[4] == plain_lines[3]
-    assert lines[5] == plain_lines[4]
-    assert lines[6] == "   P3 · second cause"
+    assert [line for line in lines if not line.startswith("   ")] == plain[0].text.split("\n")
+    assert lines[2] == "   P3 · second cause"
+
+
+def test_only_project_lines_of_high_alerts_get_a_claude_line() -> None:
+    alerts = mixed(6)
+    chosen = entries(alerts)
+    with_triage = render_messages(alerts, collapse_above=3, triage=chosen)
+    highs = sum(1 for alert in alerts if alert.kind is AlertKind.HIGH_FINDINGS)
+    assert len(indented(with_triage[0].text)) == highs == 2
 
 
 @pytest.mark.parametrize("count", [1, 3, 5])
@@ -92,7 +97,7 @@ def test_strip_claude_lines_gives_the_no_triage_texts(count: int) -> None:
     assert [m.keys for m in with_triage] == [m.keys for m in plain]
 
 
-def test_split_keeps_items_and_their_claude_lines_together() -> None:
+def test_split_keeps_lines_and_their_claude_lines_together() -> None:
     alerts = mixed(60)
     cause = "x" * 60
     plain = render_messages(alerts, collapse_above=3, max_chars=MIN_MAX_CHARS)
@@ -104,11 +109,15 @@ def test_split_keeps_items_and_their_claude_lines_together() -> None:
     assert [k for m in with_triage for k in m.keys] == [k for m in plain for k in m.keys]
     body = [line for m in with_triage for line in m.text.split("\n")[1:]]
     plain_body = [line for m in plain for line in m.text.split("\n")[1:]]
-    assert len(body) == 2 * len(plain_body)
-    assert body[0::2] == plain_body
-    assert body[1::2] == [f"   P1 · {cause}"] * len(plain_body)
+    assert [line for line in body if not line.startswith("   ")] == plain_body
+    claude = [line for line in body if line.startswith("   ")]
+    assert claude == [f"   P1 · {cause}"] * 20
     for message in with_triage:
-        assert len(indented(message.text)) == len(message.keys)
+        lines = message.text.split("\n")
+        assert all(
+            not line.startswith("   ") or lines[number - 1].startswith("🔴")
+            for number, line in enumerate(lines)
+        )
 
 
 def test_escape_cause_is_escaped() -> None:

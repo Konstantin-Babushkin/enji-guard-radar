@@ -214,7 +214,8 @@ and items that were only baselined.
 
 ## Triage
 
-Triage adds one short Claude line to a fresh High alert: a priority and a likely cause. It never
+Triage adds one short Claude line under a project's High alert line (at most one per project,
+the most urgent): a priority and a likely cause. It never
 decides whether to alert (the rules do) and a failed or invalid Claude reply leaves the plain
 rule message. It ships off. Claude gets only counts, audit types and finding titles of the
 alert being sent; nothing from Guard is stored.
@@ -235,10 +236,12 @@ alert being sent; nothing from Guard is stored.
 5. Read one dry-run with triage on before going live:
    `sudo -u enji-guard-radar /opt/enji-guard-radar/.venv/bin/enji-guard-radar run --dry-run --config /etc/enji-guard-radar/radar.yaml --state-dir /var/lib/enji-guard-radar --env-file /etc/enji-guard-radar/radar.env`.
    When a fresh High alert exists it makes one real Claude call, prints the alert with the
-   Claude line and writes no state. The Claude line sits under the alert, for example:
+   Claude line and writes no state. The group message has one line per project (total High
+   count, number of audit types, oldest age; no repo or audit names), and the Claude line sits
+   under it, for example:
 
    ```
-   🔴 <b>Project A</b> · security High 2→4 · 16d
+   🔴 <b>Project A</b> · High 4 in 2 audits · 16d
       p1 · Injection flaw in order search
    ```
 
