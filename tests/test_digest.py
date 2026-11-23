@@ -836,3 +836,118 @@ def test_low_block_splits_between_lines_and_keeps_every_line() -> None:
     joined = "\n".join(message.text for message in messages)
     assert all(f"<b>P{n}</b>" in joined for n in range(5))
     assert all(telegram_length(message.text) <= 1000 for message in messages)
+
+
+# --- the green block: one line per clean project ---
+
+
+def green(language: Language = "en", **kwargs: object) -> list[str]:
+    """The lines of the digest from the all-clear line on, for the given clean projects."""
+    return lines_of(language, **kwargs)
+
+
+def test_green_block_is_head_plus_one_line_per_project() -> None:
+    lines = green(clean_projects=("p1", "p2"), project_names={"p1": "Acme", "p2": "Beta"})
+    assert lines == [
+        CLEAR,
+        "Clean · 2",
+        "🟢 <b>Acme</b> · no high issues",
+        "🟢 <b>Beta</b> · no high issues",
+    ]
+
+
+def test_green_lines_are_sorted_by_name_then_id_whatever_the_input_order() -> None:
+    names = {"p1": "beta", "p2": "Alpha", "p3": "Beta", "p4": "alpha"}
+    forward = green(clean_projects=("p1", "p2", "p3", "p4"), project_names=names)
+    backward = green(clean_projects=("p4", "p3", "p2", "p1"), project_names=names)
+    assert forward == backward
+    assert [line.split("<b>")[1].split("</b>")[0] for line in forward[2:]] == [
+        "Alpha",
+        "alpha",
+        "beta",
+        "Beta",
+    ]
+
+
+def test_green_block_empty_changes_nothing() -> None:
+    assert green(clean_projects=()) == [CLEAR]
+    assert "🟢" not in text_of(stale=(stale(),))
+
+
+def test_green_duplicate_ids_collapse() -> None:
+    lines = green(clean_projects=("p1", "p1"), project_names={"p1": "Acme"})
+    assert lines[1:] == ["Clean · 1", "🟢 <b>Acme</b> · no high issues"]
+
+
+def test_green_is_outside_the_title_count_the_cap_and_the_footer() -> None:
+    lines = lines_of(
+        max_items=1,
+        high=(high(),),
+        stale=(stale(),),
+        clean_projects=("p7", "p8"),
+        project_names={"p7": "Clean A", "p8": "Clean B"},
+    )
+    assert lines[0] == "<b>Radar weekly · 2 open</b>"
+    assert "+1 more open item not shown." in lines
+    assert sum(line.startswith("🟢") for line in lines) == 2
+    assert lines[-1] == FOOTER
+    # Without a High line the green lines alone never bring the footer.
+    assert FOOTER not in lines_of(clean_projects=("p7",), project_names={"p7": "Clean A"})
+
+
+def test_green_block_sits_after_resolved_and_before_the_footer() -> None:
+    lines = lines_of(
+        high=(high(),),
+        resolved=(resolved("never_ran", pid="p5"),),
+        clean_projects=("p7",),
+        project_names={"p5": "Nova", "p7": "Acme"},
+    )
+    assert lines[-5:] == [
+        "Resolved · 1",
+        "<b>Nova</b> · no scan yet closed",
+        "Clean · 1",
+        "🟢 <b>Acme</b> · no high issues",
+        FOOTER,
+    ]
+
+
+def test_green_with_nothing_open_keeps_the_all_clear_line_first() -> None:
+    lines = green(unread_projects=1, clean_projects=("p7",), project_names={"p7": "Acme"})
+    assert lines[0].startswith("<b>Radar weekly</b> · nothing open in the projects read")
+    assert lines[-2:] == ["Clean · 1", "🟢 <b>Acme</b> · no high issues"]
+
+
+def test_green_in_russian() -> None:
+    kwargs: dict[str, object] = {
+        "clean_projects": ("p1", "p2"),
+        "project_names": {"p1": "Яр", "p2": "Аз"},
+    }
+    ru = green("ru", **kwargs)
+    assert ru[-3:] == [
+        "Чисто · 2",
+        "🟢 <b>Аз</b> · нет высоких проблем",
+        "🟢 <b>Яр</b> · нет высоких проблем",
+    ]
+    assert len(green("en", **kwargs)) == len(ru)
+
+
+def test_green_name_is_cleaned_escaped_and_an_unknown_id_is_unnamed() -> None:
+    lines = green(clean_projects=("p1", "p2"), project_names={"p1": "A <b>&\n  Co"})
+    assert "🟢 <b>A &lt;b&gt;&amp; Co</b> · no high issues" in lines
+    assert "🟢 <b>(unnamed project)</b> · no high issues" in lines
+
+
+def test_green_block_splits_between_lines_and_keeps_every_line() -> None:
+    ids = tuple(f"p{n:02d}" for n in range(60))
+    names = {pid: f"Clean project {pid} " + "x" * 40 for pid in ids}
+    digest = build_digest(
+        DigestInput(last_poll_at=POLL, max_items=5, clean_projects=ids, project_names=names)
+    )
+    messages = render_digest(digest, max_chars=1000)
+    assert len(messages) > 1
+    assert all(telegram_length(message.text) <= 1000 for message in messages)
+    sent = [
+        line for message in messages for line in message.text.split("\n") if line.startswith("🟢")
+    ]
+    assert sent == list(digest.clean_lines)
+    assert len(set(sent)) == 60

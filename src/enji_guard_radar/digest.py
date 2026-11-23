@@ -65,6 +65,9 @@ class DigestInput(BaseModel):
     resolved: tuple[ResolvedItem, ...] = ()
     project_names: Mapping[str, str] = Field(default_factory=dict)
     unread_projects: StrictInt = Field(default=0, ge=0)
+    # Ids of the clean projects (evaluated, not stale, no open High of a high-priority type);
+    # their names come from `project_names`.
+    clean_projects: tuple[str, ...] = ()
 
 
 class DigestItem(BaseModel):
@@ -95,6 +98,8 @@ class Digest(BaseModel):
     # are counted.
     has_high: bool
     last_poll_at: AwareDatetime
+    # One green line per clean project: outside `items`, the `max_items` cap and the title count.
+    clean_lines: tuple[str, ...] = ()
     # The language its lines were built in; `render_digest` writes the rest of the text in it.
     language: Language = DEFAULT_LANGUAGE
 
@@ -107,10 +112,10 @@ def _name(name: str, language: Language) -> str:
     return escape(clean_name(name, language=language))
 
 
-def _line(language: Language, name: str, *parts: str) -> str:
+def _line(language: Language, name: str, *parts: str, marker: str = "marker.other") -> str:
     """`<marker> <b>name</b> · part · part`: every non-High item line has this shape."""
-    marker = text(language, "marker.other")
-    return " · ".join([f"{marker} <b>{_name(name, language)}</b>", *parts])
+    sign = text(language, marker)
+    return " · ".join([f"{sign} <b>{_name(name, language)}</b>", *parts])
 
 
 def _high_item(
@@ -278,6 +283,23 @@ def _resolved_line(item: ResolvedItem, names: Mapping[str, str], language: Langu
     return text(language, "digest.short_resolved", name=name, what=what)
 
 
+def _clean_lines(inp: DigestInput, language: Language) -> list[str]:
+    """One `🟢 name · no high issues` line per clean project, sorted by name (then id)."""
+    names = inp.project_names
+    ids = sorted(
+        set(inp.clean_projects), key=lambda pid: (clean_name(names.get(pid, "")).casefold(), pid)
+    )
+    return [
+        _line(
+            language,
+            names.get(pid, ""),
+            text(language, "digest.green_item"),
+            marker="marker.green",
+        )
+        for pid in ids
+    ]
+
+
 def build_digest(inp: DigestInput, *, language: Language = DEFAULT_LANGUAGE) -> Digest:
     """Order the open items by tier, keep one line per key, cap at `max_items`."""
     ambiguous_high = ambiguous_series(inp.high)
@@ -318,6 +340,8 @@ def build_digest(inp: DigestInput, *, language: Language = DEFAULT_LANGUAGE) -> 
         ]
     )
     logger.info("low-priority digest block: %d open series", len(low_lines))
+    clean_lines = _clean_lines(inp, language)
+    logger.info("clean digest block: %d project(s)", len(clean_lines))
     return Digest(
         items=tuple(shown),
         hidden_items=len(everything) - len(shown),
@@ -330,6 +354,7 @@ def build_digest(inp: DigestInput, *, language: Language = DEFAULT_LANGUAGE) -> 
         low_hidden=max(len(low_lines) - LOW_LINE_CAP, 0),
         low_total=len(low_lines),
         has_high=any(item.tier is DigestTier.HIGH for item in shown) or bool(low_lines),
+        clean_lines=tuple(clean_lines),
         last_poll_at=inp.last_poll_at,
         language=language,
     )
@@ -358,6 +383,12 @@ def _low_block(digest: Digest, language: Language) -> list[str]:
     return block
 
 
+def _green_block(digest: Digest, language: Language) -> list[str]:
+    if not digest.clean_lines:
+        return []
+    return [text(language, "digest.green_head", count=len(digest.clean_lines)), *digest.clean_lines]
+
+
 def _body(digest: Digest, language: Language) -> list[str]:
     lines: list[str] = []
     if digest.unread_projects:
@@ -373,6 +404,7 @@ def _body(digest: Digest, language: Language) -> list[str]:
         lines.extend(digest.resolved_lines)
         if digest.resolved_hidden:
             lines.append(text(language, "digest.resolved_more", hidden=digest.resolved_hidden))
+    lines.extend(_green_block(digest, language))
     if digest.has_high:
         lines.append(text(language, "digest.footer_age"))
     return lines
@@ -380,7 +412,7 @@ def _body(digest: Digest, language: Language) -> list[str]:
 
 def _header(digest: Digest, index: int, count: int, language: Language) -> str:
     if not digest.total_items and not digest.low_total:
-        # One line, never numbered: with at most 7 resolved lines it always fits one message.
+        # One line, never numbered: the blocks after it (resolved, clean) may still split.
         key = "digest.nothing_open_read" if digest.unread_projects else "digest.nothing_open"
         return text(language, "digest.short_clear", what=text(language, key), stamp=_stamp(digest))
     suffix = f" ({index}/{count})" if count > 1 else ""
