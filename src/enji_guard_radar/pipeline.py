@@ -529,6 +529,7 @@ def _digest_input(deps: Deps, polled: "PollData", state: State, now: datetime) -
         last_poll_at=now,
         max_items=deps.config.digest.max_items,
         high=high,
+        low_priority=polled.low_series,
         recurring_runs=recurring,
         stale=stale,
         low_scores=polled.low_scores,
@@ -576,9 +577,10 @@ def _digest_step(
     digest = build_digest(_digest_input(deps, polled, state, now), language=language)
     messages = render_digest(digest)
     logger.info(
-        "digest due: planned %s, %d open item(s), %d resolved, %d message(s)",
+        "digest due: planned %s, %d open item(s), %d low priority, %d resolved, %d message(s)",
         decision.planned_for,
         digest.total_items,
+        digest.low_total,
         digest.resolved_total,
         len(messages),
     )

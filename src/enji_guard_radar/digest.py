@@ -12,6 +12,7 @@ from enum import StrEnum
 
 from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, StrictInt
 
+from enji_guard_radar.high_rules import LowSeries
 from enji_guard_radar.ledger import ResolvedItem, SeriesKey
 from enji_guard_radar.messages import (
     DEFAULT_MAX_CHARS,
@@ -35,6 +36,7 @@ from enji_guard_radar.tooling_rules import ToolingGap
 logger = logging.getLogger(__name__)
 
 RESOLVED_LINE_CAP = 5
+LOW_LINE_CAP = 5
 
 
 class DigestTier(StrEnum):
@@ -54,6 +56,8 @@ class DigestInput(BaseModel):
     last_poll_at: AwareDatetime
     max_items: StrictInt = Field(ge=1)
     high: tuple[Alert, ...] = ()
+    # Open High series of low-priority audit types: their own short block after the High items.
+    low_priority: tuple[LowSeries, ...] = ()
     recurring_runs: Mapping[SeriesKey, int] = Field(default_factory=dict)
     stale: tuple[Alert, ...] = ()
     low_scores: tuple[LowScore, ...] = ()
@@ -82,7 +86,13 @@ class Digest(BaseModel):
     resolved_hidden: int
     resolved_total: int
     unread_projects: int
-    # A High line is shown: the digest then ends with the footer about how ages are counted.
+    # The low-priority block: its lines, how many did not fit and how many there are in all.
+    # It is outside `items` and the `max_items` cap, but its count is part of the title number.
+    low_lines: tuple[str, ...]
+    low_hidden: int
+    low_total: int
+    # A High or low-priority line is shown: the digest then ends with the footer about how ages
+    # are counted.
     has_high: bool
     last_poll_at: AwareDatetime
     # The language its lines were built in; `render_digest` writes the rest of the text in it.
@@ -129,6 +139,38 @@ def _high_item(
         -alert.age_days,
         clean_name(alert.project_name).casefold(),
         alert.key.as_text(),
+    )
+    return order, line
+
+
+def _ambiguous_low(series: Sequence[LowSeries]) -> frozenset[tuple[str, str]]:
+    """(project_id, action_key) pairs that more than one repo holds among the low series."""
+    repos: dict[tuple[str, str], set[str]] = {}
+    for item in series:
+        repos.setdefault((item.project_id, item.action_key), set()).add(item.repo_id)
+    return frozenset(pair for pair, ids in repos.items() if len(ids) > 1)
+
+
+def _low_priority_item(
+    item: LowSeries, poll_at: datetime, ambiguous: frozenset[tuple[str, str]], language: Language
+) -> tuple[tuple[object, ...], str]:
+    audit = audit_short(item.action_key)
+    if (item.project_id, item.action_key) in ambiguous:
+        repo = escape(clean_name(item.repo_name, language=language))
+        audit = text(language, "alert.where_repo", audit=audit, repo=repo)
+    age = max((poll_at - item.opened_at).days, 0)
+    line = _line(
+        language,
+        item.project_name,
+        text(language, "digest.low_item", audit=audit, count=item.high_now),
+        age_text(age, language),
+    )
+    order = (
+        -item.high_now,
+        -age,
+        clean_name(item.project_name).casefold(),
+        item.repo_id,
+        item.action_key,
     )
     return order, line
 
@@ -265,6 +307,17 @@ def build_digest(inp: DigestInput, *, language: Language = DEFAULT_LANGUAGE) -> 
     lines = tuple(
         _resolved_line(r, inp.project_names, language) for r in resolved[:RESOLVED_LINE_CAP]
     )
+    open_low = {
+        (s.project_id, s.repo_id, s.action_key): s for s in inp.low_priority if s.high_now > 0
+    }
+    ambiguous_low_series = _ambiguous_low(list(open_low.values()))
+    low_lines = _sorted_lines(
+        [
+            _low_priority_item(s, inp.last_poll_at, ambiguous_low_series, language)
+            for s in open_low.values()
+        ]
+    )
+    logger.info("low-priority digest block: %d open series", len(low_lines))
     return Digest(
         items=tuple(shown),
         hidden_items=len(everything) - len(shown),
@@ -273,7 +326,10 @@ def build_digest(inp: DigestInput, *, language: Language = DEFAULT_LANGUAGE) -> 
         resolved_hidden=len(resolved) - len(lines),
         resolved_total=len(resolved),
         unread_projects=inp.unread_projects,
-        has_high=any(item.tier is DigestTier.HIGH for item in shown),
+        low_lines=tuple(low_lines[:LOW_LINE_CAP]),
+        low_hidden=max(len(low_lines) - LOW_LINE_CAP, 0),
+        low_total=len(low_lines),
+        has_high=any(item.tier is DigestTier.HIGH for item in shown) or bool(low_lines),
         last_poll_at=inp.last_poll_at,
         language=language,
     )
@@ -293,11 +349,23 @@ def _more_line(hidden: int, language: Language) -> str:
     )
 
 
+def _low_block(digest: Digest, language: Language) -> list[str]:
+    if not digest.low_total:
+        return []
+    block = [text(language, "digest.low_head", count=digest.low_total), *digest.low_lines]
+    if digest.low_hidden:
+        block.append(text(language, "digest.low_more", hidden=digest.low_hidden))
+    return block
+
+
 def _body(digest: Digest, language: Language) -> list[str]:
     lines: list[str] = []
     if digest.unread_projects:
         lines.append(_unread_line(digest.unread_projects, language))
-    lines.extend(item.line for item in digest.items)
+    # Items are ordered by tier, so the High ones come first; the low-priority block follows them.
+    lines.extend(item.line for item in digest.items if item.tier is DigestTier.HIGH)
+    lines.extend(_low_block(digest, language))
+    lines.extend(item.line for item in digest.items if item.tier is not DigestTier.HIGH)
     if digest.hidden_items:
         lines.append(_more_line(digest.hidden_items, language))
     if digest.resolved_total:
@@ -311,12 +379,13 @@ def _body(digest: Digest, language: Language) -> list[str]:
 
 
 def _header(digest: Digest, index: int, count: int, language: Language) -> str:
-    if not digest.total_items:
+    if not digest.total_items and not digest.low_total:
         # One line, never numbered: with at most 7 resolved lines it always fits one message.
         key = "digest.nothing_open_read" if digest.unread_projects else "digest.nothing_open"
         return text(language, "digest.short_clear", what=text(language, key), stamp=_stamp(digest))
     suffix = f" ({index}/{count})" if count > 1 else ""
-    title = f"<b>{text(language, 'digest.short_title', count=digest.total_items)}{suffix}</b>"
+    count_open = digest.total_items + digest.low_total
+    title = f"<b>{text(language, 'digest.short_title', count=count_open)}{suffix}</b>"
     return f"{title}\n{text(language, 'digest.short_poll', stamp=_stamp(digest))}"
 
 
@@ -354,9 +423,10 @@ def render_digest(
         for number, indexes in enumerate(chunks, start=1)
     ]
     logger.info(
-        "digest built: %d open, %d shown, %d resolved, %d message(s)",
+        "digest built: %d open, %d shown, %d low priority, %d resolved, %d message(s)",
         digest.total_items,
         len(digest.items),
+        digest.low_total,
         digest.resolved_total,
         len(messages),
     )

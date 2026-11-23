@@ -567,3 +567,24 @@ def test_dry_run_builds_the_digest_and_writes_nothing(tmp_path: Path) -> None:
     assert report.digest is DigestStatus.PRINTED
     assert "· security High 2 · 1d" in only_digest(report)
     assert (store.state_path.read_bytes(), store.backup_path.read_bytes()) == before
+
+
+def test_low_priority_series_is_in_the_digest_block_and_never_an_alert(tmp_path: Path) -> None:
+    low = "high:\n  high_priority_audit_types:\n    - audit.tech-health\n"
+    sim = digest_sim(tmp_path, low)
+    sim.poll(0)
+    sim.add_run(high=2, day=1)
+    notifier = Scripted()
+    assert sim.poll(1, notifier=notifier).messages == ()
+    assert notifier.sent == []
+
+    wednesday = sim.poll(WED, notifier=notifier)
+    assert wednesday.messages == ()
+    text = only_digest(wednesday)
+    assert text.split("\n")[2:5] == [
+        "Low priority · 1",
+        "🟡 <b>Proj</b> · security High 2 · 1d",
+        "Ages count from the radar's first sight.",
+    ]
+    assert text.startswith("<b>Radar weekly · 1 open</b>")
+    assert "🔴" not in text
