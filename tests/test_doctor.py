@@ -45,6 +45,7 @@ from enji_guard_radar.doctor import (
     verdict_digest,
     verdict_get_me,
     verdict_guard,
+    verdict_high_priority,
     verdict_score_rules,
     verdict_settings,
     verdict_state,
@@ -259,9 +260,11 @@ def test_doctor_passes_on_a_healthy_setup(
     assert "24" in line(out, "weekly digest")
     assert line(out, "score rules").startswith("PASS"), out
     assert "off" in line(out, "score rules")
+    assert line(out, "high priority types").startswith("PASS"), out
+    assert "all audit types are high priority" in line(out, "high priority types")
     assert line(out, "timer").startswith("SKIP")
     assert line(out, "triage") == "SKIP  triage: off"
-    assert out.rstrip().endswith("doctor: 11 pass, 0 fail, 0 warn, 3 skip")
+    assert out.rstrip().endswith("doctor: 12 pass, 0 fail, 0 warn, 3 skip")
     urls = [url.rsplit("/", 1)[1] for url, _ in transport.requests]
     assert urls == ["getMe", "getChatMember", "getChat", "getChatMember"]
     payloads = [payload for _, payload in transport.requests]
@@ -945,6 +948,25 @@ def test_score_rule_verdicts_table() -> None:
     assert "tests off" in zero.detail
 
     skipped = verdict_score_rules(None)
+    assert (skipped.status, skipped.detail) == (CheckStatus.SKIP, "needs a readable config")
+
+
+def test_high_priority_verdicts_table() -> None:
+    default = verdict_high_priority(RadarConfig())
+    assert default.name == "high priority types"
+    assert default.status is CheckStatus.PASS
+    assert default.detail == (
+        "all audit types are high priority (high.high_priority_audit_types is not set)"
+    )
+    one = verdict_high_priority(config_of("high: {high_priority_audit_types: [audit.security]}"))
+    assert one.detail == "1 audit type is high priority; every other audit type is digest-only"
+    nine = ", ".join(f"audit.type-{n}" for n in range(9))
+    many = verdict_high_priority(config_of(f"high: {{high_priority_audit_types: [{nine}]}}"))
+    assert many.status is CheckStatus.PASS
+    assert many.detail == "9 audit types are high priority; every other audit type is digest-only"
+    legacy = verdict_high_priority(config_of("high: {audit_types: [audit.security, audit.tests]}"))
+    assert legacy.detail.startswith("2 audit types are high priority")
+    skipped = verdict_high_priority(None)
     assert (skipped.status, skipped.detail) == (CheckStatus.SKIP, "needs a readable config")
 
 

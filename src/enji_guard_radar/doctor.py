@@ -34,6 +34,7 @@ NAME_STATE = "state"
 NAME_UNEVALUATED = "unevaluated projects"
 NAME_DIGEST = "weekly digest"
 NAME_SCORES = "score rules"
+NAME_HIGH_PRIORITY = "high priority types"
 NAME_TRIAGE = "triage"
 NAME_CREDENTIALS = "guard login"
 NAME_TOKEN = "telegram token"
@@ -323,6 +324,26 @@ def verdict_score_rules(config: RadarConfig | None) -> CheckResult:
         CheckStatus.PASS,
         f"ai-readiness {_threshold(scores.ai_readiness_below)}, "
         f"tests {_threshold(scores.tests_below)}; {overrides} project override(s)",
+    )
+
+
+def verdict_high_priority(config: RadarConfig | None) -> CheckResult:
+    """How many audit types alert; every other type is tracked and shown in the digest only."""
+    if config is None:
+        return _result(NAME_HIGH_PRIORITY, CheckStatus.SKIP, SKIP_NEEDS_CONFIG)
+    types = config.high.high_priority_audit_types
+    if types is None:
+        return _result(
+            NAME_HIGH_PRIORITY,
+            CheckStatus.PASS,
+            "all audit types are high priority (high.high_priority_audit_types is not set)",
+        )
+    count = len(types)
+    noun = "audit type is" if count == 1 else "audit types are"
+    return _result(
+        NAME_HIGH_PRIORITY,
+        CheckStatus.PASS,
+        f"{count} {noun} high priority; every other audit type is digest-only",
     )
 
 
