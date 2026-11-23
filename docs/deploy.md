@@ -69,7 +69,9 @@ exception AGENTS.md names to "secrets come from env"). Never copy it, never comm
 sudo -u enji-guard-radar /opt/enji-guard-radar/.venv/bin/enji-guard-radar doctor --state-dir /var/lib/enji-guard-radar --env-file /etc/enji-guard-radar/radar.env
 ```
 
-Every line must be PASS (SKIP is fine for the timer hint). Fix any FAIL before going on.
+Every line must be PASS (SKIP is fine for the timer hint, and for the `triage` line while triage is
+off). Fix any FAIL before going on. Add `--config /etc/enji-guard-radar/radar.yaml` to see the
+config-based lines for your real config, the `triage` line included.
 
 ## Probe and fixture review
 
@@ -135,9 +137,17 @@ wait for the next timer run. Alerts already in `state.json` are not re-sent to t
 ## Reminders
 
 An open High finding that nobody has dealt with is sent again as a reminder: a separate
-message titled "Reminder: High findings are still open". It lists each open High series with
-its finding count, audit type, repository and how long the radar has seen it ("Seen by the
-radar since ...").
+message with the title `Radar reminder · N open` and one line per open High series: name,
+audit type, finding count and age, for example:
+
+```
+<b>Radar reminder · 2 open</b>
+🔴 <b>Project A</b> · security High 1 · 8d
+🔴 <b>Project B</b> · tests High 5 · 22d
+```
+
+The age counts from the radar's first sight of the series, not from when Guard found it. A
+reminder carries no Claude line.
 
 A series is reminded every `reminders.every_days` days (default 7), counted from the last
 alert or reminder of that series, and never earlier. If the count rises and the series is
@@ -177,15 +187,71 @@ successful poll does not defer it: the digest counts such projects in its text (
 could not be read in that poll").
 
 What it contains, worst first by type and then by age: open High series, stale or never-ran
-projects, low scores, tooling gaps. A High series that was open in each of the last
-`recurring.after_runs` runs carries a "Recurring" marker. At most `digest.max_items` items are
-listed, then "+N more open items not shown." Items resolved since the previous digest follow,
-each shown once. Every digest shows the time of the last successful Guard poll. When nothing
-is open it is a single all-clear line. The digest counts only: it shows names, counts, scores,
+projects, low scores, tooling gaps, one line per item. A High series that was open in each of
+the last `recurring.after_runs` runs ends with `recurring N runs`. At most `digest.max_items`
+items are listed, then "+N more open items not shown." Items resolved since the previous digest
+follow under `Resolved · N`, each shown once. Every digest shows the time of the last
+successful Guard poll and ends with the footer "Ages count from the radar's first sight." For
+example:
+
+```
+<b>Radar weekly · 3 open</b>
+Last poll: 2026-11-18 06:00 UTC
+🔴 <b>Project A</b> · security High 2 · 16d · recurring 3 runs
+🟡 <b>Project B</b> · no scan 21d
+🟡 <b>Project C</b> · tests 40/100 · 8d
+Resolved · 1
+<b>Project D</b> · security closed
+Ages count from the radar's first sight.
+```
+
+When nothing is open it is a single all-clear line:
+`Radar weekly · nothing open · last poll 2026-11-18 06:00 UTC`. The digest counts only: it shows names, counts, scores,
 dates and audit types, no finding titles. It includes items the group already saw as alerts
 and items that were only baselined.
 
 `run --dry-run` prints the digest in the same way and writes nothing.
+
+## Triage
+
+Triage adds one short Claude line to a fresh High alert: a priority and a likely cause. It never
+decides whether to alert (the rules do) and a failed or invalid Claude reply leaves the plain
+rule message. It ships off. Claude gets only counts, audit types and finding titles of the
+alert being sent; nothing from Guard is stored.
+
+1. Create the token with `claude setup-token`, on a machine where you are logged in to Claude.
+   Never paste it into chat, tickets or shell history.
+2. Put it in `/etc/enji-guard-radar/radar.env` (mode 0600, see "Configuration and secrets") as
+   `CLAUDE_CODE_OAUTH_TOKEN=<token>`. The `claude` binary must be on the `PATH` of the service
+   user.
+3. Enable it in `/etc/enji-guard-radar/radar.yaml` with `triage.enabled: true`. The other
+   `triage` keys keep their defaults (see `config/radar.example.yaml`).
+4. Run `doctor` with the config:
+   `sudo -u enji-guard-radar /opt/enji-guard-radar/.venv/bin/enji-guard-radar doctor --state-dir /var/lib/enji-guard-radar --env-file /etc/enji-guard-radar/radar.env --config /etc/enji-guard-radar/radar.yaml`.
+   Expect `PASS  triage: on, backend claude_cli, binary found, token set; calls 0, failed 0`.
+   Doctor makes no Claude call. A `FAIL` names what is missing: the `claude` binary or
+   `CLAUDE_CODE_OAUTH_TOKEN`. A `WARN` with `calls N, failed N` means every call today failed;
+   look at the journal.
+5. Read one dry-run with triage on before going live:
+   `sudo -u enji-guard-radar /opt/enji-guard-radar/.venv/bin/enji-guard-radar run --dry-run --config /etc/enji-guard-radar/radar.yaml --state-dir /var/lib/enji-guard-radar --env-file /etc/enji-guard-radar/radar.env`.
+   When a fresh High alert exists it makes one real Claude call, prints the alert with the
+   Claude line and writes no state. The Claude line sits under the alert, for example:
+
+   ```
+   🔴 <b>Project A</b> · security High 2→4 · 16d
+      p1 · Injection flaw in order search
+   ```
+
+6. Read the two journal lines every call writes (`journalctl -u enji-guard-radar`):
+   `triage call: items N, outcome ..., seconds ..., cost_usd ..., input_tokens ..., output_tokens ...`
+   (`unknown` where the CLI reported nothing) and
+   `triage today (UTC): N calls, M failed, $X`. An `outcome` other than `ok` names why the
+   call failed. The per-day numbers live in `triage-cost.json` in the state directory.
+7. In the private test chat check that the 3-space indent of the Claude line survives.
+   ASSUMPTION (D-10): Telegram keeps leading spaces. If it does not, drop the indent in the
+   `alert.triage_line` entry of the message catalog (`src/enji_guard_radar/texts.py`).
+8. Turn it off with `triage.enabled: false`. The next run makes no Claude call and the alerts
+   are the same without the extra line.
 
 ## Phase 3 operator steps
 
