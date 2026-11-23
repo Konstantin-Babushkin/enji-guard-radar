@@ -22,6 +22,9 @@ from enji_guard_radar.ports import GuardAuthError, GuardCallError, GuardFailure
 ENV_BOT_TOKEN = "TELEGRAM_BOT_TOKEN"
 ENV_CHAT_ID = "TELEGRAM_CHAT_ID"
 ENV_OPS_CHAT_ID = "TELEGRAM_OPS_CHAT_ID"
+# Core code does not import `settings`; a test pins this to settings.ENV_CLAUDE_TOKEN.
+ENV_CLAUDE_TOKEN = "CLAUDE_CODE_OAUTH_TOKEN"
+CLAUDE_BINARY = "claude"
 
 NAME_SETTINGS = "settings"
 NAME_OPS_ID = "ops chat id"
@@ -31,6 +34,7 @@ NAME_STATE = "state"
 NAME_UNEVALUATED = "unevaluated projects"
 NAME_DIGEST = "weekly digest"
 NAME_SCORES = "score rules"
+NAME_TRIAGE = "triage"
 NAME_CREDENTIALS = "guard login"
 NAME_TOKEN = "telegram token"
 NAME_GROUP = "group chat"
@@ -136,6 +140,18 @@ class GuardFacts:
     tool_names: frozenset[str] = frozenset()
     project_count: int | None = None
     bad_data: bool = False
+
+
+@dataclass(frozen=True)
+class TriageFacts:
+    """What the shell found out about triage: config, the binary, the token and today's calls."""
+
+    enabled: bool
+    backend: str
+    binary_found: bool
+    token_set: bool
+    today_calls: int
+    today_failures: int
 
 
 # --- settings, config, state, credentials ------------------------------------------------------
@@ -258,6 +274,27 @@ def verdict_digest(config: RadarConfig | None, load: StateLoad) -> CheckResult:
             "can be skipped without a run in its window: raise digest.grace_hours"
         )
     return _result(NAME_DIGEST, status, f"{detail}{_last_digest(load)}")
+
+
+def verdict_triage(facts: TriageFacts) -> CheckResult:
+    """Whether triage can work, without a Claude call (D-16); WARN when every call today failed."""
+    if not facts.enabled:
+        return _result(NAME_TRIAGE, CheckStatus.SKIP, "off")
+    counts = f"calls {facts.today_calls}, failed {facts.today_failures}"
+    problems = []
+    if not facts.binary_found:
+        problems.append(f"{CLAUDE_BINARY} not found on PATH")
+    if not facts.token_set:
+        problems.append(f"{ENV_CLAUDE_TOKEN} is not set")
+    head = f"on, backend {facts.backend}"
+    if problems:
+        return _result(NAME_TRIAGE, CheckStatus.FAIL, f"{head}, {'; '.join(problems)}; {counts}")
+    ready = f"{head}, binary found, token set; {counts}"
+    if facts.today_calls > 0 and facts.today_failures == facts.today_calls:
+        return _result(
+            NAME_TRIAGE, CheckStatus.WARN, f"{ready}; every call today failed: see the journal"
+        )
+    return _result(NAME_TRIAGE, CheckStatus.PASS, ready)
 
 
 def _threshold(value: int | None) -> str:

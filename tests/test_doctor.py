@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Self
 
 import pytest
+from fake_claude import install_fake_claude, with_path
 from fake_oauth import (
     FAKE_ACCESS_TOKEN,
     FAKE_REFRESH_TOKEN,
@@ -255,7 +256,8 @@ def test_doctor_passes_on_a_healthy_setup(
     assert line(out, "score rules").startswith("PASS"), out
     assert "off" in line(out, "score rules")
     assert line(out, "timer").startswith("SKIP")
-    assert out.rstrip().endswith("doctor: 11 pass, 0 fail, 0 warn, 2 skip")
+    assert line(out, "triage") == "SKIP  triage: off"
+    assert out.rstrip().endswith("doctor: 11 pass, 0 fail, 0 warn, 3 skip")
     urls = [url.rsplit("/", 1)[1] for url, _ in transport.requests]
     assert urls == ["getMe", "getChatMember", "getChat", "getChatMember"]
     payloads = [payload for _, payload in transport.requests]
@@ -1033,3 +1035,48 @@ def test_doctor_shows_no_message_language_for_an_invalid_config(
     )
     assert line(out, "config").startswith("FAIL")
     assert "message language" not in out
+
+
+# --- triage line (D-16) ------------------------------------------------------------------------
+
+CLAUDE_TOKEN = "sk-fake-9f3a"
+TRIAGE_ON = "triage:\n  enabled: true\n"
+
+
+def triage_config(directory: Path, text: str = TRIAGE_ON) -> list[str]:
+    path = directory / "radar.yaml"
+    path.write_text(text, encoding="utf-8")
+    return ["--config", str(path)]
+
+
+def test_triage_off_by_default_is_a_skip_line(tmp_path: Path) -> None:
+    _, out = run_doctor(tmp_path, transport=healthy_transport())
+
+    assert line(out, "triage") == "SKIP  triage: off"
+
+
+def test_triage_ready_setup_passes_without_calling_claude(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    caplog.set_level(logging.DEBUG)
+    bin_dir = install_fake_claude(tmp_path, envelope="{}")
+    monkeypatch.setenv("PATH", with_path(bin_dir))
+
+    _, out = run_doctor(
+        tmp_path,
+        environ=environment(CLAUDE_CODE_OAUTH_TOKEN=CLAUDE_TOKEN),
+        transport=healthy_transport(),
+        extra=triage_config(tmp_path),
+    )
+
+    assert line(out, "triage") == (
+        "PASS  triage: on, backend claude_cli, binary found, token set; calls 0, failed 0"
+    )
+    assert not (bin_dir / "record.json").exists()  # the fake would write it if it ran
+    assert not (tmp_path / "triage-cost.json").exists()
+    captured = capsys.readouterr()
+    for text in (out, captured.out, captured.err, caplog.text):
+        assert CLAUDE_TOKEN not in text
