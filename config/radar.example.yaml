@@ -19,10 +19,22 @@ high:
   # A High series clears only after this many consecutive completed runs with zero High
   # findings (1..10).
   clear_after_clean_runs: 2
-  # Audit types whose High findings are tracked. null tracks every audit type with findings;
-  # audit.recon never has any. A list narrows to exactly those types.
-  # audit_types: [audit.security, audit.public-api-access-safety]
-  audit_types: null
+  # Audit types that alert (and are reminded about and triaged). null = every audit type is high
+  # priority. A list = exactly those; every other audit type is still tracked, but it never sends
+  # an alert or a reminder and is shown only in the "Low priority" block of the weekly digest.
+  # audit.recon never has High findings. The old name `audit_types` still works but is deprecated;
+  # setting both is an error. The operator's set:
+  # high_priority_audit_types:
+  #   - audit.security
+  #   - audit.dependency-vulnerabilities
+  #   - audit.dependency-aging
+  #   - audit.authentication-handling
+  #   - audit.tech-health
+  #   - audit.config-hygiene
+  #   - audit.dependency-hygiene
+  #   - audit.secrets-handling
+  #   - audit.public-api-access-safety
+  high_priority_audit_types: null
 
 # Radar health. After this many failed Guard polls in a row, one message goes to
 # TELEGRAM_OPS_CHAT_ID, and one more when polls work again (1..20).
