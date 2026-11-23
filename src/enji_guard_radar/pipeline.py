@@ -832,6 +832,7 @@ def _evaluate_projects(
         if configured_id not in listed_ids:
             logger.warning("config names project id %s, which Guard did not list", configured_id)
 
+    high_types = deps.config.high.high_priority_audit_types
     results: list[ProjectResult] = []
     evaluations: list[ProjectEvaluation] = []
     histories = {h.key(): h for h in state.histories}
@@ -861,7 +862,9 @@ def _evaluate_projects(
                 ProjectEvaluation(project_id=project.id, outcome=EvaluationOutcome.skipped)
             )
             continue
-        skip = skip_report_for(project.id, histories, deps.config.high.audit_types, scores)
+        skip = skip_report_for(
+            project.id, histories, deps.config.high.high_priority_audit_types, scores
+        )
         data = fetch_project(deps.guard, project, skip_report=skip)
         threshold = deps.config.thresholds_for(project.id).stale_after_days
         stale = evaluate_stale(data, threshold, now)
@@ -884,7 +887,7 @@ def _evaluate_projects(
                 data,
                 histories,
                 clear_after=deps.config.high.clear_after_clean_runs,
-                audit_types=deps.config.high.audit_types,
+                audit_types=high_types,
                 aged_after_days=deps.config.thresholds_for(project.id).high_aged_after_days,
                 now=now,
             )
@@ -899,7 +902,7 @@ def _evaluate_projects(
                     high.unknown_reports,
                     len(high.alerts),
                 )
-            titles.update(_collect_titles(project.id, data, deps.config.high.audit_types))
+            titles.update(_collect_titles(project.id, data, high_types))
             _fold_scores_and_tooling(
                 deps, data, now, scores=scores, tooling=tooling, low=low_scores, gaps=tooling_gaps
             )

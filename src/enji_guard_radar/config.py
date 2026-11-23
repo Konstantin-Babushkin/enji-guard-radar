@@ -18,6 +18,7 @@ from pydantic import (
     StrictInt,
     ValidationError,
     field_validator,
+    model_validator,
 )
 
 from enji_guard_radar.texts import DEFAULT_LANGUAGE, Language
@@ -71,6 +72,8 @@ DEFAULT_TOOLING_AUDIT_TYPES = (
     "audit.dependency-hygiene",
 )
 AUDIT_TYPE_PATTERN = re.compile(r"audit\.[a-z0-9-]+")
+LEGACY_AUDIT_TYPES_KEY = "audit_types"
+NEW_AUDIT_TYPES_KEY = "high_priority_audit_types"
 
 
 class Thresholds(BaseModel):
@@ -123,10 +126,32 @@ class HighSettings(BaseModel):
 
     # A High series clears only after this many consecutive completed runs with zero High.
     clear_after_clean_runs: StrictInt = Field(default=2, ge=CLEAR_AFTER_MIN, le=CLEAR_AFTER_MAX)
-    # None tracks every audit type with findings; a list narrows to exactly those types.
-    audit_types: tuple[str, ...] | None = None
+    # None = every audit type is high priority (alerts, reminders, triage). A list = exactly
+    # those alert; every other type is tracked and shown only in the weekly digest.
+    high_priority_audit_types: tuple[str, ...] | None = None
 
-    @field_validator("audit_types")
+    @model_validator(mode="before")
+    @classmethod
+    def _legacy_audit_types(cls, data: object) -> object:
+        """`audit_types` is the deprecated name of `high_priority_audit_types`."""
+        if not isinstance(data, dict) or LEGACY_AUDIT_TYPES_KEY not in data:
+            return data
+        if NEW_AUDIT_TYPES_KEY in data:
+            message = (
+                f"high.{LEGACY_AUDIT_TYPES_KEY} and high.{NEW_AUDIT_TYPES_KEY} are both set; "
+                f"keep only high.{NEW_AUDIT_TYPES_KEY}"
+            )
+            raise ValueError(message)
+        logger.warning(
+            "config: high.%s is deprecated; use high.%s",
+            LEGACY_AUDIT_TYPES_KEY,
+            NEW_AUDIT_TYPES_KEY,
+        )
+        moved = {k: v for k, v in data.items() if k != LEGACY_AUDIT_TYPES_KEY}
+        moved[NEW_AUDIT_TYPES_KEY] = data[LEGACY_AUDIT_TYPES_KEY]
+        return moved
+
+    @field_validator("high_priority_audit_types")
     @classmethod
     def _audit_types_well_formed(cls, value: tuple[str, ...] | None) -> tuple[str, ...] | None:
         return None if value is None else _check_audit_types(value)
