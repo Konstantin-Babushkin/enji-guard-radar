@@ -31,6 +31,7 @@ _EN: dict[str, Entry] = {
     "noun.day": ("day", "days"),
     "noun.finding": ("High finding", "High findings"),
     "noun.repository_in": ("repository", "repositories"),
+    "noun.audit_in": ("audit", "audits"),
     "noun.project": ("project", "projects"),
     "noun.problem": ("problem", "problems"),
     "noun.item": ("item", "items"),
@@ -49,8 +50,12 @@ _EN: dict[str, Entry] = {
     "alert.stale.line": "{marker} <b>{name}</b> · no scan {age}",
     "alert.no_scan_yet.line": "{marker} <b>{name}</b> · no scan yet",
     "alert.where_repo": "{audit} ({repo})",
+    "alert.project.line": "{marker} <b>{name}</b> · High {count} in {audits} · {age}",
+    "alert.project.line_rise": (
+        "{marker} <b>{name}</b> · High {previous}→{count} in {audits} · {age}"
+    ),
     "alert.triage_line": "   {priority} · {cause}",
-    "summary.short_header": "Radar · {count} need attention",
+    "summary.short_header": "Radar · problems: {projects}",
     "reminder.short_title": "Radar reminder · {count} open",
     "digest.short_title": "Radar weekly · {count} open",
     "digest.short_poll": "Last poll: {stamp} UTC",
@@ -114,6 +119,8 @@ _RU: dict[str, Entry] = {
     ),
     # Prepositional case: "в 1 репозитории", "в 5 репозиториях".
     "noun.repository_in": ("репозитории", "репозиториях", "репозиториях"),
+    # Prepositional case: "в 1 аудите", "в 6 аудитах".
+    "noun.audit_in": ("аудите", "аудитах", "аудитах"),
     "noun.project": ("проект", "проекта", "проектов"),
     "noun.problem": ("проблема", "проблемы", "проблем"),
     "noun.item": ("открытый пункт", "открытых пункта", "открытых пунктов"),
@@ -131,8 +138,12 @@ _RU: dict[str, Entry] = {
     "alert.stale.line": "{marker} <b>{name}</b> · нет проверок {age}",
     "alert.no_scan_yet.line": "{marker} <b>{name}</b> · проверок ещё не было",
     "alert.where_repo": "{audit} ({repo})",
+    "alert.project.line": "{marker} <b>{name}</b> · высокие {count} в {audits} · {age}",
+    "alert.project.line_rise": (
+        "{marker} <b>{name}</b> · высокие {previous}→{count} в {audits} · {age}"
+    ),
     "alert.triage_line": "   {priority} · {cause}",
-    "summary.short_header": "Радар · требуют внимания: {count}",
+    "summary.short_header": "Радар · проблемы: {projects}",
     "reminder.short_title": "Радар · напоминание · открыто: {count}",
     "digest.short_title": "Радар · дайджест · открыто: {count}",
     "digest.short_poll": "Последний опрос: {stamp} UTC",

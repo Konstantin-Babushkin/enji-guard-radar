@@ -18,7 +18,6 @@ from enji_guard_radar.messages import (
     marker,
     render_alert,
     render_messages,
-    render_summary_item,
     telegram_length,
 )
 from enji_guard_radar.model import Alert, AlertKey, AlertKind, OutboundMessage, Severity
@@ -195,25 +194,21 @@ def test_high_line_arrow_and_repo_variants() -> None:
     )
 
 
-def test_repo_shown_only_for_two_repos_of_one_audit_in_separate_messages() -> None:
+def test_group_message_never_shows_repo_or_audit() -> None:
     first = high(repo="r1", repo_name="acme/r1")
     second = high(repo="r2", repo_name="acme/r2")
     tests_alert = high(repo="r1", audit="audit.tests", count=2)
-    texts = [m.text for m in render_messages([first, second, tests_alert], collapse_above=5)]
-    assert texts == [
-        "🔴 <b>Project A</b> · security (acme/r1) High 0→1 · 8d",
-        "🔴 <b>Project A</b> · tests High 0→2 · 8d",
-        "🔴 <b>Project A</b> · security (acme/r2) High 0→1 · 8d",
-    ]
-    alone = [m.text for m in render_messages([first, tests_alert], collapse_above=5)]
-    assert all("acme/" not in text for text in alone)
+    (message,) = render_messages([first, second, tests_alert], collapse_above=5)
+    assert message.text == "🔴 <b>Project A</b> · High 4 in 2 audits · 8d"
+    assert "acme/" not in message.text
+    assert len(message.keys) == 3
 
 
-def test_escaping_name_repo_and_audit_once() -> None:
+def test_escaping_name_once() -> None:
     first = high('A<b>&"x"', repo="r1", repo_name="r<i>&", audit="audit.<u>")
     second = high('A<b>&"x"', repo="r2", repo_name="r2", audit="audit.<u>")
     line = render_messages([first, second], collapse_above=5)[0].text
-    assert line == '🔴 <b>A&lt;b&gt;&amp;"x"</b> · &lt;u&gt; (r&lt;i&gt;&amp;) High 0→1 · 8d'
+    assert line == '🔴 <b>A&lt;b&gt;&amp;"x"</b> · High 2 in 1 audit · 8d'
     assert "&amp;amp;" not in line
 
 
@@ -239,15 +234,6 @@ def test_both_languages_send_the_same_keys_in_the_same_order() -> None:
     assert [m.text for m in english] != [m.text for m in russian]
 
 
-def test_summary_item_is_the_single_alert_line() -> None:
-    for alert in (stale("B"), never_ran("C"), high(), high(count=3, previous=1)):
-        for language in ("en", "ru"):
-            assert render_summary_item(alert, language=language) == render_alert(
-                alert, language=language
-            )
-    assert render_summary_item(high(), show_repo=True) == render_alert(high(), show_repo=True)
-
-
 # --- collapse ---
 
 
@@ -265,35 +251,37 @@ def test_collapse_above_threshold_sends_one_summary_with_all_keys() -> None:
     alerts = many(4)
     messages = render_messages(alerts, collapse_above=3)
     assert len(messages) == 1
-    assert messages[0].text.startswith("Radar · 4 need attention\n")
+    assert messages[0].text.startswith("Radar · problems: 4 projects\n")
     assert sorted(k.as_text() for k in messages[0].keys) == sorted(a.key.as_text() for a in alerts)
 
 
 def test_collapse_header_and_items_worst_first() -> None:
-    alerts = [high(), stale("Project E", pid="pe", age=105), stale("Project B", age=28)]
+    alerts = [high(), stale("Project E", pid="pe", age=105), stale("Project B", pid="pb", age=28)]
     (message,) = render_messages(alerts, collapse_above=2)
     assert message.text.splitlines() == [
-        "Radar · 3 need attention",
-        "🔴 <b>Project A</b> · security High 0→1 · 8d",
+        "Radar · problems: 3 projects",
+        "🔴 <b>Project A</b> · High 1 in 1 audit · 8d",
         "🟡 <b>Project E</b> · no scan 105d",
         "🟡 <b>Project B</b> · no scan 28d",
     ]
     (russian,) = render_messages(alerts, collapse_above=2, language="ru")
-    assert russian.text.splitlines()[0] == "Радар · требуют внимания: 3"
+    assert russian.text.splitlines()[0] == "Радар · проблемы: 3 проекта"
     separate = render_messages(alerts, collapse_above=3)
     assert [m.text for m in separate] == message.text.splitlines()[1:]
 
 
-def test_repo_shown_inside_a_summary_for_two_repos_of_one_audit() -> None:
+def test_summary_has_one_line_per_project() -> None:
     first = high(repo="r1", repo_name="acme/r1")
     second = high(repo="r2", repo_name="acme/r2")
     tests_alert = high(repo="r1", audit="audit.tests", count=2)
-    (message,) = render_messages([first, second, tests_alert, stale("B")], collapse_above=2)
-    lines = message.text.splitlines()
-    assert lines[0] == "Radar · 4 need attention"
-    assert "🔴 <b>Project A</b> · security (acme/r1) High 0→1 · 8d" in lines
-    assert "🔴 <b>Project A</b> · security (acme/r2) High 0→1 · 8d" in lines
-    assert "🔴 <b>Project A</b> · tests High 0→2 · 8d" in lines
+    (message,) = render_messages(
+        [first, second, tests_alert, stale("B", pid="pb")], collapse_above=1
+    )
+    assert message.text.splitlines() == [
+        "Radar · problems: 2 projects",
+        "🔴 <b>Project A</b> · High 4 in 2 audits · 8d",
+        "🟡 <b>B</b> · no scan 27d",
+    ]
 
 
 def test_alerts_are_ordered_worst_first_then_oldest_then_never_ran_last() -> None:
@@ -326,8 +314,8 @@ def test_split_boundary_is_exactly_max_chars() -> None:
     assert len(render_messages(alerts, collapse_above=3, max_chars=size)) == 1
     parts = render_messages(alerts, collapse_above=3, max_chars=size - 1)
     assert len(parts) == 2
-    assert parts[0].text.startswith("Radar · 30 need attention (1/2)\n")
-    assert parts[1].text.startswith("Radar · 30 need attention (2/2)\n")
+    assert parts[0].text.startswith("Radar · problems: 30 projects (1/2)\n")
+    assert parts[1].text.startswith("Radar · problems: 30 projects (2/2)\n")
     assert all(telegram_length(p.text) <= size - 1 for p in parts)
     keys = keys_of(parts)
     assert len(keys) == len(set(keys)) == 30

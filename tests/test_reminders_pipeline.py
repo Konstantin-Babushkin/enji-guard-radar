@@ -174,7 +174,7 @@ def test_baselined_series_is_not_reminded_until_a_rise_alerts_it(tmp_path: Path)
 
     sim.add_run(high=4, day=31)
     (rise,) = texts(sim.poll(31))
-    assert rise == "🔴 <b>Proj</b> · security High 2→4 · 31d"
+    assert rise == "🔴 <b>Proj</b> · High 2→4 in 1 audit · 31d"
     assert sim.poll(37).reminder_messages == ()
     assert len(sim.poll(38).reminder_messages) == 1
 

@@ -95,6 +95,7 @@ class TriageSim(Sim):
         self.cost_store = cost_store
         self.known_secrets = known_secrets
         self.second_project = False
+        self.more_projects: list[tuple[str, str, str]] = []
 
     def add_titled_run(
         self, titles: list[str], *, day: int, rid: str = RID, action_key: str = SECURITY
@@ -113,6 +114,19 @@ class TriageSim(Sim):
         self.runs[RID3] = []
         self.add_run("audit.recon", day=0, report=False, rid=RID3)
 
+    def add_projects(self, count: int) -> list[str]:
+        """`count` more projects with one repository each, a recent overview run, no High yet.
+
+        Returns their repository ids. Each project is its own alert line."""
+        rids = []
+        for number in range(count):
+            pid, rid = f"p-x-{number:02d}", f"repo_x-{number:02d}"
+            self.more_projects.append((pid, f"Proj {number:02d}", rid))
+            self.runs[rid] = []
+            self.add_run("audit.recon", day=0, report=False, rid=rid)
+            rids.append(rid)
+        return rids
+
     def poll(
         self,
         day: int,
@@ -125,6 +139,9 @@ class TriageSim(Sim):
         if self.second_project:
             projects.append((PID2, "Second"))
             repos[PID2] = [(RID3, "acme/third")]
+        for pid, name, rid in self.more_projects:
+            projects.append((pid, name))
+            repos[pid] = [(rid, f"acme/{rid}")]
         guard = InMemoryGuardTools(
             world(projects, repos, self.runs, self.reports, self.failures),
         )
@@ -174,6 +191,18 @@ def three_alert_sim(tmp_path: Path, triager: FakeTriager | None, **kwargs: objec
     return sim
 
 
+def two_project_sim(
+    tmp_path: Path, triager: FakeTriager | None, config: str = TRIAGE_ON
+) -> TriageSim:
+    """Two projects with one fresh High series each: two alert lines, two triage items."""
+    sim = TriageSim(tmp_path, config, triager=triager)
+    sim.add_second_project()
+    sim.poll(0)
+    sim.add_titled_run([SQL], day=1)
+    sim.add_titled_run([HASH], day=1, rid=RID3)
+    return sim
+
+
 def state_files(directory: Path) -> Mapping[str, bytes]:
     return {p.name: p.read_bytes() for p in sorted(directory.rglob("*")) if p.is_file()}
 
@@ -185,7 +214,7 @@ def test_fresh_high_alert_gets_cause(tmp_path: Path) -> None:
     triager = fake()
     sim = first_alert_sim(tmp_path, triager)
     report = sim.poll(1)
-    assert texts(report) == [f"🔴 <b>Proj</b> · security High 0→1 · 0d{P1_SQL}"]
+    assert texts(report) == [f"🔴 <b>Proj</b> · High 1 in 1 audit · 0d{P1_SQL}"]
     assert triager.calls == 1
     (request,) = triager.requests
     assert len(request.items) == 1
@@ -206,7 +235,7 @@ def test_off_disabled_makes_no_call_and_same_texts(tmp_path: Path) -> None:
 
 def test_off_without_triager_or_store_is_the_old_run(tmp_path: Path) -> None:
     sim = first_alert_sim(tmp_path, None)
-    assert texts(sim.poll(1)) == ["🔴 <b>Proj</b> · security High 0→1 · 0d"]
+    assert texts(sim.poll(1)) == ["🔴 <b>Proj</b> · High 1 in 1 audit · 0d"]
 
 
 @dataclass
@@ -239,18 +268,17 @@ def test_one_call_for_three_fresh_alerts_in_two_projects(tmp_path: Path) -> None
     report = sim.poll(1)
     assert triager.calls == 1
     assert len(triager.requests[0].items) == 3
-    assert len(report.messages) == 3
+    # Proj holds two series (two repos) and is one line with one Claude line; Second is another.
+    assert len(report.messages) == 2
+    assert report.messages[0].text.startswith("🔴 <b>Proj</b> · High 2 in 1 audit · ")
+    assert len(report.messages[0].keys) == 2
     assert all(message.text.endswith(f"\n   P1 · {DEFAULT_CAUSE}") for message in report.messages)
+    assert all(message.text.count("P1 ·") == 1 for message in report.messages)
 
 
 def test_one_call_item_cap_keeps_the_rest_rule_only(tmp_path: Path) -> None:
     triager = fake()
-    config = TRIAGE_ON + "  max_items_per_call: 1\n"
-    sim = TriageSim(tmp_path, config, triager=triager)
-    sim.add_second_repo()
-    sim.poll(0)
-    sim.add_titled_run([SQL], day=1)
-    sim.add_titled_run([HASH], day=1, rid=RID2)
+    sim = two_project_sim(tmp_path, triager, TRIAGE_ON + "  max_items_per_call: 1\n")
     report = sim.poll(1)
     assert triager.calls == 1
     assert len(triager.requests[0].items) == 1
@@ -266,7 +294,7 @@ def test_not_fresh_rearmed_alert_is_not_sent_to_claude(tmp_path: Path) -> None:
     sim.poll(1)
     sim.add_titled_run([SQL, HASH, REDIRECT], day=2)
     (text,) = texts(sim.poll(2))
-    assert text == "🔴 <b>Proj</b> · security High 1→3 · 1d"
+    assert text == "🔴 <b>Proj</b> · High 1→3 in 1 audit · 1d"
     assert triager.calls == 1
 
 
@@ -293,7 +321,7 @@ def test_not_fresh_retried_alert_is_not_sent_to_claude_again(tmp_path: Path) -> 
     sim.add_titled_run([SQL], day=2)
     retried = sim.poll(2, notifier=notifier)
     assert retried.delivered == 1
-    assert notifier.sent[1] == "🔴 <b>Proj</b> · security High 1→1 · 1d"
+    assert notifier.sent[1] == "🔴 <b>Proj</b> · High 1→1 in 1 audit · 1d"
     assert triager.calls == 1
 
 
@@ -323,7 +351,7 @@ def test_no_titles_skips_with_log(tmp_path: Path, caplog: pytest.LogCaptureFixtu
     sim.add_titled_run(["https://example.com/a/b"], day=1)
     with caplog.at_level(logging.INFO):
         report = sim.poll(1)
-    assert texts(report) == ["🔴 <b>Proj</b> · security High 0→1 · 0d"]
+    assert texts(report) == ["🔴 <b>Proj</b> · High 1 in 1 audit · 0d"]
     assert triager.calls == 0
     assert "triage skipped: no usable titles" in caplog.text
 
@@ -363,7 +391,7 @@ def test_fallback_is_the_rule_only_run(tmp_path: Path, outcome: TriageOutcome) -
 def test_fallback_unknown_ids_reply_is_rule_only(tmp_path: Path) -> None:
     reply = json.dumps({"items": [{"item_id": "i9", "priority": "p1", "cause": "Some cause"}]})
     sim = first_alert_sim(tmp_path, FakeTriager([TriageReply(text=reply, seconds=1.0)]))
-    assert texts(sim.poll(1)) == ["🔴 <b>Proj</b> · security High 0→1 · 0d"]
+    assert texts(sim.poll(1)) == ["🔴 <b>Proj</b> · High 1 in 1 audit · 0d"]
 
 
 # ---- partial ---------------------------------------------------------------------------------
@@ -379,11 +407,7 @@ def test_partial_one_item_rejected_keeps_the_other(tmp_path: Path) -> None:
         return TriageReply(text=json.dumps({"items": items}), seconds=1.0)
 
     triager = FakeTriager(reply)
-    sim = TriageSim(tmp_path, TRIAGE_ON, triager=triager)
-    sim.add_second_repo()
-    sim.poll(0)
-    sim.add_titled_run([SQL], day=1)
-    sim.add_titled_run([HASH], day=1, rid=RID2)
+    sim = two_project_sim(tmp_path, triager)
     report = sim.poll(1)
     assert len(triager.requests[0].items) == 2
     lines = [line for message in report.messages for line in message.text.split("\n")]
@@ -484,7 +508,7 @@ def test_logs_contain_no_title_or_cause(tmp_path: Path, caplog: pytest.LogCaptur
     sim.add_titled_run([title], day=1)
     with caplog.at_level(logging.DEBUG):
         report = sim.poll(1)
-    assert texts(report) == [f"🔴 <b>Proj</b> · security High 0→1 · 0d\n   P1 · {cause}"]
+    assert texts(report) == [f"🔴 <b>Proj</b> · High 1 in 1 audit · 0d\n   P1 · {cause}"]
     assert title not in caplog.text
     assert cause not in caplog.text
     assert "triage call:" in caplog.text

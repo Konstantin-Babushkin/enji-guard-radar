@@ -18,7 +18,6 @@ from enji_guard_radar.messages import (
     high_findings_text,
     render_alert,
     render_messages,
-    render_summary_item,
     summary_header,
     telegram_length,
 )
@@ -150,7 +149,7 @@ def test_render_alert_in_both_languages(alert: Alert, english: str, russian: str
     assert render_alert(alert, language="ru") == russian
 
 
-SUMMARY_TABLE = [
+LINE_TABLE = [
     pytest.param(
         stale(age=5),
         "🟡 <b>Project B</b> · no scan 5d",
@@ -164,32 +163,39 @@ SUMMARY_TABLE = [
         id="never-ran",
     ),
     pytest.param(
+        high(1),
+        "🔴 <b>Project A</b> · High 1 in 1 audit · 8d",
+        "🔴 <b>Project A</b> · высокие 1 в 1 аудите · 8 д",
+        id="high-first-alert-shows-the-count",
+    ),
+    pytest.param(
         high(3),
-        "🔴 <b>Project A</b> · security High 0→3 · 8d",
-        "🔴 <b>Project A</b> · security высокие 0→3 · 8 д",
+        "🔴 <b>Project A</b> · High 3 in 1 audit · 8d",
+        "🔴 <b>Project A</b> · высокие 3 в 1 аудите · 8 д",
         id="high",
     ),
     pytest.param(
         high(3, previous=1),
-        "🔴 <b>Project A</b> · security High 1→3 · 8d",
-        "🔴 <b>Project A</b> · security высокие 1→3 · 8 д",
+        "🔴 <b>Project A</b> · High 1→3 in 1 audit · 8d",
+        "🔴 <b>Project A</b> · высокие 1→3 в 1 аудите · 8 д",
         id="high-rise",
     ),
 ]
 
 
-@pytest.mark.parametrize(("alert", "english", "russian"), SUMMARY_TABLE)
-def test_render_summary_item_in_both_languages(alert: Alert, english: str, russian: str) -> None:
-    assert render_summary_item(alert) == english
-    assert render_summary_item(alert, language="ru") == russian
+@pytest.mark.parametrize(("alert", "english", "russian"), LINE_TABLE)
+def test_group_line_in_both_languages(alert: Alert, english: str, russian: str) -> None:
+    assert [m.text for m in render_messages([alert], collapse_above=3)] == [english]
+    assert [m.text for m in render_messages([alert], collapse_above=3, language="ru")] == [russian]
 
 
 @pytest.mark.parametrize(
     ("total", "index", "count", "english", "russian"),
     [
-        (5, 1, 1, "Radar · 5 need attention", "Радар · требуют внимания: 5"),
-        (21, 2, 3, "Radar · 21 need attention (2/3)", "Радар · требуют внимания: 21 (2/3)"),
-        (22, 1, 2, "Radar · 22 need attention (1/2)", "Радар · требуют внимания: 22 (1/2)"),
+        (1, 1, 1, "Radar · problems: 1 project", "Радар · проблемы: 1 проект"),
+        (5, 1, 1, "Radar · problems: 5 projects", "Радар · проблемы: 5 проектов"),
+        (21, 2, 3, "Radar · problems: 21 projects (2/3)", "Радар · проблемы: 21 проект (2/3)"),
+        (22, 1, 2, "Radar · problems: 22 projects (1/2)", "Радар · проблемы: 22 проекта (1/2)"),
     ],
 )
 def test_summary_header_in_both_languages(
@@ -252,7 +258,7 @@ def test_html_in_names_is_escaped_once_in_russian() -> None:
     alert = high(name=nasty, repo="acme/<web>&co")
     for text in (
         render_alert(alert, language="ru"),
-        render_summary_item(alert, language="ru"),
+        render_messages([alert], collapse_above=3, language="ru")[0].text,
         render_alert(stale(nasty), language="ru"),
     ):
         assert 'Проект &lt;b&gt;&amp; "Ко"' in text
@@ -300,7 +306,7 @@ def test_summary_is_split_with_numbered_russian_headers() -> None:
     parts = render_messages(alerts, collapse_above=3, max_chars=MIN_MAX_CHARS, language="ru")
     assert len(parts) > 2
     for number, part in enumerate(parts, start=1):
-        assert part.text.startswith(f"Радар · требуют внимания: 60 ({number}/{len(parts)})\n")
+        assert part.text.startswith(f"Радар · проблемы: 60 проектов ({number}/{len(parts)})\n")
         assert telegram_length(part.text) <= MIN_MAX_CHARS
         assert len(part.text.split("\n")) - 1 == len(part.keys)
     keys = keys_of(parts)
@@ -352,14 +358,12 @@ def test_russian_worst_case_item_fits_the_minimum_message_size(name: str) -> Non
     ]
     for alert in alerts:
         assert telegram_length(render_alert(alert, language="ru", show_repo=True)) <= MIN_MAX_CHARS
-        item = render_summary_item(alert, language="ru", show_repo=True)
         parts = render_messages(
             [alert, *[stale("o", pid=f"o{i}") for i in range(3)]],
             collapse_above=3,
             max_chars=MIN_MAX_CHARS,
             language="ru",
         )
-        assert telegram_length(item) < MIN_MAX_CHARS
         assert all(telegram_length(p.text) <= MIN_MAX_CHARS for p in parts)
 
 

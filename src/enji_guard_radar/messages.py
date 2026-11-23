@@ -5,6 +5,7 @@ import logging
 import re
 import unicodedata
 from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
 
 from enji_guard_radar.model import SEVERITY_ORDER, Alert, AlertKey, AlertKind, OutboundMessage
 from enji_guard_radar.texts import DEFAULT_LANGUAGE, Language, counted, text
@@ -159,13 +160,6 @@ def render_alert(
     raise ValueError(message)
 
 
-def render_summary_item(
-    alert: Alert, *, language: Language = DEFAULT_LANGUAGE, show_repo: bool = False
-) -> str:
-    """One shape for single alerts and summary items."""
-    return render_alert(alert, language=language, show_repo=show_repo)
-
-
 def triage_line(item: ItemTriage, *, language: Language = DEFAULT_LANGUAGE) -> str:
     """The Claude line under an item: `   P1 · <cause>`. The cause is escaped here."""
     return text(
@@ -176,35 +170,12 @@ def triage_line(item: ItemTriage, *, language: Language = DEFAULT_LANGUAGE) -> s
     )
 
 
-def _item_text(alert: Alert, *, language: Language, show_repo: bool, extra: str | None) -> str:
-    """The rule line of an item, plus its Claude line (if any) on its own line below."""
-    line = render_summary_item(alert, language=language, show_repo=show_repo)
-    return line if extra is None else f"{line}\n{extra}"
-
-
-def _triage_extras(
-    ordered: Sequence[Alert],
-    triage: Mapping[AlertKey, ItemTriage] | None,
-    language: Language,
-) -> dict[AlertKey, str]:
-    """Claude lines by alert key. Entries for keys that are not alerts here are only counted."""
-    if not triage:
-        return {}
-    present = {alert.key for alert in ordered}
-    stray = len(triage.keys() - present)
-    if stray:
-        logger.warning("ignored %d triage entries for alerts that are not in this set", stray)
-    return {
-        key: triage_line(entry, language=language)
-        for key, entry in triage.items()
-        if key in present
-    }
-
-
 def summary_header(
-    total: int, index: int, count: int, *, language: Language = DEFAULT_LANGUAGE
+    projects: int, index: int, count: int, *, language: Language = DEFAULT_LANGUAGE
 ) -> str:
-    header = text(language, "summary.short_header", count=total)
+    header = text(
+        language, "summary.short_header", projects=counted(language, "noun.project", projects)
+    )
     return f"{header} ({index}/{count})" if count > 1 else header
 
 
@@ -217,10 +188,6 @@ def _sort_key(alert: Alert) -> tuple[int, int, int, str, str]:
         clean_name(alert.project_name).casefold(),
         alert.key.as_text(),
     )
-
-
-def _shows_repo(alert: Alert, ambiguous: frozenset[tuple[str, str]]) -> bool:
-    return (alert.key.project_id, alert.key.action_key) in ambiguous
 
 
 def pack_items(items: Sequence[str], header_units: int, max_chars: int) -> list[list[int]]:
@@ -241,23 +208,102 @@ def pack_items(items: Sequence[str], header_units: int, max_chars: int) -> list[
     return chunks
 
 
+_PRIORITY_RANK = {"p1": 0, "p2": 1, "p3": 2}
+
+
+@dataclass(frozen=True)
+class _Line:
+    """One line of the group message (plus its Claude line) and the alert keys it stands for."""
+
+    project_id: str
+    text: str
+    keys: tuple[AlertKey, ...]
+
+
+def _project_line(group: Sequence[Alert], language: Language) -> str:
+    """The High line of one project: total count, audit types, oldest age. No repo, no audit."""
+    first = group[0]
+    ages: list[int] = []
+    total = previous = 0
+    for alert in group:
+        if alert.age_days is None or alert.count is None:
+            message = "a High alert needs age_days and count"
+            raise ValueError(message)
+        ages.append(alert.age_days)
+        total += alert.count
+        previous += alert.previous_count or 0
+    params = {
+        "marker": marker(first.kind, language),
+        "name": escape(clean_name(first.project_name, language=language)),
+        "count": total,
+        "audits": counted(language, "noun.audit_in", len({a.key.action_key for a in group})),
+        "age": age_text(max(ages), language),
+    }
+    if previous > 0:
+        return text(language, "alert.project.line_rise", previous=previous, **params)
+    return text(language, "alert.project.line", **params)
+
+
+def _best_triage(
+    group: Sequence[Alert], triage: Mapping[AlertKey, ItemTriage]
+) -> ItemTriage | None:
+    """The most urgent entry of a project; on a tie the first alert of the group (the oldest)."""
+    found = [triage[alert.key] for alert in group if alert.key in triage]
+    if not found:
+        return None
+    if len(found) > 1:
+        logger.info("kept 1 of %d triage lines for project %s", len(found), group[0].key.project_id)
+    return min(enumerate(found), key=lambda pair: (_PRIORITY_RANK[pair[1].priority], pair[0]))[1]
+
+
+def _triage_in_set(
+    ordered: Sequence[Alert], triage: Mapping[AlertKey, ItemTriage] | None
+) -> Mapping[AlertKey, ItemTriage]:
+    """Entries for keys that are alerts here; the others are only counted."""
+    if not triage:
+        return {}
+    present = {alert.key for alert in ordered}
+    stray = len(triage.keys() - present)
+    if stray:
+        logger.warning("ignored %d triage entries for alerts that are not in this set", stray)
+    return {key: entry for key, entry in triage.items() if key in present}
+
+
+def _lines(
+    ordered: Sequence[Alert], language: Language, triage: Mapping[AlertKey, ItemTriage]
+) -> list[_Line]:
+    """One line per project's High alerts, one per other alert; a High line sits where the
+    project's first (oldest, worst) alert sorts."""
+    lines: list[_Line | None] = []
+    groups: dict[str, list[Alert]] = {}
+    slots: dict[str, int] = {}
+    for alert in ordered:
+        if alert.kind is not AlertKind.HIGH_FINDINGS:
+            line = render_alert(alert, language=language)
+            lines.append(_Line(alert.key.project_id, line, (alert.key,)))
+            continue
+        project_id = alert.key.project_id
+        if project_id not in groups:
+            slots[project_id] = len(lines)
+            lines.append(None)
+        groups.setdefault(project_id, []).append(alert)
+    for project_id, group in groups.items():
+        line = _project_line(group, language)
+        best = _best_triage(group, triage)
+        if best is not None:
+            line = f"{line}\n{triage_line(best, language=language)}"
+        lines[slots[project_id]] = _Line(project_id, line, tuple(a.key for a in group))
+    result = [line for line in lines if line is not None]
+    if len(result) < len(ordered):
+        logger.info("grouped %d alerts into %d lines", len(ordered), len(result))
+    return result
+
+
 def _summary_messages(
-    ordered: Sequence[Alert],
-    max_chars: int,
-    language: Language,
-    ambiguous: frozenset[tuple[str, str]],
-    extras: Mapping[AlertKey, str],
+    lines: Sequence[_Line], max_chars: int, language: Language
 ) -> list[OutboundMessage]:
-    total = len(ordered)
-    items = [
-        _item_text(
-            alert,
-            language=language,
-            show_repo=_shows_repo(alert, ambiguous),
-            extra=extras.get(alert.key),
-        )
-        for alert in ordered
-    ]
+    total = len({line.project_id for line in lines})
+    items = [line.text for line in lines]
     head_units = telegram_length(summary_header(total, 1, 1, language=language))
     chunks = pack_items(items, head_units, max_chars)
     if len(chunks) > 1:
@@ -272,8 +318,9 @@ def _summary_messages(
     messages = []
     for number, indexes in enumerate(chunks, start=1):
         header = summary_header(total, number, len(chunks), language=language)
-        text = "\n".join([header, *(items[i] for i in indexes)])
-        messages.append(OutboundMessage(text=text, keys=tuple(ordered[i].key for i in indexes)))
+        body = "\n".join([header, *(items[i] for i in indexes)])
+        keys = tuple(key for i in indexes for key in lines[i].keys)
+        messages.append(OutboundMessage(text=body, keys=keys))
     return messages
 
 
@@ -285,31 +332,20 @@ def render_messages(
     language: Language = DEFAULT_LANGUAGE,
     triage: Mapping[AlertKey, ItemTriage] | None = None,
 ) -> list[OutboundMessage]:
-    """Worst first. Up to `collapse_above` alerts go one by one, more become one summary that is
-    split between items into numbered chunks of at most `max_chars` UTF-16 units.
+    """One line per project's High alerts and one per stale / never-ran alert, worst first.
+    Up to `collapse_above` lines go one by one, more become one summary that is split between
+    lines into numbered chunks of at most `max_chars` UTF-16 units.
 
-    `triage` only adds a Claude line under an item. Order, the collapse decision, keys and every
-    rule-text part are settled before the map is read, so it cannot change which alerts go out."""
+    `triage` only adds a Claude line under a project line (at most one: the most urgent entry).
+    Order, the collapse decision, keys and every rule-text part are settled before the map is
+    read, so it cannot change which alerts go out."""
     if not MIN_MAX_CHARS <= max_chars <= TELEGRAM_MAX_CHARS:
         message = f"max_chars must be between {MIN_MAX_CHARS} and {TELEGRAM_MAX_CHARS}"
         raise ValueError(message)
     ordered = sorted(alerts, key=_sort_key)
-    ambiguous = ambiguous_series(ordered)
-    collapse = len(ordered) > collapse_above
-    extras = _triage_extras(ordered, triage, language)
-    if not collapse:
-        return [
-            OutboundMessage(
-                text=_item_text(
-                    alert,
-                    language=language,
-                    show_repo=_shows_repo(alert, ambiguous),
-                    extra=extras.get(alert.key),
-                ),
-                keys=(alert.key,),
-            )
-            for alert in ordered
-        ]
-    messages = _summary_messages(ordered, max_chars, language, ambiguous, extras)
-    logger.info("collapsed %d alerts into %d summary message(s)", len(ordered), len(messages))
+    lines = _lines(ordered, language, _triage_in_set(ordered, triage))
+    if len(lines) <= collapse_above:
+        return [OutboundMessage(text=line.text, keys=line.keys) for line in lines]
+    messages = _summary_messages(lines, max_chars, language)
+    logger.info("collapsed %d lines into %d summary message(s)", len(lines), len(messages))
     return messages
