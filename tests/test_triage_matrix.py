@@ -122,16 +122,6 @@ def new_sim(tmp_path: Path, *, reminders_on: bool = False, digest_on: bool = Fal
     )
 
 
-def add_repos(sim: TriageSim, count: int) -> list[str]:
-    """`count` more repositories of the one project, each with a recent overview run."""
-    ids = [f"repo_x-{number:02d}" for number in range(count)]
-    for number, rid in enumerate(ids):
-        sim.repos.append((rid, f"acme/r{number:02d}"))
-        sim.runs[rid] = []
-        sim.add_run("audit.recon", day=0, report=False, rid=rid)
-    return ids
-
-
 def fresh(tmp_path: Path) -> Prepared:
     sim = new_sim(tmp_path)
     sim.poll(0)
@@ -178,9 +168,9 @@ TITLES = (SQL, HASH, REDIRECT, "Missing CSRF protection on forms", "Debug mode l
 
 
 def collapse(tmp_path: Path) -> Prepared:
-    """Five fresh alerts, more than the default collapse_above of 3: one summary message."""
+    """Five fresh alerts of five projects, over the default collapse_above of 3: one summary."""
     sim = new_sim(tmp_path)
-    ids = add_repos(sim, len(TITLES) - 1)
+    ids = sim.add_projects(len(TITLES) - 1)
     sim.poll(0)
     for title, rid in zip(TITLES, [RID, *ids], strict=True):
         sim.add_titled_run([title], day=1, rid=rid)
@@ -267,15 +257,15 @@ def test_off_baselines_never_call_the_triager(tmp_path: Path) -> None:
 def test_scenarios_exercise_what_they_name(tmp_path: Path) -> None:
     """Guards the matrix against passing vacuously: each scenario sends what its name says."""
     kinds = {name: run("off", name, tmp_path)[0] for name in SCENARIOS}
-    assert [t for t, _ in kinds["fresh"].messages] == ["🔴 <b>Proj</b> · security High 0→1 · 0d"]
-    assert [t for t, _ in kinds["rise"].messages] == ["🔴 <b>Proj</b> · security High 1→3 · 1d"]
-    assert [t for t, _ in kinds["retry"].messages] == ["🔴 <b>Proj</b> · security High 1→1 · 1d"]
+    assert [t for t, _ in kinds["fresh"].messages] == ["🔴 <b>Proj</b> · High 1 in 1 audit · 0d"]
+    assert [t for t, _ in kinds["rise"].messages] == ["🔴 <b>Proj</b> · High 1→3 in 1 audit · 1d"]
+    assert [t for t, _ in kinds["retry"].messages] == ["🔴 <b>Proj</b> · High 1→1 in 1 audit · 1d"]
     assert kinds["reminder"].counts[5]
     assert kinds["reminder"].messages
     assert kinds["digest"].counts[8]
     assert kinds["digest"].messages
     (summary,) = kinds["collapse"].messages
-    assert "need attention" in summary[0].split("\n")[0]
+    assert summary[0].split("\n")[0] == f"Radar · problems: {len(TITLES)} projects"
     assert len(summary[1]) == len(TITLES)
 
 
@@ -306,10 +296,10 @@ def test_same_alerts_on_or_off(scenario: str, variant: str, tmp_path: Path) -> N
 
 
 def split_sim(tmp_path: Path, triager: FakeTriager | None) -> TriageSim:
-    """40 repositories, each with one fresh High alert (collapse is on at the default of 3)."""
+    """40 projects, each with one fresh High alert (collapse is on at the default of 3)."""
     config = TRIAGE_OFF if triager is None else TRIAGE_ON + "  max_items_per_call: 100\n"
     sim = TriageSim(tmp_path, config, triager=triager, cost_store=None)
-    ids = add_repos(sim, 40)
+    ids = sim.add_projects(40)
     sim.poll(0)
     for number, rid in enumerate(ids):
         letters = f"{chr(97 + number % 26)}{chr(97 + number // 26)}"

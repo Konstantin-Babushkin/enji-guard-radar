@@ -12,11 +12,7 @@ from enji_guard_radar.high_rules import (
     is_high_priority,
     is_tracked,
 )
-from enji_guard_radar.messages import (
-    render_alert,
-    render_messages,
-    render_summary_item,
-)
+from enji_guard_radar.messages import render_alert, render_messages
 from enji_guard_radar.model import Alert, AlertKey, AlertKind, Severity
 
 NOW = datetime(2026, 11, 21, 12, 0, tzinfo=UTC)
@@ -65,7 +61,7 @@ def test_config_to_high_rise_message() -> None:
         AlertKey(project_id="p1", repo_id="r1", action_key="audit.security", level="high"),
     )
     assert messages[0].text == (
-        '🔴 <b>Project A &lt;core&gt; &amp; "tools"</b> · security High 1→3 · 11d'
+        '🔴 <b>Project A &lt;core&gt; &amp; "tools"</b> · High 1→3 in 1 audit · 11d'
     )
     assert config.high.clear_after_clean_runs == 3
 
@@ -200,9 +196,10 @@ def test_dynamic_text_is_escaped_and_cleaned() -> None:
     assert "\nline two" not in text
     assert "...</b>" in text
     assert len(text.splitlines()) == 1
-    item = render_summary_item(alert)
-    assert "<script>" not in item
-    assert "\n" not in item
+    (message,) = render_messages([alert], collapse_above=3)
+    assert "<script>" not in message.text
+    assert "acme" not in message.text
+    assert "\n" not in message.text
 
 
 def test_alert_model_fields_carry_no_evidence() -> None:
@@ -211,11 +208,15 @@ def test_alert_model_fields_carry_no_evidence() -> None:
     assert forbidden.isdisjoint(HighSeries.model_fields)
 
 
-def test_summary_item_first_sight_and_rise() -> None:
+def test_project_line_first_sight_and_rise() -> None:
     first = high_alert(series(previous_high=None), aged_after_days=14, now=NOW)
     rise = high_alert(series(), aged_after_days=14, now=NOW)
-    assert render_summary_item(first) == "🔴 <b>Project A</b> · security High 0→3 · 11d"
-    assert render_summary_item(rise) == "🔴 <b>Project A</b> · security High 1→3 · 11d"
+    assert render_messages([first], collapse_above=3)[0].text == (
+        "🔴 <b>Project A</b> · High 3 in 1 audit · 11d"
+    )
+    assert render_messages([rise], collapse_above=3)[0].text == (
+        "🔴 <b>Project A</b> · High 1→3 in 1 audit · 11d"
+    )
 
 
 def test_collapse_puts_high_first() -> None:
@@ -235,17 +236,17 @@ def test_collapse_puts_high_first() -> None:
     messages = render_messages([*stale, high], collapse_above=3)
     assert len(messages) == 1
     body = messages[0].text.splitlines()
-    assert body[0] == "Radar · 4 need attention"
-    assert body[1] == "🔴 <b>Project A</b> · security High 1→3 · 11d"
+    assert body[0] == "Radar · problems: 4 projects"
+    assert body[1] == "🔴 <b>Project A</b> · High 1→3 in 1 audit · 11d"
     assert messages[0].keys[0] == high.key
 
 
-def test_high_alert_without_repo_name_is_rejected() -> None:
+def test_high_alert_without_repo_name_is_rejected_in_a_single_line() -> None:
     alert = high_alert(series(), aged_after_days=14, now=NOW).model_copy(update={"repo_name": None})
     with pytest.raises(ValueError, match="repo_name"):
         render_alert(alert)
-    with pytest.raises(ValueError, match="repo_name"):
-        render_summary_item(alert)
+    # The group line never shows a repo, so it does not need the name.
+    assert render_messages([alert], collapse_above=3)[0].text.startswith("🔴 <b>Project A</b>")
 
 
 @pytest.mark.parametrize("missing", ["count", "seen_since", "age_days"])

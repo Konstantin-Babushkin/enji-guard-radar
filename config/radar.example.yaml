@@ -12,7 +12,8 @@ defaults:
   high_aged_after_days: 14
 
 alerts:
-  # More alerts than this are sent as one summary message (1..50).
+  # More alert lines than this are sent as one summary message (1..50). A project's High
+  # findings are one line (total count, audit types, oldest age), stale and never-ran are their own.
   collapse_above: 3
 
 high:

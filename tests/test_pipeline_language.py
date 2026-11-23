@@ -94,14 +94,14 @@ def test_alerts_and_reminders_are_the_same_set_in_both_languages(tmp_path: Path)
     assert [m.audience for m in english] == [m.audience for m in russian]
     assert russian_state == english_state  # the language is not part of the state
 
-    assert english[0].text == "🔴 <b>Proj</b> · security High 0→2 · 0d"
-    assert english[1].text == "🔴 <b>Proj</b> · security High 2→4 · 1d"
+    assert english[0].text == "🔴 <b>Proj</b> · High 2 in 1 audit · 0d"
+    assert english[1].text == "🔴 <b>Proj</b> · High 2→4 in 1 audit · 1d"
     assert english[2].text == (
         "<b>Radar reminder · 1 open</b>\n🔴 <b>Proj</b> · security High 4 · 8d"
     )
 
-    assert russian[0].text == "🔴 <b>Proj</b> · security высокие 0→2 · 0 д"
-    assert russian[1].text == "🔴 <b>Proj</b> · security высокие 2→4 · 1 д"
+    assert russian[0].text == "🔴 <b>Proj</b> · высокие 2 в 1 аудите · 0 д"
+    assert russian[1].text == "🔴 <b>Proj</b> · высокие 2→4 в 1 аудите · 1 д"
     assert russian[2].text == (
         "<b>Радар · напоминание · открыто: 1</b>\n🔴 <b>Proj</b> · security высокие 4 · 8 д"
     )
