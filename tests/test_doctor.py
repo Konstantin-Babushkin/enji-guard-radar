@@ -26,7 +26,7 @@ from fake_oauth import (
 )
 from telegram_fakes import FAKE_TOKEN, FakeTransport, error_response
 
-from enji_guard_radar import cli
+from enji_guard_radar import cli, doctor
 from enji_guard_radar.config import ProjectSettings, RadarConfig, parse_config
 from enji_guard_radar.doctor import (
     ApiAnswer,
@@ -36,6 +36,7 @@ from enji_guard_radar.doctor import (
     CredentialFacts,
     DoctorReport,
     GuardFacts,
+    TriageFacts,
     format_doctor,
     verdict_chat_member,
     verdict_chat_permissions,
@@ -47,6 +48,7 @@ from enji_guard_radar.doctor import (
     verdict_score_rules,
     verdict_settings,
     verdict_state,
+    verdict_triage,
     verdict_unevaluated_projects,
 )
 from enji_guard_radar.guard import GUARD_READ_TOOLS
@@ -68,8 +70,10 @@ from enji_guard_radar.ports import (
     GuardFailure,
     GuardSession,
 )
+from enji_guard_radar.settings import ENV_CLAUDE_TOKEN
 from enji_guard_radar.state_store import FileStateStore
 from enji_guard_radar.telegram import HttpResponse, TransportFailure
+from enji_guard_radar.triage_cost import CostDay, serialize_days
 
 NOW = datetime(2026, 11, 18, 12, 0, tzinfo=UTC)
 GROUP = "-1001234567890"
@@ -1080,3 +1084,136 @@ def test_triage_ready_setup_passes_without_calling_claude(
     captured = capsys.readouterr()
     for text in (out, captured.out, captured.err, caplog.text):
         assert CLAUDE_TOKEN not in text
+
+
+def facts(**overrides: object) -> TriageFacts:
+    base: dict[str, object] = {
+        "enabled": True,
+        "backend": "claude_cli",
+        "binary_found": True,
+        "token_set": True,
+        "today_calls": 0,
+        "today_failures": 0,
+    }
+    base.update(overrides)
+    return TriageFacts(**base)  # type: ignore[arg-type]
+
+
+@pytest.mark.parametrize(
+    ("given", "status", "needles"),
+    [
+        (facts(enabled=False), "SKIP", ["off"]),
+        (facts(), "PASS", ["on, backend claude_cli, binary found, token set", "calls 0, failed 0"]),
+        (facts(binary_found=False), "FAIL", ["claude not found on PATH"]),
+        (facts(token_set=False), "FAIL", ["CLAUDE_CODE_OAUTH_TOKEN is not set"]),
+        (
+            facts(binary_found=False, token_set=False),
+            "FAIL",
+            ["claude not found on PATH", "CLAUDE_CODE_OAUTH_TOKEN is not set"],
+        ),
+        (facts(today_calls=3, today_failures=3), "WARN", ["calls 3, failed 3"]),
+        (facts(today_calls=3, today_failures=1), "PASS", ["calls 3, failed 1"]),
+        (facts(today_calls=1, today_failures=1), "WARN", ["calls 1, failed 1"]),
+    ],
+)
+def test_triage_verdict_table(given: TriageFacts, status: str, needles: list[str]) -> None:
+    result = verdict_triage(given)
+
+    assert result.name == "triage"
+    assert result.status.value == status
+    for needle in needles:
+        assert needle in result.detail
+
+
+def test_triage_token_variable_matches_settings() -> None:
+    assert doctor.ENV_CLAUDE_TOKEN == ENV_CLAUDE_TOKEN
+
+
+def test_triage_missing_binary_and_token_fail_through_the_cli(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    empty = tmp_path / "empty"
+    empty.mkdir()
+    monkeypatch.setenv("PATH", str(empty))
+
+    code, out = run_doctor(tmp_path, transport=healthy_transport(), extra=triage_config(tmp_path))
+
+    assert code == 1
+    detail = line(out, "triage")
+    assert detail.startswith("FAIL")
+    assert "claude" in detail
+    assert "CLAUDE_CODE_OAUTH_TOKEN" in detail
+
+
+def cost_file(directory: Path, *, calls: int, failures: int, days_ago: int = 0) -> Path:
+    day = datetime.now(UTC).date() - timedelta(days=days_ago)
+    record = CostDay(
+        day=day,
+        calls=calls,
+        failures=failures,
+        seconds=1.0,
+        cost_usd=0.0,
+        unknown_cost_calls=calls,
+        input_tokens=0,
+        output_tokens=0,
+    )
+    path = directory / "triage-cost.json"
+    path.write_bytes(serialize_days((record,)))
+    return path
+
+
+def doctor_with_fake_claude(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[str, Path]:
+    bin_dir = install_fake_claude(tmp_path, envelope="{}")
+    monkeypatch.setenv("PATH", with_path(bin_dir))
+    _, out = run_doctor(
+        tmp_path,
+        environ=environment(CLAUDE_CODE_OAUTH_TOKEN=CLAUDE_TOKEN),
+        transport=healthy_transport(),
+        extra=triage_config(tmp_path),
+    )
+    return line(out, "triage"), bin_dir
+
+
+def test_triage_every_call_failed_today_warns_and_leaves_the_file_alone(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    path = cost_file(tmp_path, calls=3, failures=3)
+    before = path.read_bytes()
+
+    triage_line, bin_dir = doctor_with_fake_claude(tmp_path, monkeypatch)
+
+    assert triage_line.startswith("WARN")
+    assert "calls 3, failed 3" in triage_line
+    assert path.read_bytes() == before
+    assert not (bin_dir / "record.json").exists()
+
+
+def test_triage_some_failures_today_stay_pass(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    cost_file(tmp_path, calls=3, failures=1)
+
+    triage_line, _ = doctor_with_fake_claude(tmp_path, monkeypatch)
+
+    assert triage_line.startswith("PASS")
+    assert "calls 3, failed 1" in triage_line
+
+
+def test_triage_ignores_a_record_of_another_day(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    cost_file(tmp_path, calls=3, failures=3, days_ago=1)
+
+    triage_line, _ = doctor_with_fake_claude(tmp_path, monkeypatch)
+
+    assert triage_line.startswith("PASS")
+    assert "calls 0, failed 0" in triage_line
+
+
+def test_triage_unreadable_config_is_skipped(tmp_path: Path) -> None:
+    _, out = run_doctor(
+        tmp_path, transport=healthy_transport(), extra=triage_config(tmp_path, "messages: [\n")
+    )
+
+    assert line(out, "config").startswith("FAIL")
+    assert line(out, "triage") == "SKIP  triage: needs a readable config"
