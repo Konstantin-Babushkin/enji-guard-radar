@@ -7,9 +7,11 @@ a run would.
 
 import argparse
 import logging
+import shutil
 import stat
 import sys
 from collections.abc import Mapping
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, TextIO
 
@@ -26,13 +28,19 @@ from enji_guard_radar.doctor import (
     DoctorReport,
     GuardFacts,
     TelegramFact,
+    TriageFacts,
 )
 from enji_guard_radar.guard import GUARD_READ_TOOLS, GuardDataError, parse_projects_page
 from enji_guard_radar.guard_credentials import CredentialStore
 from enji_guard_radar.ledger import Loaded, StateLoad
 from enji_guard_radar.ports import Clock, GuardAuthError, GuardCallError, GuardConnector
 from enji_guard_radar.secret_guard import configure_logging, redact
-from enji_guard_radar.settings import SettingsError, known_secrets, load_settings
+from enji_guard_radar.settings import (
+    SettingsError,
+    known_secrets,
+    load_claude_token,
+    load_settings,
+)
 from enji_guard_radar.state_store import FileStateStore
 from enji_guard_radar.telegram import (
     HttpTransport,
@@ -40,6 +48,7 @@ from enji_guard_radar.telegram import (
     call_method,
     chat_payload_id,
 )
+from enji_guard_radar.triage_cost_store import FileTriageCostStore
 
 logger = logging.getLogger(__name__)
 
@@ -127,6 +136,30 @@ def _guard_facts(connector: GuardConnector, state_dir: Path) -> GuardFacts:
             return GuardFacts(tool_names=names, project_count=len(page.items))
     except GuardCallError as error:
         return GuardFacts(failure=error)
+
+
+def _triage_facts(
+    config: RadarConfig,
+    *,
+    token: SecretStr | None,
+    state_dir: Path,
+    now: datetime,
+) -> TriageFacts:
+    """Facts only: no Claude call; the cost file is read, never written."""
+    today_calls = today_failures = 0
+    if config.triage.enabled:
+        today = now.astimezone(UTC).date()
+        for day in FileTriageCostStore(state_dir).load():
+            if day.day == today:
+                today_calls, today_failures = day.calls, day.failures
+    return TriageFacts(
+        enabled=config.triage.enabled,
+        backend=config.triage.backend,
+        binary_found=shutil.which(doctor.CLAUDE_BINARY) is not None,
+        token_set=token is not None,
+        today_calls=today_calls,
+        today_failures=today_failures,
+    )
 
 
 def _telegram_checks(
@@ -240,6 +273,16 @@ def run_doctor(
     results.append(doctor.verdict_unevaluated_projects(state_load, config))
     results.append(doctor.verdict_digest(config, state_load))
     results.append(doctor.verdict_score_rules(config))
+    claude_token = load_claude_token(environ, env_file)
+    if claude_token is not None:
+        secrets.append(claude_token.get_secret_value())
+    if config is None:
+        results.append(doctor.skip(doctor.NAME_TRIAGE, doctor.SKIP_NEEDS_CONFIG))
+    else:
+        triage_facts = _triage_facts(
+            config, token=claude_token, state_dir=args.state_dir, now=clock()
+        )
+        results.append(doctor.verdict_triage(triage_facts))
     if isinstance(state_load, Loaded):
         logger.info("doctor read state: %d project(s)", len(state_load.state.projects))
 
