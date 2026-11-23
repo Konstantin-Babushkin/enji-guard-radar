@@ -95,7 +95,7 @@ def test_fixture_run_records_scores_and_tooling(tmp_path: Path) -> None:
 AI_READINESS = "audit.ai-readiness"
 TESTS = "audit.tests"
 DEAD_CODE = "audit.dead-code"
-SCOPED_TO_SECURITY = "high:\n  audit_types:\n    - audit.security\n"
+SCOPED_TO_SECURITY = "high:\n  high_priority_audit_types:\n    - audit.security\n"
 THRESHOLD_50 = "scores:\n  ai_readiness_below: 50\n"
 
 
@@ -270,13 +270,15 @@ def test_default_config_unchanged_run_costs_no_report_read(tmp_path: Path) -> No
     assert sim.report_reads() == []
 
 
-def test_score_outside_high_scope_is_read_until_recorded(tmp_path: Path) -> None:
+def test_score_type_outside_the_high_list_is_read_once_and_tracked(tmp_path: Path) -> None:
     sim = Sim(tmp_path, CALM_CONFIG + SCOPED_TO_SECURITY)
     sim.poll(0)
     task_id = add_scored_run(sim, TESTS, 79, day=1)
     sim.poll(1)
     assert sim.report_reads() == [task_id]
-    assert [h for h in sim.state().histories if h.action_key == TESTS] == []
+    # Low priority types are tracked too (digest only), so the run lands in histories.
+    assert [h.action_key for h in sim.state().histories if h.action_key == TESTS] == [TESTS]
+    assert score_of(sim, TESTS) is not None
     sim.poll(2)
     assert sim.report_reads() == []
 
@@ -486,27 +488,22 @@ def _history(action_key: str, task_id: str) -> SeriesHistory:
 
 
 @pytest.mark.parametrize(
-    ("audit_types", "scores", "history", "action_key", "task_id", "skipped"),
+    ("scores", "history", "action_key", "task_id", "skipped"),
     [
-        # Without scores the rule is the High one only.
-        (("audit.security",), None, {}, TESTS, "t-1", True),
-        (None, None, {}, TESTS, "t-1", False),
-        # A score audit type is read until its task_id is recorded, High scope or not.
-        (("audit.security",), {}, {}, TESTS, "t-1", False),
-        (("audit.security",), {TESTS: _score(TESTS, "t-0")}, {}, TESTS, "t-1", False),
-        (("audit.security",), {TESTS: _score(TESTS, "t-1")}, {}, TESTS, "t-1", True),
+        # Every type but the overview is tracked: unread runs are read, the High list is irrelevant.
+        (None, {}, TESTS, "t-1", False),
+        ({}, {}, TESTS, "t-1", False),
+        ({TESTS: _score(TESTS, "t-0")}, {}, TESTS, "t-1", False),
         # Recorded as a score but still needed by the High rules: the High rule decides.
-        (None, {TESTS: _score(TESTS, "t-1")}, {}, TESTS, "t-1", False),
-        (None, {TESTS: _score(TESTS, "t-1")}, {TESTS: _history(TESTS, "t-1")}, TESTS, "t-1", True),
+        ({TESTS: _score(TESTS, "t-1")}, {}, TESTS, "t-1", False),
+        ({TESTS: _score(TESTS, "t-1")}, {TESTS: _history(TESTS, "t-1")}, TESTS, "t-1", True),
         # Not a score audit type: unchanged.
-        (None, {}, {}, SECURITY, "t-1", False),
-        (None, {}, {SECURITY: _history(SECURITY, "t-1")}, SECURITY, "t-1", True),
-        (("audit.tests",), {}, {}, SECURITY, "t-1", True),
-        (None, {}, {}, "audit.recon", "t-1", True),
+        ({}, {}, SECURITY, "t-1", False),
+        ({}, {SECURITY: _history(SECURITY, "t-1")}, SECURITY, "t-1", True),
+        ({}, {}, "audit.recon", "t-1", True),
     ],
 )
 def test_skip_report_for_with_scores_table(
-    audit_types: tuple[str, ...] | None,
     scores: dict[str, ScoreRecord] | None,
     history: dict[str, SeriesHistory],
     action_key: str,
@@ -515,5 +512,5 @@ def test_skip_report_for_with_scores_table(
 ) -> None:
     stored_scores = None if scores is None else {(PID, RID, k): v for k, v in scores.items()}
     stored_history = {(PID, RID, k): v for k, v in history.items()}
-    skip = skip_report_for(PID, stored_history, audit_types, stored_scores)
+    skip = skip_report_for(PID, stored_history, stored_scores)
     assert skip(RID, action_key, task_id) is skipped

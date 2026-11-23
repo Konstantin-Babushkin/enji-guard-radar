@@ -540,24 +540,28 @@ def test_paused_frozen_keeps_histories_and_conditions(tmp_path: Path) -> None:
     assert frozen_view(sim.state()) == before
 
 
-def test_scope_drops_history_and_resolves_the_condition_silently(tmp_path: Path) -> None:
+def test_type_outside_the_high_list_keeps_its_history_and_resolves_the_condition_silently(
+    tmp_path: Path,
+) -> None:
     sim = Sim(tmp_path)
     sim.poll(0)
     sim.add_run(high=3, day=1)
     sim.poll(1)
     assert sim.high_condition() is not None
-    sim.config_text = CALM_CONFIG + "high:\n  audit_types:\n    - audit.tests\n"
+    sim.config_text = CALM_CONFIG + "high:\n  high_priority_audit_types:\n    - audit.tests\n"
     report = sim.poll(2)
     assert texts(report) == []
-    assert [key.level for key in report.resolved] == ["high"]
-    assert sim.state().histories == ()
+    # Security is now low priority: the series stays tracked, so it is not "resolved".
+    assert report.resolved == ()
+    assert [h.key() for h in sim.state().histories] == [(PID, RID, SECURITY)]
     assert sim.high_condition() is None
 
-    fresh = Sim(tmp_path / "fresh", CALM_CONFIG + "high:\n  audit_types:\n    - audit.tests\n")
+    cfg = CALM_CONFIG + "high:\n  high_priority_audit_types:\n    - audit.tests\n"
+    fresh = Sim(tmp_path / "fresh", cfg)
     fresh.poll(0)
     fresh.add_run(high=3, day=1)
     assert texts(fresh.poll(1)) == []
-    assert fresh.state().histories == ()
+    assert [h.key() for h in fresh.state().histories] == [(PID, RID, SECURITY)]
 
 
 def test_removed_repo_drops_its_series_and_resolves(tmp_path: Path) -> None:
@@ -661,27 +665,26 @@ SKIP_HISTORIES: dict[SeriesKey, SeriesHistory] = {
 
 
 @pytest.mark.parametrize(
-    ("audit_types", "repo_id", "action_key", "task_id", "expected"),
+    ("repo_id", "action_key", "task_id", "expected"),
     [
-        (None, RID, "audit.recon", "t-new", True),
-        (None, RID, "audit.recon", "t-known", True),
-        (("audit.tests",), RID, SECURITY, "t-new", True),
-        (None, RID, SECURITY, "t-known", True),
-        (("audit.security",), RID, SECURITY, "t-known", True),
-        (None, RID, SECURITY, "t-new", False),
-        (None, RID, SECURITY, "t-other-repo", False),
-        (None, RID, SECURITY, "t-other-project", False),
-        (None, RID, "audit.tests", "t-known", False),
+        (RID, "audit.recon", "t-new", True),
+        (RID, "audit.recon", "t-known", True),
+        (RID, SECURITY, "t-known", True),
+        (RID, SECURITY, "t-new", False),
+        (RID, SECURITY, "t-other-repo", False),
+        (RID, SECURITY, "t-other-project", False),
+        # Every audit type is tracked, so a type's new run is read whatever the high list says.
+        (RID, "audit.tests", "t-known", False),
+        (RID, "audit.tests", "t-new", False),
     ],
 )
 def test_skip_report_for_table(
-    audit_types: tuple[str, ...] | None,
     repo_id: str,
     action_key: str,
     task_id: str,
     expected: bool,
 ) -> None:
-    skip = skip_report_for(PID, SKIP_HISTORIES, audit_types)
+    skip = skip_report_for(PID, SKIP_HISTORIES)
     assert skip(repo_id, action_key, task_id) is expected
 
 

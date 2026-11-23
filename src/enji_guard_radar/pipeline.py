@@ -41,7 +41,13 @@ from enji_guard_radar.health import (
     mark_ops_delivered,
     ops_message,
 )
-from enji_guard_radar.high_rules import HIGH_LEVEL, evaluate_high, in_scope, skip_report_for
+from enji_guard_radar.high_rules import (
+    HIGH_LEVEL,
+    LowSeries,
+    evaluate_high,
+    is_high_priority,
+    skip_report_for,
+)
 from enji_guard_radar.ledger import (
     Corrupt,
     DigestRecord,
@@ -315,6 +321,7 @@ def _run_locked(deps: Deps, now: datetime) -> RunReport:
         }
     )
     rec = reconcile(state, polled.evaluations, now)
+    rec = _without_reclassified(rec, deps.config.high.high_priority_audit_types)
     # Everything that closed between polls is remembered for the digest, on disk before any send.
     rec = rec.model_copy(update={"state": append_resolved(rec.state, rec.resolved, now)})
     logger.info(
@@ -426,6 +433,24 @@ def _run_locked(deps: Deps, now: datetime) -> RunReport:
         digest=digest.status,
         digest_messages=digest.messages,
     )
+
+
+def _without_reclassified(
+    rec: Reconciliation, high_types: Collection[str] | None
+) -> Reconciliation:
+    """Drop resolved High keys whose type is now low priority: the series is open, not closed."""
+    kept = tuple(
+        key
+        for key in rec.resolved
+        if key.level != HIGH_LEVEL or is_high_priority(key.action_key, high_types)
+    )
+    skipped = len(rec.resolved) - len(kept)
+    if not skipped:
+        return rec
+    logger.info(
+        "%d High condition(s) reclassified to low priority, not listed as resolved", skipped
+    )
+    return rec.model_copy(update={"resolved": kept})
 
 
 def _due_reminders(
@@ -725,18 +750,20 @@ class PollData:
     # Raw finding titles of the reports read in this run (D-06): memory only, never in State,
     # never serialised, never logged.
     titles: Mapping[SeriesKey, tuple[tuple[Severity, str], ...]]
+    # Open High series of low-priority audit types: for the digest only (never an alert).
+    low_series: tuple[LowSeries, ...] = ()
 
 
 def _collect_titles(
     project_id: str, data: ProjectOk, audit_types: Collection[str] | None
 ) -> dict[SeriesKey, tuple[tuple[Severity, str], ...]]:
-    """High finding titles per series, from the reports read in this run for tracked audit types."""
+    """High finding titles per series, from the reports read in this run for high-priority types."""
     found: dict[SeriesKey, tuple[tuple[Severity, str], ...]] = {}
     for repo in data.repositories:
         for report in repo.reports:
             if not isinstance(report, AuditReport) or report.layout != "scored":
                 continue
-            if not in_scope(report.action_key, audit_types):
+            if not is_high_priority(report.action_key, audit_types):
                 continue
             pairs = tuple(
                 (finding.severity, finding.title)
@@ -840,6 +867,7 @@ def _evaluate_projects(
     tooling = {r.key(): r for r in state.tooling}
     low_scores: list[LowScore] = []
     tooling_gaps: list[ToolingGap] = []
+    low_series: list[LowSeries] = []
     unknown: list[ProjectUnknown] = []
     titles: dict[SeriesKey, tuple[tuple[Severity, str], ...]] = {}
     for project in sorted(listing.projects, key=lambda p: (p.name.casefold(), p.id)):
@@ -862,9 +890,7 @@ def _evaluate_projects(
                 ProjectEvaluation(project_id=project.id, outcome=EvaluationOutcome.skipped)
             )
             continue
-        skip = skip_report_for(
-            project.id, histories, deps.config.high.high_priority_audit_types, scores
-        )
+        skip = skip_report_for(project.id, histories, scores)
         data = fetch_project(deps.guard, project, skip_report=skip)
         threshold = deps.config.thresholds_for(project.id).stale_after_days
         stale = evaluate_stale(data, threshold, now)
@@ -887,7 +913,7 @@ def _evaluate_projects(
                 data,
                 histories,
                 clear_after=deps.config.high.clear_after_clean_runs,
-                audit_types=high_types,
+                high_types=high_types,
                 aged_after_days=deps.config.thresholds_for(project.id).high_aged_after_days,
                 now=now,
             )
@@ -901,6 +927,13 @@ def _evaluate_projects(
                     high.observed,
                     high.unknown_reports,
                     len(high.alerts),
+                )
+            low_series.extend(high.low)
+            if high.low:
+                logger.info(
+                    "low-priority series of %s: %d open, tracked for the digest",
+                    project.id,
+                    len(high.low),
                 )
             titles.update(_collect_titles(project.id, data, high_types))
             _fold_scores_and_tooling(
@@ -932,6 +965,7 @@ def _evaluate_projects(
         low_scores=tuple(low_scores),
         tooling_gaps=tuple(tooling_gaps),
         titles=titles,
+        low_series=tuple(low_series),
     )
 
 

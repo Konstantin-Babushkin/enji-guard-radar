@@ -47,20 +47,37 @@ class HighSeries(BaseModel):
     repo_count: StrictInt = Field(ge=0)
 
 
-def in_scope(action_key: str, audit_types: Collection[str] | None) -> bool:
-    """RULE-03 scope: the overview audit never has High findings; None tracks every other type."""
-    if action_key in OVERVIEW_ACTION_KEYS:
-        return False
-    return audit_types is None or action_key in audit_types
+class LowSeries(BaseModel):
+    """One open High series of a low-priority audit type: digest only, never an alert."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    project_id: str
+    project_name: str
+    repo_id: str
+    repo_name: str
+    action_key: str
+    high_now: StrictInt = Field(ge=0)
+    # completed_at of the first High run the radar observed for the series.
+    opened_at: AwareDatetime
+
+
+def is_tracked(action_key: str) -> bool:
+    """RULE-03 scope: every audit type except the overview audit, which never has High."""
+    return action_key not in OVERVIEW_ACTION_KEYS
+
+
+def is_high_priority(action_key: str, high_types: Collection[str] | None) -> bool:
+    """A tracked type alerts when no list is set (None) or the list names it."""
+    return is_tracked(action_key) and (high_types is None or action_key in high_types)
 
 
 def skip_report_for(
     project_id: str,
     histories: Mapping[SeriesKey, SeriesHistory],
-    audit_types: Collection[str] | None,
     scores: Mapping[SeriesKey, ScoreRecord] | None = None,
 ) -> SkipReport:
-    """Reports that need no read: untracked audit types and runs already counted.
+    """Reports that need no read: the overview audit and runs already counted.
 
     RULE-09 counts by task_id, so only a task_id already in the stored history is skipped; a run
     whose report failed or was never read is not in history and is requested again. With `scores`
@@ -76,7 +93,7 @@ def skip_report_for(
             and not score_known(scores.get(key), task_id)
         ):
             return False
-        if not in_scope(action_key, audit_types):
+        if not is_tracked(action_key):
             return True
         return has_task(histories.get(key), task_id)
 
@@ -127,6 +144,8 @@ class HighEvaluation(BaseModel):
 
     histories: tuple[SeriesHistory, ...]
     alerts: tuple[Alert, ...]
+    # Open series of low-priority types: listed in the weekly digest, never alerted.
+    low: tuple[LowSeries, ...] = ()
     observed: StrictInt = Field(ge=0)
     unknown_reports: StrictInt = Field(ge=0)
     dropped: tuple[SeriesKey, ...]
@@ -137,12 +156,14 @@ def evaluate_high(
     histories: Mapping[SeriesKey, SeriesHistory],
     *,
     clear_after: int,
-    audit_types: Collection[str] | None,
+    high_types: Collection[str] | None,
     aged_after_days: int,
     now: datetime,
 ) -> HighEvaluation:
     """Fold the project's newest completed runs into its stored histories; alert every open one.
 
+    Every tracked audit type gets a history; only high-priority types (`high_types`) become alerts,
+    the open series of the others are returned in `low` for the digest.
     Unknown reports and runs missing from this poll change nothing (RULE-09). Every open series
     is emitted on every evaluated poll, with its stored counts, so reconcile neither resolves nor
     re-alerts it; whether to send is reconcile's decision, never made here.
@@ -151,18 +172,16 @@ def evaluate_high(
     mine = {key: history for key, history in histories.items() if key[0] == pid}
     repo_names = {repo.repository.id: repo.repository.name for repo in project.repositories}
 
-    dropped = sorted(
-        key for key in mine if key[1] not in repo_names or not in_scope(key[2], audit_types)
-    )
+    dropped = sorted(key for key in mine if key[1] not in repo_names or not is_tracked(key[2]))
     for key in dropped:
-        logger.info("high series dropped (repository removed or out of scope): %s", "|".join(key))
+        logger.info("high series dropped (repository removed or not tracked): %s", "|".join(key))
         del mine[key]
 
     observed = unknown_reports = 0
     for repo in project.repositories:
         reports = {report.task_id: report for report in repo.reports}
         for run in newest_counting_runs_by_action_key(repo.runs):
-            if not in_scope(run.action_key, audit_types):
+            if not is_tracked(run.action_key):
                 continue
             key = (pid, repo.repository.id, run.action_key)
             if has_task(mine.get(key), run.task_id):
@@ -187,10 +206,24 @@ def evaluate_high(
                 mine[key] = advanced
 
     alerts: list[Alert] = []
+    low: list[LowSeries] = []
     for key in sorted(mine):
         history = mine[key]
         high_now = latest_high(history)
         if not history.open or history.opened_at is None or high_now is None:
+            continue
+        if not is_high_priority(key[2], high_types):
+            low.append(
+                LowSeries(
+                    project_id=pid,
+                    project_name=project.project.name,
+                    repo_id=key[1],
+                    repo_name=repo_names[key[1]],
+                    action_key=key[2],
+                    high_now=high_now,
+                    opened_at=history.opened_at,
+                )
+            )
             continue
         series = HighSeries(
             project_id=pid,
@@ -207,6 +240,7 @@ def evaluate_high(
     return HighEvaluation(
         histories=tuple(mine[key] for key in sorted(mine)),
         alerts=tuple(alerts),
+        low=tuple(low),
         observed=observed,
         unknown_reports=unknown_reports,
         dropped=tuple(dropped),
