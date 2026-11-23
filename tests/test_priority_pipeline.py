@@ -77,8 +77,8 @@ def test_low_type_never_reaches_triage_candidates(tmp_path: Path) -> None:
     sim.add_titled_run(["Config drift"], day=1, action_key=TECH_HEALTH)
     report = sim.poll(1)
     assert len(report.messages) == 1
-    assert "tech-health" in report.messages[0].text
-    assert "security" not in report.messages[0].text
+    # T-0051 lines name the project, not the audit: check the keys the message carries.
+    assert [key.action_key for key in report.messages[0].keys] == [TECH_HEALTH]
     (request,) = triager.requests
     assert [item.audit_type for item in request.items] == [TECH_HEALTH]
     assert all(SQL not in item.titles for item in request.items)
@@ -133,8 +133,9 @@ def test_reclassified_low_to_high_alerts_once(tmp_path: Path) -> None:
     assert sim.poll(2).messages == ()
 
     sim.config_text = CALM_CONFIG
-    (alert,) = texts(sim.poll(3))
-    assert "security High" in alert
+    (message,) = sim.poll(3).messages
+    assert "High 2 in 1 audit" in message.text
+    assert [key.action_key for key in message.keys] == [SECURITY]
     assert sim.poll(4).messages == ()
     assert len(conditions_for(sim, SECURITY)) == 1
 
