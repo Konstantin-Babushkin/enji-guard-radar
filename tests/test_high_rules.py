@@ -5,7 +5,13 @@ from datetime import UTC, datetime, timedelta
 import pytest
 
 from enji_guard_radar.config import parse_config
-from enji_guard_radar.high_rules import HIGH_LEVEL, HighSeries, high_alert, in_scope
+from enji_guard_radar.high_rules import (
+    HIGH_LEVEL,
+    HighSeries,
+    high_alert,
+    is_high_priority,
+    is_tracked,
+)
 from enji_guard_radar.messages import render_alert, render_messages
 from enji_guard_radar.model import Alert, AlertKey, AlertKind, Severity
 
@@ -144,13 +150,22 @@ def test_naive_now_is_rejected() -> None:
 
 
 @pytest.mark.parametrize(
-    ("action_key", "audit_types", "expected"),
+    ("action_key", "tracked"),
+    [("audit.recon", False), ("audit.tests", True), ("audit.security", True)],
+)
+def test_is_tracked(action_key: str, tracked: bool) -> None:
+    assert is_tracked(action_key) is tracked
+
+
+@pytest.mark.parametrize(
+    ("action_key", "high_types", "expected"),
     [
         ("audit.recon", None, False),
         ("audit.tests", None, True),
         ("audit.security", None, True),
         ("audit.recon", ("audit.recon",), False),
         ("audit.security", ("audit.security",), True),
+        # Outside the list: still tracked, but not high priority.
         ("audit.tests", ("audit.security",), False),
         (
             "audit.public-api-access-safety",
@@ -159,8 +174,12 @@ def test_naive_now_is_rejected() -> None:
         ),
     ],
 )
-def test_in_scope(action_key: str, audit_types: tuple[str, ...] | None, expected: bool) -> None:
-    assert in_scope(action_key, audit_types) is expected
+def test_is_high_priority(
+    action_key: str, high_types: tuple[str, ...] | None, expected: bool
+) -> None:
+    assert is_high_priority(action_key, high_types) is expected
+    if high_types is not None and action_key != "audit.recon":
+        assert is_tracked(action_key) is True
 
 
 def test_dynamic_text_is_escaped_and_cleaned() -> None:

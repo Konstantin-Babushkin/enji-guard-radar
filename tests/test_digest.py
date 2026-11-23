@@ -3,6 +3,7 @@ from datetime import UTC, datetime, timedelta, timezone
 import pytest
 
 from enji_guard_radar.digest import DigestInput, build_digest, render_digest
+from enji_guard_radar.high_rules import LowSeries
 from enji_guard_radar.ledger import ResolvedItem
 from enji_guard_radar.messages import TELEGRAM_MAX_CHARS, telegram_length
 from enji_guard_radar.model import Alert, AlertKey, AlertKind, Audience, Severity
@@ -678,3 +679,160 @@ def test_invalid_max_chars_is_rejected() -> None:
     for bad in (999, 4097):
         with pytest.raises(ValueError, match="max_chars"):
             render_digest(digest, max_chars=bad)
+
+
+# --- low-priority block ----------------------------------------------------------------------
+
+OPENED = POLL - timedelta(days=8)
+
+
+def lowp(
+    name: str = "Omega",
+    *,
+    pid: str = "p5",
+    repo_id: str = "r5",
+    repo: str = "acme/api",
+    action: str = "audit.tests",
+    count: int = 2,
+    opened: datetime = OPENED,
+) -> LowSeries:
+    return LowSeries(
+        project_id=pid,
+        project_name=name,
+        repo_id=repo_id,
+        repo_name=repo,
+        action_key=action,
+        high_now=count,
+        opened_at=opened,
+    )
+
+
+def test_low_block_is_one_head_and_one_line_per_item() -> None:
+    lines = lines_of(low_priority=(lowp(),))
+    assert lines == [
+        "<b>Radar weekly · 1 open</b>",
+        POLL_LINE,
+        "Low priority · 1",
+        "🟡 <b>Omega</b> · tests High 2 · 8d",
+        FOOTER,
+    ]
+
+
+def test_low_block_empty_changes_nothing() -> None:
+    assert text_of(low_priority=()) == text_of()
+    assert text_of(low_priority=(lowp(count=0),)) == CLEAR
+    digest = build_digest(DigestInput(last_poll_at=POLL, max_items=10, high=(high(),)))
+    assert (digest.low_lines, digest.low_hidden, digest.low_total) == ((), 0, 0)
+
+
+def test_only_low_items_make_a_titled_digest_not_the_all_clear() -> None:
+    text = text_of(low_priority=(lowp(),))
+    assert text.startswith("<b>Radar weekly · 1 open</b>")
+    assert "nothing open" not in text
+
+
+def test_low_block_sits_after_the_high_items_and_before_the_rest() -> None:
+    lines = lines_of(
+        high=(high("Acme"),),
+        stale=(stale("Beta"),),
+        low_scores=(low("Gamma"),),
+        low_priority=(lowp("Omega"),),
+    )
+    assert lines[:2] == ["<b>Radar weekly · 4 open</b>", POLL_LINE]
+    assert lines[2:] == [
+        "🔴 <b>Acme</b> · security High 3 · 16d",
+        "Low priority · 1",
+        "🟡 <b>Omega</b> · tests High 2 · 8d",
+        "🟡 <b>Beta</b> · no scan 20d",
+        "🟡 <b>Gamma</b> · ai-readiness 40/100 · 8d",
+        FOOTER,
+    ]
+
+
+def test_low_block_is_capped_at_five_with_a_more_line() -> None:
+    series = tuple(lowp(f"P{n}", pid=f"p{n}", repo_id=f"r{n}", count=n + 1) for n in range(6))
+    lines = lines_of(low_priority=series)
+    assert lines[2] == "Low priority · 6"
+    assert [line.split("<b>")[1].split("</b>")[0] for line in lines[3:8]] == [
+        "P5",
+        "P4",
+        "P3",
+        "P2",
+        "P1",
+    ]
+    assert lines[8] == "+1 more low priority."
+    assert lines[-1] == FOOTER
+    assert lines[0] == "<b>Radar weekly · 6 open</b>"
+
+
+def test_low_block_order_is_count_age_name() -> None:
+    older = OPENED - timedelta(days=3)
+    series = (
+        lowp("Zed", pid="p1", repo_id="r1", count=2),
+        lowp("Abe", pid="p2", repo_id="r2", count=2),
+        lowp("Old", pid="p3", repo_id="r3", count=2, opened=older),
+        lowp("Big", pid="p4", repo_id="r4", count=9),
+    )
+    names = names_of(text_of(low_priority=series))
+    assert names == ["Big", "Old", "Abe", "Zed"]
+    assert names == names_of(text_of(low_priority=tuple(reversed(series))))
+
+
+def test_low_block_shows_the_repo_only_when_two_repos_share_project_and_audit() -> None:
+    two = (lowp("Omega", repo_id="r5"), lowp("Omega", repo_id="r6", repo="acme/web", count=1))
+    assert item_lines(text_of(low_priority=two)) == [
+        "🟡 <b>Omega</b> · tests (acme/api) High 2 · 8d",
+        "🟡 <b>Omega</b> · tests (acme/web) High 1 · 8d",
+    ]
+    assert item_lines(text_of(low_priority=two[:1])) == ["🟡 <b>Omega</b> · tests High 2 · 8d"]
+
+
+def test_low_items_do_not_use_the_max_items_cap() -> None:
+    digest = build_digest(
+        DigestInput(
+            last_poll_at=POLL,
+            max_items=3,
+            stale=(stale("B1", pid="a"), stale("B2", pid="b"), stale("B3", pid="c")),
+            low_priority=(lowp("L1", pid="x"), lowp("L2", pid="y", repo_id="r9")),
+        )
+    )
+    assert digest.hidden_items == 0
+    assert digest.total_items == 3
+    assert digest.low_total == 2
+    assert len(item_lines(text_of(max_items=3, stale=(stale(),), low_priority=(lowp(),)))) == 2
+
+
+def test_low_block_escapes_names() -> None:
+    nasty = '<b>x</b> & "q"'
+    text = text_of(low_priority=(lowp(nasty),))
+    assert "<b>x</b>" not in text
+    assert '&lt;b&gt;x&lt;/b&gt; &amp; "q"' in text
+
+
+def test_low_block_in_russian() -> None:
+    assert lines_of("ru", low_priority=(lowp(),)) == [
+        "<b>Радар · дайджест · открыто: 1</b>",
+        "Последний опрос: 2026-11-18 06:00 UTC",
+        "Низкий приоритет · 1",
+        "🟡 <b>Omega</b> · tests высокие 2 · 8 д",
+        "Возраст считается с первого появления в радаре.",
+    ]
+    series = tuple(lowp(f"P{n}", pid=f"p{n}", repo_id=f"r{n}") for n in range(7))
+    assert "Низкий приоритет: не показано ещё 2." in lines_of("ru", low_priority=series)
+
+
+def test_low_block_splits_between_lines_and_keeps_every_line() -> None:
+    series = tuple(lowp(f"P{n}", pid=f"p{n}", repo_id=f"r{n}") for n in range(5))
+    digest = build_digest(
+        DigestInput(
+            last_poll_at=POLL,
+            max_items=50,
+            stale=tuple(stale(f"S{n}" * 30, pid=f"s{n}") for n in range(60)),
+            low_priority=series,
+        )
+    )
+    messages = render_digest(digest, max_chars=1000)
+    assert len(messages) > 1
+    joined = "\n".join(message.text for message in messages)
+    assert all(f"<b>P{n}</b>" in joined for n in range(5))
+    assert all(telegram_length(message.text) <= 1000 for message in messages)

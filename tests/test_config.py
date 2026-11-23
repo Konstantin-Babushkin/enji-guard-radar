@@ -1,3 +1,4 @@
+import logging
 import os
 import re
 import subprocess
@@ -153,7 +154,7 @@ def test_read_config_missing_file_is_an_error(tmp_path: Path) -> None:
 def test_high_defaults() -> None:
     config = RadarConfig()
     assert config.high.clear_after_clean_runs == 2
-    assert config.high.audit_types is None
+    assert config.high.high_priority_audit_types is None
     assert config.thresholds_for("any").high_aged_after_days == 14
 
 
@@ -191,9 +192,9 @@ def test_high_aged_after_days_rejects(value: str) -> None:
     ["null", "[audit.security]", "[audit.security, audit.public-api-access-safety]"],
 )
 def test_high_audit_types_accepts(value: str) -> None:
-    config = parse(f"high: {{audit_types: {value}}}")
+    config = parse(f"high: {{high_priority_audit_types: {value}}}")
     expected = None if value == "null" else tuple(value.strip("[]").split(", "))
-    assert config.high.audit_types == expected
+    assert config.high.high_priority_audit_types == expected
 
 
 @pytest.mark.parametrize(
@@ -201,8 +202,30 @@ def test_high_audit_types_accepts(value: str) -> None:
     ["[]", "[security]", "[audit.Security]", "[audit.security, audit.security]", "audit.security"],
 )
 def test_high_audit_types_rejects(value: str) -> None:
-    with pytest.raises(ConfigError, match=r"c\.yaml: high\.audit_types"):
+    with pytest.raises(ConfigError, match=r"c\.yaml: high\.high_priority_audit_types"):
+        parse_config(f"high: {{high_priority_audit_types: {value}}}", source="c.yaml")
+    with pytest.raises(ConfigError, match=r"c\.yaml: high\.high_priority_audit_types"):
         parse_config(f"high: {{audit_types: {value}}}", source="c.yaml")
+
+
+def test_high_audit_types_legacy_key_is_an_alias_with_a_warning(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    caplog.set_level(logging.WARNING)
+    config = parse("high: {audit_types: [audit.security]}")
+    assert config.high.high_priority_audit_types == ("audit.security",)
+    assert "high.audit_types is deprecated; use high.high_priority_audit_types" in caplog.text
+    caplog.clear()
+    parse("high: {high_priority_audit_types: [audit.security]}")
+    assert "deprecated" not in caplog.text
+
+
+def test_high_audit_types_both_keys_is_an_error_naming_both() -> None:
+    text = "high: {audit_types: [audit.security], high_priority_audit_types: [audit.tests]}"
+    with pytest.raises(ConfigError) as error:
+        parse_config(text, source="c.yaml")
+    assert "high.audit_types" in str(error.value)
+    assert "high.high_priority_audit_types" in str(error.value)
 
 
 def test_high_unknown_key_names_file_and_key() -> None:
@@ -416,8 +439,9 @@ def test_tooling_gaps_and_high_share_the_audit_type_messages() -> None:
 
 
 def test_phase3_high_audit_types_still_accepts_null_and_a_list() -> None:
-    assert parse("high: {audit_types: null}").high.audit_types is None
-    assert parse("high: {audit_types: [audit.security]}").high.audit_types == ("audit.security",)
+    assert parse("high: {audit_types: null}").high.high_priority_audit_types is None
+    legacy = parse("high: {audit_types: [audit.security]}")
+    assert legacy.high.high_priority_audit_types == ("audit.security",)
 
 
 @pytest.mark.parametrize(
