@@ -514,6 +514,26 @@ def _digest_status_without_poll(deps: Deps, state: State, now: datetime) -> Dige
     return DigestStatus.NOT_DUE
 
 
+def _clean_project_ids(polled: "PollData") -> tuple[str, ...]:
+    """The digest's green list: evaluated projects with no High, stale or never-ran alert.
+
+    Any High alert counts, even with count 0. Only high-priority audit types make one, so a
+    low-priority series does not block it; paused and unread projects are not EVALUATED and
+    excluded ones never reach `results`.
+    """
+    flagged = {
+        alert.key.project_id
+        for evaluation in polled.evaluations
+        for alert in evaluation.alerts
+        if alert.kind in (AlertKind.HIGH_FINDINGS, AlertKind.STALE, AlertKind.NEVER_RAN)
+    }
+    return tuple(
+        r.project_id
+        for r in polled.results
+        if r.status is ProjectStatus.EVALUATED and r.project_id not in flagged
+    )
+
+
 def _digest_input(deps: Deps, polled: "PollData", state: State, now: datetime) -> DigestInput:
     alerts = [alert for evaluation in polled.evaluations for alert in evaluation.alerts]
     high = tuple(alert for alert in alerts if alert.kind is AlertKind.HIGH_FINDINGS and alert.count)
@@ -537,6 +557,7 @@ def _digest_input(deps: Deps, polled: "PollData", state: State, now: datetime) -
         resolved=state.resolved,
         project_names={r.project_id: r.project_name for r in polled.results},
         unread_projects=sum(1 for r in polled.results if r.status is ProjectStatus.UNKNOWN),
+        clean_projects=_clean_project_ids(polled),
     )
 
 

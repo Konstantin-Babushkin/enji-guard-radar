@@ -11,6 +11,8 @@ Last poll: 2026-11-18 06:00 UTC
 🟡 <b>Project B</b> · acme/service-b · no runs 60d: dead-code, dependency-hygiene, implementation-unification
 🟡 <b>Project E (paused in config)</b> · acme/legacy-e · no runs 60d: dead-code, dependency-hygiene, implementation-unification, security
 🟡 <b>Project F (excluded in config)</b> · acme/tools-f · no runs 60d: dependency-hygiene, implementation-unification, security
+Clean · 1
+🟢 <b>Project F (excluded in config)</b> · no high issues
 Ages count from the radar's first sight.
 
 --- baseline, not sent (4) ---
