@@ -205,3 +205,23 @@ def test_a_live_run_switched_to_russian_sends_nothing_new(tmp_path: Path, ru_con
     assert transport.requests == []
     after = deserialize_state(state_file.read_bytes())
     assert after.conditions == before.conditions  # nothing was alerted, marked or re-armed
+
+
+# --- the green block of clean projects ---
+
+
+def test_green_block_in_russian_dry_run(tmp_path: Path, ru_config: Path) -> None:
+    done = run_cli(tmp_path, FIRST_NOW, "--config", str(ru_config))
+    assert done.returncode == 0
+    lines = done.stdout.splitlines()
+    assert "Чисто · 1" in lines
+    assert lines[lines.index("Чисто · 1") + 1] == (
+        "🟢 <b>Project F (excluded in config)</b> · нет высоких проблем"
+    )
+
+
+def test_green_block_absent_when_no_project_is_clean(tmp_path: Path) -> None:
+    done = run_cli(tmp_path, FIRST_NOW, "--config", str(FIXTURES / "radar.yaml"))
+    assert done.returncode == 0
+    assert "🟢" not in done.stdout
+    assert "Clean ·" not in done.stdout

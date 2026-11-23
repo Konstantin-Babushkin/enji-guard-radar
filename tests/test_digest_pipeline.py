@@ -61,14 +61,18 @@ def restore_root_logging() -> Iterator[None]:
 
 
 def run_at(
-    tmp_path: Path, now: str, transport: HttpTransport, *, dry_run: bool = False
+    tmp_path: Path,
+    now: str,
+    transport: HttpTransport,
+    *,
+    dry_run: bool = False,
+    use_config: bool = True,
 ) -> tuple[int, str]:
     args = [
         "run",
         "--fixtures",
         str(FIXTURES),
-        "--config",
-        str(FIXTURES / "radar.yaml"),
+        *(["--config", str(FIXTURES / "radar.yaml")] if use_config else []),
         "--state-dir",
         str(tmp_path / "state"),
         "--env-file",
@@ -470,14 +474,18 @@ def test_cap_shows_max_items_and_an_exact_remainder(tmp_path: Path) -> None:
     assert "+3 more open items not shown." in text
 
 
-def test_all_clear_is_one_line_with_the_poll_time(tmp_path: Path) -> None:
+def test_all_clear_is_one_line_with_the_poll_time_then_the_green_block(tmp_path: Path) -> None:
     sim = digest_sim(tmp_path)
     notifier = Scripted()
     report = sim.poll(WED, notifier=notifier)
     assert report.digest is DigestStatus.SENT
     (message,) = digests_sent(notifier)
     assert message.audience is Audience.GROUP
-    assert message.text == ("<b>Radar weekly</b> · nothing open · last poll 2026-11-04 12:00 UTC")
+    assert message.text.split("\n") == [
+        "<b>Radar weekly</b> · nothing open · last poll 2026-11-04 12:00 UTC",
+        "Clean · 1",
+        "🟢 <b>Proj</b> · no high issues",
+    ]
 
 
 def test_secret_gate_withholds_the_digest_and_nothing_is_marked(
@@ -581,10 +589,146 @@ def test_low_priority_series_is_in_the_digest_block_and_never_an_alert(tmp_path:
     wednesday = sim.poll(WED, notifier=notifier)
     assert wednesday.messages == ()
     text = only_digest(wednesday)
-    assert text.split("\n")[2:5] == [
+    # A low-priority series does not stop the project from being green.
+    assert text.split("\n")[2:7] == [
         "Low priority · 1",
         "🟡 <b>Proj</b> · security High 2 · 1d",
+        "Clean · 1",
+        "🟢 <b>Proj</b> · no high issues",
         "Ages count from the radar's first sight.",
     ]
     assert text.startswith("<b>Radar weekly · 1 open</b>")
     assert "🔴" not in text
+
+
+# --- the green block: clean projects in the digest ---
+
+GREEN_PROJ = "🟢 <b>Proj</b> · no high issues"
+
+
+def green_lines(text: str) -> list[str]:
+    return [line for line in text.splitlines() if line.startswith("🟢")]
+
+
+def test_green_clean_project_is_listed(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
+    sim = digest_sim(tmp_path)
+    sim.poll(0)
+    with caplog.at_level(logging.INFO):
+        text = only_digest(sim.poll(WED))
+    assert text.split("\n")[-2:] == ["Clean · 1", GREEN_PROJ]
+    assert green_lines(text) == [GREEN_PROJ]
+    assert "clean digest block: 1 project(s)" in caplog.text
+
+
+def test_green_not_for_a_project_with_a_high_priority_high_series(tmp_path: Path) -> None:
+    text = only_digest(with_open_series(tmp_path).poll(WED))
+    assert "security High 2" in text
+    assert green_lines(text) == []
+    assert "Clean" not in text
+
+
+def test_green_low_priority_only_project_is_still_green(tmp_path: Path) -> None:
+    sim = digest_sim(tmp_path, "high:\n  high_priority_audit_types:\n    - audit.tech-health\n")
+    sim.poll(0)
+    sim.add_run(high=2, day=1)
+    text = only_digest(sim.poll(WED))
+    assert "Low priority · 1" in text
+    assert green_lines(text) == [GREEN_PROJ]
+
+
+def test_green_not_for_a_stale_project(tmp_path: Path) -> None:
+    sim = digest_sim(tmp_path, base="defaults:\n  stale_after_days: 1\n")
+    sim.poll(0)
+    text = only_digest(sim.poll(WED))
+    assert "no scan 2d" in text
+    assert green_lines(text) == []
+
+
+def test_green_not_for_a_project_that_never_ran(tmp_path: Path) -> None:
+    sim = digest_sim(tmp_path)
+    sim.runs[RID] = []
+    text = only_digest(sim.poll(WED))
+    assert "no scan yet" in text
+    assert green_lines(text) == []
+
+
+def test_green_not_for_a_paused_project(tmp_path: Path) -> None:
+    sim = digest_sim(tmp_path)
+    sim.paused = True
+    text = only_digest(sim.poll(WED))
+    assert green_lines(text) == []
+    assert "Clean" not in text
+
+
+def test_green_not_for_an_unreadable_project_but_for_the_readable_one(tmp_path: Path) -> None:
+    other, other_repo = "p-2", "repo_r-3"
+    responses = world(
+        [(PID, PROJECT), (other, "Other")],
+        {PID: [(RID, REPO)], other: [(other_repo, "acme/third")]},
+        {
+            RID: [run_item("t-r1", "audit.recon", stamp(0))],
+            other_repo: [run_item("t-r2", "audit.recon", stamp(0))],
+        },
+        {},
+        {
+            call_key(TOOL_LIST_REPOSITORIES, **{ARG_PROJECT_ID: other}): GuardCallError("outage"),
+        },
+    )
+    now = BASE + timedelta(days=WED, hours=2)
+    report = run_once(
+        Deps(
+            guard=InMemoryGuardTools(responses),
+            notifier=Scripted(),
+            config=parse_config(CALM_CONFIG + QUIET_TOOLING, source="test"),
+            clock=lambda: now,
+            store=FileStateStore(tmp_path / "state"),
+        )
+    )
+    text = only_digest(report)
+    assert "1 project could not be read in that poll." in text
+    assert green_lines(text) == [GREEN_PROJ]
+
+
+def test_green_not_while_a_high_priority_series_is_open_with_zero_high(tmp_path: Path) -> None:
+    sim = digest_sim(tmp_path, "high:\n  clear_after_clean_runs: 2\n")
+    sim.poll(0)
+    sim.add_run(high=2, day=1)
+    sim.poll(1)
+    sim.add_run(high=0, day=2)  # one clean run of the two needed: the series is still open
+    text = only_digest(sim.poll(WED))
+    assert green_lines(text) == []
+    assert "Clean" not in text
+
+
+def test_green_returns_once_the_series_has_closed(tmp_path: Path) -> None:
+    sim = digest_sim(tmp_path, "high:\n  clear_after_clean_runs: 1\n")
+    sim.poll(0)
+    sim.add_run(high=2, day=1)
+    sim.poll(1)
+    sim.add_run(high=0, day=2)
+    text = only_digest(sim.poll(WED))
+    assert green_lines(text) == [GREEN_PROJ]
+
+
+def test_green_is_never_in_an_alert_message(tmp_path: Path) -> None:
+    sim = digest_sim(tmp_path)
+    notifier = Scripted()
+    sim.poll(0, notifier=notifier)
+    sim.add_run(high=2, day=1)
+    sim.poll(1, notifier=notifier)
+    alerts = [m.text for m in notifier.sent if DIGEST_MARK not in m.text]
+    assert alerts
+    assert not any("🟢" in text for text in alerts)
+
+
+def test_green_block_goes_out_through_cli_main_with_state_still_schema_3(tmp_path: Path) -> None:
+    transport = FakeTransport([ok_response(1)])
+    run_at(tmp_path, "2026-11-18T06:00:00Z", transport, use_config=False)
+    (text,) = digest_texts(transport)
+    lines = text.split("\n")
+    assert "Clean · 1" in lines
+    assert lines[lines.index("Clean · 1") + 1] == (
+        "🟢 <b>Project F (excluded in config)</b> · no high issues"
+    )
+    assert lines[0].endswith("8 open</b>")
+    assert load_state(tmp_path).schema_version == 3
