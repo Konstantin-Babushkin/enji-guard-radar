@@ -26,6 +26,7 @@ SHELL_MODULES = {
     "mcp_guard",
     "cli_doctor",
     "cli_probe",
+    "cli_serve",
     # Triage cost file and the Claude CLI adapter (plans 04-11 and 04-13).
     "triage_cost_store",
     "claude_cli_triager",
