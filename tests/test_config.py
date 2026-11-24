@@ -699,3 +699,32 @@ def test_triage_unknown_key_exits_2_from_the_cli(tmp_path: Path) -> None:
     assert len(error_lines) == 1
     assert "triage" in error_lines[0]
     assert not state_dir.exists()
+
+
+@pytest.mark.parametrize("minutes", [1, 60, 180, 720, 1440])
+def test_schedule_accepts_divisors_of_a_day(minutes: int) -> None:
+    assert parse(f"schedule: {{every_minutes: {minutes}}}").schedule.every_minutes == minutes
+
+
+def test_schedule_defaults_to_three_hours() -> None:
+    assert parse("").schedule.every_minutes == 180
+    assert parse("schedule: {}").schedule.every_minutes == 180
+
+
+@pytest.mark.parametrize(
+    "value", ["7", "0", "-60", "1441", "2880", '"180"', "180.5", "true", "null"]
+)
+def test_schedule_rejects_everything_but_a_divisor_of_a_day(value: str) -> None:
+    with pytest.raises(ConfigError, match=r"schedule\.every_minutes"):
+        parse(f"schedule: {{every_minutes: {value}}}")
+
+
+def test_schedule_rejects_an_unknown_key() -> None:
+    with pytest.raises(ConfigError, match=r"schedule\.cron"):
+        parse("schedule: {cron: '0 * * * *'}")
+
+
+def test_example_documents_schedule() -> None:
+    text = EXAMPLE.read_text(encoding="utf-8")
+    assert "every_minutes: 180" in text
+    assert parse_config(text, source="example").schedule.every_minutes == 180

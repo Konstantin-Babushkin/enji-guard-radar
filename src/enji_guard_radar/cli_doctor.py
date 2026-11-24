@@ -272,6 +272,7 @@ def run_doctor(
     results.append(doctor.verdict_state(state_load))
     results.append(doctor.verdict_unevaluated_projects(state_load, config))
     results.append(doctor.verdict_digest(config, state_load))
+    results.append(doctor.verdict_schedule(config, clock()))
     results.append(doctor.verdict_score_rules(config))
     results.append(doctor.verdict_high_priority(config))
     claude_token = load_claude_token(environ, env_file)

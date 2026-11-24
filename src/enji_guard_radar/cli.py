@@ -13,7 +13,7 @@ from typing import TextIO
 
 from pydantic import SecretStr
 
-from enji_guard_radar import cli_auth, cli_doctor, cli_probe
+from enji_guard_radar import cli_auth, cli_doctor, cli_probe, cli_serve
 from enji_guard_radar.config import ConfigError, RadarConfig, parse_config
 from enji_guard_radar.env_file import EnvFileError, read_env_file
 from enji_guard_radar.fixture_source import FixtureGuardTools
@@ -189,6 +189,7 @@ def _build_parser() -> argparse.ArgumentParser:
     cli_auth.add_parser(commands)
     cli_doctor.add_parser(commands)
     cli_probe.add_parser(commands)
+    cli_serve.add_parser(commands)
     return parser
 
 
@@ -277,6 +278,7 @@ def _run(
     transport: HttpTransport | None,
     sleep: Callable[[float], None] | None,
     guard_connector: GuardConnector | None,
+    clock: Clock | None = None,
 ) -> int:
     env_file: Path = args.env_file or Path(DEFAULT_ENV_FILE)
     try:
@@ -287,7 +289,7 @@ def _run(
     secrets = known_secrets(settings)
     configure_logging(level=logging.INFO, known_secrets=secrets, stream=sys.stderr)
 
-    clock: Clock = system_clock
+    clock = clock if clock is not None else system_clock
     if args.now is not None:
         try:
             clock = _fixed_clock(parse_guard_time(args.now))
@@ -379,6 +381,55 @@ def _run(
     return report.exit_code
 
 
+def _serve(
+    args: argparse.Namespace,
+    out: TextIO,
+    *,
+    environ: Mapping[str, str],
+    transport: HttpTransport | None,
+    sleep: Callable[[float], None] | None,
+    guard_connector: GuardConnector | None,
+    clock: Clock,
+    wait: Callable[[float], object] | None,
+) -> int:
+    """Poll on the slots of `schedule.every_minutes` until SIGTERM or SIGINT; exit 0."""
+    configure_logging(level=logging.INFO, known_secrets=(), stream=sys.stderr)
+    try:
+        config = read_config(args.config)
+    except ConfigError as error:
+        logger.error("serve rejected: %s", error)  # noqa: TRY400
+        print(f"error: {error}", file=sys.stderr)
+        return 2
+    # What `run` takes: a live poll, real Guard, no fixed clock. Config and env are read per run.
+    poll_args = argparse.Namespace(
+        fixtures=None,
+        dry_run=False,
+        now=None,
+        config=args.config,
+        state_dir=args.state_dir,
+        env_file=args.env_file,
+    )
+
+    def poll() -> int:
+        return _run(
+            poll_args,
+            out,
+            environ=environ,
+            transport=transport,
+            sleep=sleep,
+            guard_connector=guard_connector,
+            clock=clock,
+        )
+
+    return cli_serve.run_serve(
+        every_minutes=config.schedule.every_minutes,
+        state_dir=args.state_dir,
+        poll=poll,
+        clock=clock,
+        wait=wait,
+    )
+
+
 def _live_wiring(
     settings: TelegramSettings,
     state_dir: Path,
@@ -409,6 +460,8 @@ def main(
     oauth_transport: LoginTransport | None = None,
     prompt: Callable[[str], str] | None = None,
     guard_connector: GuardConnector | None = None,
+    serve_clock: Clock | None = None,
+    serve_wait: Callable[[float], object] | None = None,
 ) -> int:
     out = stdout if stdout is not None else sys.stdout
     args = _build_parser().parse_args(argv)
@@ -421,6 +474,18 @@ def main(
             transport=transport,
             sleep=sleep,
             guard_connector=guard_connector,
+        )
+
+    if args.command == "serve":
+        return _serve(
+            args,
+            out,
+            environ=environ if environ is not None else os.environ,
+            transport=transport,
+            sleep=sleep,
+            guard_connector=guard_connector,
+            clock=serve_clock if serve_clock is not None else system_clock,
+            wait=serve_wait,
         )
 
     if args.command == "auth":

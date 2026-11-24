@@ -1,17 +1,134 @@
 # Deploying the radar unattended
 
-Operator runbook for Phase 2: run the radar against real Guard on a timer. The code is
-verified offline; every step below that touches the host, Guard or Telegram is done by the
-operator (plan 02-11). Design background: `docs/design/v0.md`; what Guard returns:
-`docs/guard-data-notes.md`.
+Operator runbook: run the radar against real Guard on a schedule. The code is verified
+offline; every step below that touches the host, Guard or Telegram is done by the operator.
+Design background: `docs/design/v0.md`; what Guard returns: `docs/guard-data-notes.md`.
+
+There are two ways to run it:
+
+- **Docker Compose (primary).** One container runs `enji-guard-radar serve`, which polls on the
+  schedule in the radar config (`schedule.every_minutes`). The schedule lives in git with the
+  config; any host with Docker runs it the same way.
+- **systemd or cron (no Docker).** A timer or cron job starts `enji-guard-radar run` once per
+  slot. All sections after "Docker Compose" below describe this path.
+
+Do not run both on one state: the state lock keeps two polls from overlapping, but the radar
+would poll twice per slot.
+
+## Docker Compose
+
+Needs Docker Engine with Compose v2 and network access to build the image (uv installs the
+locked dependencies) and at run time (Guard, Telegram).
+
+1. Make Docker start at boot. A container with `restart: unless-stopped` comes back after a
+   reboot only if the Docker service itself starts:
+
+   ```
+   sudo systemctl enable --now docker
+   ```
+
+   A container stopped with `docker compose stop` or `down` stays stopped after a reboot.
+
+2. Get the code and the config. The config is part of your checkout and goes into git:
+
+   ```
+   git clone <repository-url> enji-guard-radar && cd enji-guard-radar
+   cp config/radar.example.yaml config/radar.yaml
+   ```
+
+   Edit `config/radar.yaml`. The schedule is `schedule.every_minutes` (default 180): polls run at
+   multiples of it counted from 00:00 UTC (180 gives 00:00, 03:00, 06:00, ...); the number must
+   divide 1440. Check `ops.failures_before_alert` and `messages.language` too. The file holds no
+   secrets.
+
+3. Create `.env` next to `compose.yaml` (it is git-ignored and mounted read-only into the
+   container as `/run/radar.env`):
+
+   ```
+   cp .env.example .env
+   ```
+
+   Fill `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID` (a private test chat first) and, if you use
+   it, `TELEGRAM_OPS_CHAT_ID`. The container runs as uid 10001, so the file must be readable by
+   it: `sudo chown root:10001 .env && sudo chmod 0640 .env`.
+   ASSUMPTION: uid 10001 and these permissions were not tried on a real host; the first
+   `doctor` below shows a settings failure if they are wrong.
+
+4. Build the image:
+
+   ```
+   docker compose build
+   ```
+
+5. Log in to Guard once. The login lands in the state volume (`/state/guard-auth.json`, mode
+   0600) and every refresh rotates it there:
+
+   ```
+   docker compose run --rm radar auth --state-dir /state
+   ```
+
+   Open the printed address in a browser, approve, then paste the redirect address into the
+   hidden prompt.
+
+6. Run `doctor` before the first start. Every line must be PASS (SKIP is fine for `timer` and,
+   while triage is off, for `triage`); the `schedule` line shows the interval and the next slot:
+
+   ```
+   docker compose run --rm radar doctor --config /config/radar.yaml --state-dir /state --env-file /run/radar.env
+   ```
+
+7. Start it and watch the log:
+
+   ```
+   docker compose up -d
+   docker compose logs -f radar
+   ```
+
+   Expect `serve: started ...`, then for each run `serve: run start slot=... reason=... next_slot=...`
+   and `serve: run finish exit=... duration=...s next_slot=...`. `exit` is 0 for a clean poll
+   and 1 for a poll that needs attention (for example Guard unavailable); the loop continues
+   either way. A run that takes longer than a slot logs a warning with the skipped slots; they
+   are not made up.
+
+### Day to day
+
+- **Update:** `git pull && docker compose up -d --build`.
+- **Change the schedule or any config:** edit `config/radar.yaml`, then
+  `docker compose restart radar`. Every run re-reads the config, except `schedule`, which is read
+  once when `serve` starts, so a schedule change needs the restart.
+- **Stop:** `docker compose stop radar`. It lets a running poll finish (up to two minutes);
+  state is written atomically, so even a forced stop leaves a valid state file.
+- **Run by hand while `serve` runs:** `docker compose run --rm radar run --config /config/radar.yaml --state-dir /state --env-file /run/radar.env`
+  is safe: the state lock makes the second of two overlapping polls exit as "locked". The
+  `/state` volume is shared. Add `--dry-run` to preview without sending.
+- **Catch-up:** when `serve` starts and no poll has finished since the latest slot (the
+  container or host was down), it polls once at once, then continues on the slot grid. "Last
+  poll" is the modification time of `state.json`, which every finished poll rewrites. A fresh
+  state volume polls once at start; that first poll only records the current findings and sends
+  no alerts. Copying a state directory without keeping its modification times can cause one
+  extra or one skipped catch-up poll.
+- **State:** the named volume `radar-state` holds `state.json`, its `.bak`, `radar.lock`,
+  `guard-auth.json` and the triage cost file. Look at it with
+  `docker compose run --rm --entrypoint ls radar -la /state`. To use a host directory instead,
+  follow the comment in `compose.yaml` (the directory must be writable by uid 10001). Back up
+  the state by copying the volume's files; never copy `guard-auth.json` elsewhere or commit it.
+- **Re-login:** when the ops chat says the Guard login expired, run the `auth` command from step
+  5 again, then `docker compose restart radar`.
+- **Triage:** the image has no `claude` CLI, so keep `triage.enabled: false` in Docker; with it
+  on, `doctor` reports `claude not found on PATH`.
+
+## Install (no Docker)
+
+The rest of this runbook is the systemd/cron path for hosts without Docker. It uses
+`enji-guard-radar run` started by a timer, so the schedule is the timer's, not
+`schedule.every_minutes` (that setting only drives `serve`; keep the timer interval and the
+digest window in step by hand).
 
 The files in `deploy/` assume a checkout at `/opt/enji-guard-radar`, a system user
 `enji-guard-radar`, config and secrets in `/etc/enji-guard-radar/` and state in
 `/var/lib/enji-guard-radar`. If your host differs, change those paths in the unit files, in
 `deploy/cron.example` and in the commands below, keeping them consistent: `--state-dir` must
 equal the unit's `StateDirectory`.
-
-## Install
 
 ```
 sudo useradd --system --home-dir /opt/enji-guard-radar --shell /usr/sbin/nologin enji-guard-radar

@@ -7,6 +7,7 @@ refresh. No network, no real token.
 import io
 import json
 import logging
+import re
 import stat
 from collections.abc import Callable, Iterator, Mapping
 from datetime import UTC, datetime, timedelta
@@ -46,6 +47,7 @@ from enji_guard_radar.doctor import (
     verdict_get_me,
     verdict_guard,
     verdict_high_priority,
+    verdict_schedule,
     verdict_score_rules,
     verdict_settings,
     verdict_state,
@@ -258,13 +260,18 @@ def test_doctor_passes_on_a_healthy_setup(
     assert line(out, "weekly digest").startswith("PASS"), out
     assert "Wednesday 05:00 UTC" in line(out, "weekly digest")
     assert "24" in line(out, "weekly digest")
+    assert re.fullmatch(
+        r"PASS  schedule: every 180 min from 00:00 UTC; next slot "
+        r"\d{4}-\d{2}-\d{2} (00|03|06|09|12|15|18|21):00 UTC",
+        line(out, "schedule"),
+    ), out
     assert line(out, "score rules").startswith("PASS"), out
     assert "off" in line(out, "score rules")
     assert line(out, "high priority types").startswith("PASS"), out
     assert "all audit types are high priority" in line(out, "high priority types")
     assert line(out, "timer").startswith("SKIP")
     assert line(out, "triage") == "SKIP  triage: off"
-    assert out.rstrip().endswith("doctor: 12 pass, 0 fail, 0 warn, 3 skip")
+    assert out.rstrip().endswith("doctor: 13 pass, 0 fail, 0 warn, 3 skip")
     urls = [url.rsplit("/", 1)[1] for url, _ in transport.requests]
     assert urls == ["getMe", "getChatMember", "getChat", "getChatMember"]
     payloads = [payload for _, payload in transport.requests]
@@ -1239,3 +1246,30 @@ def test_triage_unreadable_config_is_skipped(tmp_path: Path) -> None:
 
     assert line(out, "config").startswith("FAIL")
     assert line(out, "triage") == "SKIP  triage: needs a readable config"
+
+
+@pytest.mark.parametrize(
+    ("every", "expected"),
+    [
+        (180, "every 180 min from 00:00 UTC; next slot 2026-11-18 15:00 UTC"),
+        (60, "every 60 min from 00:00 UTC; next slot 2026-11-18 13:00 UTC"),
+        (1440, "every 1440 min from 00:00 UTC; next slot 2026-11-19 00:00 UTC"),
+        (1, "every 1 min from 00:00 UTC; next slot 2026-11-18 12:01 UTC"),
+    ],
+)
+def test_schedule_line_names_the_interval_and_the_next_slot(every: int, expected: str) -> None:
+    result = verdict_schedule(config_of(f"schedule: {{every_minutes: {every}}}"), NOW)
+    assert (result.status, result.detail) == (CheckStatus.PASS, expected)
+
+
+def test_schedule_line_moves_on_at_a_slot_and_skips_without_a_config() -> None:
+    on_a_slot = datetime(2026, 11, 18, 15, 0, tzinfo=UTC)
+    assert "next slot 2026-11-18 18:00 UTC" in verdict_schedule(RadarConfig(), on_a_slot).detail
+    assert verdict_schedule(None, NOW).status is CheckStatus.SKIP
+
+
+def test_schedule_line_is_skipped_for_an_unreadable_config(tmp_path: Path) -> None:
+    bad = tmp_path / "radar.yaml"
+    bad.write_text("schedule: {every_minutes: 7}\n", encoding="utf-8")
+    _, out = run_doctor(tmp_path, transport=healthy_transport(), extra=["--config", str(bad)])
+    assert line(out, "schedule").startswith("SKIP"), out
