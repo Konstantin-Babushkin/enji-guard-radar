@@ -42,6 +42,14 @@ high:
 ops:
   failures_before_alert: 3
 
+# When `enji-guard-radar serve` polls (the Docker Compose service runs it). Slots are multiples of
+# every_minutes counted from 00:00 UTC, so 180 means 00:00, 03:00, 06:00, ... UTC. The value must
+# divide 1440 (1, 2, 3, 4, 5, 6, 8, 9, 10, 12, 15, 18, 20, 24, 30, 36, 40, 45, 48, 60, 72, 80, 90,
+# 120, 144, 180, 240, 288, 360, 480, 720, 1440). A restart of `serve` applies a change; `run`
+# ignores this section.
+schedule:
+  every_minutes: 180
+
 # Language of every Telegram message the radar sends (group alerts, summary, reminders, digest,
 # ops chat): en | ru. Log lines, doctor output and CLI errors always stay English.
 messages:

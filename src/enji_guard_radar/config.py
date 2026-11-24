@@ -21,6 +21,7 @@ from pydantic import (
     model_validator,
 )
 
+from enji_guard_radar.schedule import MINUTES_PER_DAY
 from enji_guard_radar.texts import DEFAULT_LANGUAGE, Language
 
 logger = logging.getLogger(__name__)
@@ -54,6 +55,7 @@ RECURRING_AFTER_MIN = 2
 RECURRING_AFTER_MAX = 20
 TOOLING_WINDOW_MIN = 7
 TOOLING_WINDOW_MAX = 365
+SCHEDULE_MINUTES_MIN = 1
 TRIAGE_ITEMS_MIN = 1
 TRIAGE_ITEMS_MAX = 100
 TRIAGE_TIMEOUT_MIN = 5
@@ -195,6 +197,21 @@ class DigestSettings(BaseModel):
         return WEEKDAY_NAMES.index(self.weekday)
 
 
+class ScheduleSettings(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    # `serve` polls at multiples of this many minutes from 00:00 UTC; it must divide a day.
+    every_minutes: StrictInt = Field(default=180, ge=SCHEDULE_MINUTES_MIN, le=MINUTES_PER_DAY)
+
+    @field_validator("every_minutes")
+    @classmethod
+    def _divides_a_day(cls, value: int) -> int:
+        if MINUTES_PER_DAY % value:
+            message = f"must divide {MINUTES_PER_DAY} (a whole number of slots per day)"
+            raise ValueError(message)
+        return value
+
+
 class ReminderSettings(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
@@ -256,6 +273,7 @@ class RadarConfig(BaseModel):
     high: HighSettings = Field(default_factory=HighSettings)
     ops: OpsSettings = Field(default_factory=OpsSettings)
     messages: MessageSettings = Field(default_factory=MessageSettings)
+    schedule: ScheduleSettings = Field(default_factory=ScheduleSettings)
     digest: DigestSettings = Field(default_factory=DigestSettings)
     reminders: ReminderSettings = Field(default_factory=ReminderSettings)
     scores: ScoreSettings = Field(default_factory=ScoreSettings)
