@@ -18,6 +18,7 @@ from enji_guard_radar.guard import GUARD_READ_TOOLS
 from enji_guard_radar.guard_auth import AUTH_COMMAND, AUTH_FAILURE_TEXT, GuardCredentials
 from enji_guard_radar.ledger import Corrupt, Loaded, Missing, StateLoad
 from enji_guard_radar.ports import GuardAuthError, GuardCallError, GuardFailure
+from enji_guard_radar.schedule import next_slot
 
 ENV_BOT_TOKEN = "TELEGRAM_BOT_TOKEN"
 ENV_CHAT_ID = "TELEGRAM_CHAT_ID"
@@ -33,6 +34,7 @@ NAME_MESSAGE_LANGUAGE = "message language"
 NAME_STATE = "state"
 NAME_UNEVALUATED = "unevaluated projects"
 NAME_DIGEST = "weekly digest"
+NAME_SCHEDULE = "schedule"
 NAME_SCORES = "score rules"
 NAME_HIGH_PRIORITY = "high priority types"
 NAME_TRIAGE = "triage"
@@ -275,6 +277,18 @@ def verdict_digest(config: RadarConfig | None, load: StateLoad) -> CheckResult:
             "can be skipped without a run in its window: raise digest.grace_hours"
         )
     return _result(NAME_DIGEST, status, f"{detail}{_last_digest(load)}")
+
+
+def verdict_schedule(config: RadarConfig | None, now: datetime) -> CheckResult:
+    """The `serve` interval and the next slot. Offline: only the config and the clock."""
+    if config is None:
+        return _result(NAME_SCHEDULE, CheckStatus.SKIP, SKIP_NEEDS_CONFIG)
+    every = config.schedule.every_minutes
+    return _result(
+        NAME_SCHEDULE,
+        CheckStatus.PASS,
+        f"every {every} min from 00:00 UTC; next slot {_utc(next_slot(now, every))}",
+    )
 
 
 def verdict_triage(facts: TriageFacts) -> CheckResult:
