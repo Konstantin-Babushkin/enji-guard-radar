@@ -18,7 +18,7 @@ from enji_guard_radar.ledger import (
     serialize_state,
 )
 from enji_guard_radar.model import AlertKey
-from enji_guard_radar.state_store import DryRunStateStore, FileStateStore
+from enji_guard_radar.state_store import DryRunStateStore, FileStateStore, last_poll_time
 
 NOW = datetime(2026, 11, 16, 12, tzinfo=UTC)
 
@@ -221,3 +221,43 @@ def test_dry_run_store_reports_corrupt_state_like_the_real_store(directory: Path
     directory.mkdir()
     (directory / "state.json").write_bytes(b"{")
     assert isinstance(DryRunStateStore(FileStateStore(directory)).load(), Corrupt)
+
+
+def test_last_poll_time_is_none_without_a_state_file(tmp_path: Path) -> None:
+    assert last_poll_time(tmp_path) is None
+    assert last_poll_time(tmp_path / "missing") is None
+    assert not (tmp_path / "missing").exists()
+
+
+def test_last_poll_time_follows_the_state_file_mtime(tmp_path: Path) -> None:
+    store = FileStateStore(tmp_path)
+    store.save(State.empty())
+    seen = last_poll_time(tmp_path)
+    assert seen is not None
+    assert seen.tzinfo is UTC
+    assert abs((datetime.now(UTC) - seen).total_seconds()) < 60
+    os.utime(store.state_path, (NOW.timestamp(), NOW.timestamp()))
+    assert last_poll_time(tmp_path) == NOW
+
+
+def test_last_poll_time_only_stats_the_file(tmp_path: Path) -> None:
+    (tmp_path / "state.json").write_text("not json", encoding="utf-8")
+    os.utime(tmp_path / "state.json", (NOW.timestamp(), NOW.timestamp()))
+    before = sorted(p.name for p in tmp_path.iterdir())
+    assert last_poll_time(tmp_path) == NOW
+    assert sorted(p.name for p in tmp_path.iterdir()) == before
+    assert (tmp_path / "state.json").read_text(encoding="utf-8") == "not json"
+
+
+def test_last_poll_time_ignores_an_unreadable_directory(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    (tmp_path / "state.json").write_text("{}", encoding="utf-8")
+    tmp_path.chmod(0)
+    try:
+        if os.access(tmp_path / "state.json", os.R_OK):  # running as root: nothing to test
+            pytest.skip("directory permissions are not enforced")
+        assert last_poll_time(tmp_path) is None
+    finally:
+        tmp_path.chmod(0o700)
+    assert "cannot stat state.json (PermissionError)" in caplog.text

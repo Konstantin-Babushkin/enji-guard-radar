@@ -6,6 +6,7 @@ import logging
 import os
 import tempfile
 from collections.abc import Iterator
+from datetime import UTC, datetime
 from pathlib import Path
 
 from enji_guard_radar.ledger import (
@@ -53,6 +54,22 @@ def _fsync_directory(directory: Path) -> None:
         os.fsync(fd)
     finally:
         os.close(fd)
+
+
+def last_poll_time(directory: Path) -> datetime | None:
+    """When the last poll finished, as far as state records it: the mtime of state.json.
+
+    Every poll that completes (Guard up or down) rewrites state.json; dry-runs, locked runs and
+    halted runs do not. Only stats the file: never reads, parses, creates or writes anything.
+    """
+    try:
+        modified = (directory / STATE_FILE).stat().st_mtime
+    except FileNotFoundError:
+        return None
+    except OSError as exc:
+        logger.warning("cannot stat %s (%s)", STATE_FILE, type(exc).__name__)
+        return None
+    return datetime.fromtimestamp(modified, UTC)
 
 
 class FileStateStore:
