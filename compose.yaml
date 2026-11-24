@@ -1,0 +1,38 @@
+# The radar as one service that polls on the schedule in config/radar.yaml.
+#   docker compose build
+#   docker compose run --rm radar doctor --config /config/radar.yaml --state-dir /state --env-file /run/radar.env
+#   docker compose up -d
+# Full steps: docs/deploy.md ("Docker Compose").
+#
+# Nothing secret lives here or in the image. The Telegram settings come from ./.env, mounted
+# read-only; the container user is uid 10001, so that file must be readable by it
+# (chown root:10001 .env && chmod 0640 .env). The Guard login and the radar's state live in the
+# named volume below. To keep them in a host directory instead, replace the last volume entry with
+#   - ./state:/state
+# and make that directory writable by uid 10001. No ports are published.
+name: enji-guard-radar
+
+services:
+  radar:
+    build: .
+    image: enji-guard-radar:local
+    restart: unless-stopped
+    # A stop lets the running poll finish; state writes are atomic even if the grace period ends.
+    stop_grace_period: 2m
+    volumes:
+      - type: bind
+        source: ./config
+        target: /config
+        read_only: true
+      - type: bind
+        source: ./.env
+        target: /run/radar.env
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: volume
+        source: radar-state
+        target: /state
+
+volumes:
+  radar-state:
