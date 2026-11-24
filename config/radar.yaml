@@ -1,0 +1,44 @@
+# Live radar config (operator, 2026-11-24). Used by compose.yaml as /config/radar.yaml.
+# No secrets here: Telegram settings are in .env, the Guard login in the state volume.
+messages:
+  language: ru
+digest:
+  weekday: friday
+  hour_utc: 1
+high:
+  # High priority (operator, 2026-11-23): only these audit types alert; every other type is
+  # digest-only.
+  high_priority_audit_types:
+    - audit.security
+    - audit.dependency-vulnerabilities
+    - audit.dependency-aging
+    - audit.authentication-handling
+    - audit.tech-health
+    - audit.config-hygiene
+    - audit.dependency-hygiene
+    - audit.secrets-handling
+    - audit.public-api-access-safety
+# Active (operator, 2026-11-23): p0, Enji Fleet, ART Map, hr-edo, google-workspace-applications,
+# toil_prod, enjiorg (b922f066-36d1-496e-8a05-abe8e3c5ecff), Main Website, whimo.
+# Every other project is excluded below; a new Guard project is active until listed here.
+projects:
+  "1d2ee761-2365-423c-9702-b37d407eba22":  # Mad Marketing Websites
+    mode: excluded
+  "440ab643-c714-4da8-8001-fb425b1e55f9":  # Mad CTO
+    mode: excluded
+  "4ca9a97d-498c-4f48-9a1b-50dae04f7c26":  # Battlefield App
+    mode: excluded
+  "93289419-759a-4d16-9419-bd5276a77275":  # Enji
+    mode: excluded
+  "a81f52e0-3324-4d6e-b293-e4bb03046119":  # hidoctor
+    mode: excluded
+  "db3963ef-a6bf-430b-bd09-d46d4c7a1d50":  # Mad Projects
+    mode: excluded
+  "ec7bc838-c29c-4c68-b585-9a861e387019":  # Virtual museum
+    mode: excluded
+  "f303b5c3-d6ce-42e1-9fcc-5c8eabce9f67":  # miracare_monorepo
+    mode: excluded
+
+# Polls at 00:00, 03:00, 06:00, ... UTC (docs/deploy.md, Docker Compose).
+schedule:
+  every_minutes: 180
