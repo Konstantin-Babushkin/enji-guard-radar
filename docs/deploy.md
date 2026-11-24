@@ -82,10 +82,13 @@ locked dependencies) and at run time (Guard, Telegram).
    docker compose run --rm radar doctor --config /config/radar.yaml --state-dir /state --env-file /run/radar.env
    ```
 
-7. Start it and watch the log:
+7. Start it and watch the log. This step is required: `docker compose run --rm` (used for
+   `auth` and `doctor` above) starts a one-off container that is removed when it exits, so no
+   service exists and `restart: unless-stopped` has nothing to restart until `up -d` creates it:
 
    ```
    docker compose up -d
+   docker compose ps          # radar: Up
    docker compose logs -f radar
    ```
 
