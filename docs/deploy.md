@@ -50,9 +50,14 @@ locked dependencies) and at run time (Guard, Telegram).
 
    Fill `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID` (a private test chat first) and, if you use
    it, `TELEGRAM_OPS_CHAT_ID`. The container runs as uid 10001, so the file must be readable by
-   it: `sudo chown root:10001 .env && sudo chmod 0640 .env`.
-   ASSUMPTION: uid 10001 and these permissions were not tried on a real host; the first
-   `doctor` below shows a settings failure if they are wrong.
+   it, and also by you: `docker compose` itself reads `.env` from the project folder, so a file
+   your user cannot read fails every compose command with `open .../.env: permission denied`:
+
+   ```
+   sudo chown "$USER":10001 .env && sudo chmod 0640 .env
+   ```
+
+   Tried on a real host on 2026-11-24 (`root:10001` failed for the reason above).
 
 4. Build the image:
 

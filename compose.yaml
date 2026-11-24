@@ -5,9 +5,10 @@
 # Full steps: docs/deploy.md ("Docker Compose").
 #
 # Nothing secret lives here or in the image. The Telegram settings come from ./.env, mounted
-# read-only; the container user is uid 10001, so that file must be readable by it
-# (chown root:10001 .env && chmod 0640 .env). The Guard login and the radar's state live in the
-# named volume below. To keep them in a host directory instead, replace the last volume entry with
+# read-only; the container user is uid 10001, so that file must be readable by it, and by you
+# too, since compose itself reads .env (chown "$USER":10001 .env && chmod 0640 .env).
+# The Guard login and the radar's state live in the named volume below. To keep them in a host
+# directory instead, replace the last volume entry with
 #   - ./state:/state
 # and make that directory writable by uid 10001. No ports are published.
 name: enji-guard-radar
