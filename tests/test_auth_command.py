@@ -1,13 +1,16 @@
 """`enji-guard-radar auth` through cli.main with fake Fleet answers and a fake hidden prompt."""
 
+import fcntl
 import io
 import json
 import logging
+import os
 import stat
 import urllib.parse
 import urllib.request
 from collections.abc import Callable, Iterator
 from pathlib import Path
+from typing import Any
 
 import pytest
 from fake_oauth import (
@@ -22,9 +25,14 @@ from fake_oauth import (
     token_body,
 )
 
-from enji_guard_radar import cli
-from enji_guard_radar.guard_credentials import UrllibOAuthTransport
-from enji_guard_radar.guard_login import REDIRECT_URI
+from enji_guard_radar import cli, cli_auth
+from enji_guard_radar.guard_auth import GuardCredentials
+from enji_guard_radar.guard_credentials import (
+    CREDENTIALS_LOCK,
+    CredentialStore,
+    UrllibOAuthTransport,
+)
+from enji_guard_radar.guard_login import REDIRECT_URI, LoginError
 from enji_guard_radar.telegram import TransportFailure
 
 
@@ -235,6 +243,89 @@ def test_auth_reports_an_unreachable_login_service(
 
     assert code == 1
     assert "unreachable (timeout)" in capsys.readouterr().err
+
+
+def test_auth_reports_a_store_that_cannot_write_without_a_chained_error(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    caplog: pytest.LogCaptureFixture,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def failing_save(_self: CredentialStore, _credentials: GuardCredentials) -> None:
+        message = "disk detail that must not be shown"
+        raise PermissionError(message)
+
+    raised: list[BaseException] = []
+    real_login = cli_auth._login
+
+    def spying_login(*args: Any, **kwargs: Any) -> None:
+        try:
+            real_login(*args, **kwargs)
+        except BaseException as exc:
+            raised.append(exc)
+            raise
+
+    monkeypatch.setattr(CredentialStore, "save", failing_save)
+    monkeypatch.setattr(cli_auth, "_login", spying_login)
+    caplog.set_level(logging.INFO)
+    fake = FakeLoginTransport(login_routes())
+
+    code, out = run_auth(tmp_path, fake, good_redirect)
+
+    expected = f"the login could not be written to {tmp_path / 'guard-auth.json'} (PermissionError)"
+    assert code == 1
+    assert len(fake.payloads(TOKEN_ENDPOINT)) == 1
+    assert not (tmp_path / "guard-auth.json").exists()
+    err = capsys.readouterr().err
+    assert f"error: {expected}\n" in err
+    assert "disk detail" not in err + out.getvalue() + caplog.text
+    assert "Traceback" not in err + caplog.text
+    assert "refresh token issued" not in out.getvalue()
+    [record] = [r for r in caplog.records if r.levelno == logging.ERROR]
+    assert record.getMessage() == f"Guard login failed: {expected}"
+    assert record.exc_info is None
+    [error] = raised
+    assert isinstance(error, LoginError)
+    assert error.reason == expected
+    assert error.__cause__ is None
+    assert error.__suppress_context__ is True
+
+
+def test_auth_reports_a_login_lock_that_stays_held(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    caplog: pytest.LogCaptureFixture,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def impatient_store(directory: Path) -> CredentialStore:
+        return CredentialStore(directory, sleep=lambda _s: None, lock_wait_s=0.0)
+
+    monkeypatch.setattr(cli_auth, "CredentialStore", impatient_store)
+    caplog.set_level(logging.INFO)
+    fake = FakeLoginTransport(login_routes())
+    holder = tmp_path / CREDENTIALS_LOCK
+    holder_fd = os.open(holder, os.O_RDWR | os.O_CREAT, 0o600)
+    try:
+        fcntl.flock(holder_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+
+        code, out = run_auth(tmp_path, fake, good_redirect)
+    finally:
+        os.close(holder_fd)
+
+    assert code == 1
+    busy = "Guard login is busy in another radar process"
+    err = capsys.readouterr().err
+    assert f"error: {busy}\n" in err
+    assert "Traceback" not in err + caplog.text
+    assert out.getvalue() == ""
+    assert fake.requests == []
+    assert not (tmp_path / "guard-auth.json").exists()
+    [record] = [r for r in caplog.records if r.getMessage() == f"Guard login failed: {busy}"]
+    assert record.levelno == logging.ERROR
+    assert record.exc_info is None
+    # the failed attempt released nothing it did not hold: the lock is free again afterwards
+    code, _out = run_auth(tmp_path, FakeLoginTransport(login_routes()), good_redirect)
+    assert code == 0
 
 
 @pytest.mark.parametrize("interrupt", [KeyboardInterrupt, EOFError])
