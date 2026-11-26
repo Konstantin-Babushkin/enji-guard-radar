@@ -129,6 +129,70 @@ def test_urllib_transport_errors_carry_no_url(monkeypatch: pytest.MonkeyPatch) -
     assert kinds == ["network", "timeout"]
 
 
+class _Answer:
+    """What urlopen yields for an HTTP answer: a context manager with status and body."""
+
+    def __init__(self, status: int, body: bytes) -> None:
+        self.status = status
+        self._body = body
+
+    def __enter__(self) -> "_Answer":
+        return self
+
+    def __exit__(self, *_exc: object) -> None:
+        return None
+
+    def read(self) -> bytes:
+        return self._body
+
+
+def test_urllib_transport_returns_the_status_and_body_of_a_2xx_answer(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    url = f"https://api.telegram.org/bot{FAKE_TOKEN}/sendMessage"
+    body = json.dumps({"ok": True, "result": {"message_id": 7}}).encode()
+    seen: list[tuple[str, float]] = []
+
+    def fake_urlopen(request: urllib.request.Request, timeout: float) -> _Answer:
+        seen.append((request.full_url, timeout))
+        return _Answer(200, body)
+
+    monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
+
+    response = UrllibTransport().post_json(url, {"chat_id": 1}, 2.5)
+
+    assert response == HttpResponse(status=200, body=body)
+    assert seen == [(url, 2.5)]
+    assert FAKE_TOKEN not in repr(response)
+
+
+def test_urllib_transport_maps_a_url_error_timeout_and_a_bare_oserror(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    url = f"https://api.telegram.org/bot{FAKE_TOKEN}/sendMessage"
+    cases: list[tuple[BaseException, str, str]] = [
+        (urllib.error.URLError(TimeoutError(url)), "timeout", "request timed out"),
+        (
+            ConnectionResetError(f"reset talking to {url}"),
+            "network",
+            "network error: ConnectionResetError",
+        ),
+    ]
+    transport = UrllibTransport()
+
+    for failure, kind, message in cases:
+        monkeypatch.setattr(urllib.request, "urlopen", lambda *_a, _f=failure, **_k: _refuse(_f))
+        with pytest.raises(TransportFailure) as info:
+            transport.post_json(url, {"chat_id": 1}, 1.0)
+        assert info.value.kind == kind
+        assert str(info.value) == message
+        assert info.value.__cause__ is None
+        assert info.value.__suppress_context__
+        for text in (str(info.value), repr(info.value)):
+            assert FAKE_TOKEN not in text
+            assert "api.telegram.org" not in text
+
+
 # --- classification ---------------------------------------------------------------------------
 
 NEW_CHAT = -1009876543210
@@ -365,6 +429,29 @@ def test_send_logs_each_failure_once_without_the_token(caplog: pytest.LogCapture
     assert len(records) == 1
     assert records[0].levelno == logging.ERROR
     assert FAKE_TOKEN not in caplog.text
+
+
+def test_send_with_no_attempts_fails_closed_without_a_request(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    fake = FakeTransport([])
+    notifier = TelegramNotifier(
+        SecretStr(FAKE_TOKEN), CHAT_ID, fake, max_attempts=0, sleep=FakeTime().sleep
+    )
+
+    with caplog.at_level(logging.DEBUG):
+        outcome = notifier.send(rendered_message())
+
+    assert isinstance(outcome, NotDelivered)
+    assert outcome.error is DeliveryError.TRANSIENT
+    assert outcome.detail == "no attempt was made"
+    assert outcome.stop_sending is True
+    assert fake.requests == []
+    records = [r for r in caplog.records if r.name.endswith("telegram")]
+    assert len(records) == 1
+    assert records[0].levelno == logging.WARNING
+    assert FAKE_TOKEN not in caplog.text
+    assert "api.telegram.org" not in caplog.text
 
 
 def get_me_response() -> HttpResponse:
