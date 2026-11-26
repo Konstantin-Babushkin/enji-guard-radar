@@ -349,6 +349,30 @@ def test_corrupt_login_file_is_reported_and_never_deleted(tmp_path: Path) -> Non
     assert transport.requests == []
 
 
+def test_unreadable_login_file_needs_auth_and_is_left_alone(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    store = make_store(tmp_path)
+    store.path.mkdir(parents=True)  # present but not readable as a file: IsADirectoryError
+    transport = FakeOAuthTransport([])
+
+    with caplog.at_level(logging.DEBUG), pytest.raises(GuardAuthError) as caught:
+        RefreshingTokenSource(store, transport, fixed_clock).access_token()
+
+    assert caught.value.kind is AuthFailureKind.NOT_AUTHENTICATED
+    assert "file unreadable" in str(caught.value)
+    assert AUTH_HINT in str(caught.value)
+    assert caught.value.__cause__ is None  # no traceback chained from the OS error
+    assert store.path.is_dir()
+    assert transport.requests == []
+    errors = [r for r in caplog.records if r.levelno == logging.ERROR]
+    assert [r.getMessage() for r in errors] == ["Guard login file unreadable (IsADirectoryError)"]
+    for text in (str(caught.value), repr(caught.value), caplog.text):
+        assert str(store.path) not in text
+        for token in ALL_FAKE_TOKENS:
+            assert token not in text
+
+
 def test_scope_audits_run_is_refused_and_nothing_is_stored(tmp_path: Path) -> None:
     store = store_with_expired_login(tmp_path)
     before = store.path.read_bytes()
@@ -576,3 +600,36 @@ def test_urllib_transport_sends_its_own_user_agent(monkeypatch: pytest.MonkeyPat
 
     assert len(seen) == 3
     assert {r.get_header("User-agent") for r in seen} == {"enji-guard-radar"}
+
+
+@pytest.mark.parametrize(
+    ("failure", "kind", "text"),
+    [
+        (
+            urllib.error.URLError(TimeoutError("timed out talking to SECRET-HOST")),
+            "timeout",
+            "request timed out",
+        ),
+        (
+            ConnectionResetError(f"reset by SECRET-HOST {FAKE_REFRESH_TOKEN}"),
+            "network",
+            "network error: ConnectionResetError",
+        ),
+    ],
+    ids=["url-error-wrapping-a-timeout", "bare-os-error"],
+)
+def test_urllib_transport_maps_remaining_failures_without_leaking(
+    monkeypatch: pytest.MonkeyPatch, failure: Exception, kind: str, text: str
+) -> None:
+    monkeypatch.setattr(urllib.request, "urlopen", lambda *_a, **_k: _refuse(failure))
+
+    with pytest.raises(TransportFailure) as info:
+        UrllibOAuthTransport().post_form("https://fleet.enji.ai/token", {}, 1.0)
+
+    assert info.value.kind == kind
+    assert str(info.value) == text
+    assert info.value.__cause__ is None
+    for shown in (str(info.value), repr(info.value)):
+        assert FAKE_REFRESH_TOKEN not in shown
+        assert "SECRET-HOST" not in shown
+        assert "fleet.enji.ai" not in shown
