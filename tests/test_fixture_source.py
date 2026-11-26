@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from enji_guard_radar.fixture_source import FixtureGuardTools
+from enji_guard_radar.fixture_source import FixtureCall, FixtureGuardTools, FixtureManifest
 from enji_guard_radar.ports import GuardCallError
 
 FIXTURES = Path(__file__).resolve().parents[1] / "fixtures" / "guard"
@@ -112,4 +112,34 @@ def test_bad_response_files_raise_guard_call_error(
     (tmp_path / "outside.json").write_text(json.dumps(LISTING), encoding="utf-8")
     tools = FixtureGuardTools(_manifest(directory, [_entry(response=response)]))
     with pytest.raises(GuardCallError):
+        tools.call("list_projects", {})
+
+
+def test_response_symlinked_outside_the_fixture_directory_is_refused(tmp_path: Path) -> None:
+    directory = tmp_path / "fixtures"
+    directory.mkdir()
+    marker = "OUTSIDE-MARKER-0123"
+    outside = tmp_path / "outside.json"
+    outside.write_text(json.dumps({"secret": marker}), encoding="utf-8")
+    try:
+        (directory / "link.json").symlink_to(outside)
+    except OSError:
+        pytest.skip("symlinks are not available here")
+    tools = FixtureGuardTools(_manifest(directory, [_entry(response="link.json")]))
+    with pytest.raises(GuardCallError, match="escapes the fixture directory") as caught:
+        tools.call("list_projects", {})
+    assert marker not in str(caught.value)
+
+
+def test_entry_without_response_or_error_reports_no_recorded_response(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The validator forbids this entry; the guard in call() still has to fail closed."""
+    _write(tmp_path)
+    _manifest(tmp_path, [_entry()])
+    hollow = FixtureCall.model_construct(tool="list_projects", args={}, response=None, error=None)
+    manifest = FixtureManifest.model_construct(calls=(hollow,))
+    monkeypatch.setattr(FixtureManifest, "model_validate_json", lambda _text: manifest)
+    tools = FixtureGuardTools(tmp_path)
+    with pytest.raises(GuardCallError, match="no recorded response for list_projects"):
         tools.call("list_projects", {})
