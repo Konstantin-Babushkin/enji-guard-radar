@@ -332,3 +332,121 @@ def test_a_call_failure_after_connecting_still_closes_the_session(tmp_path: Path
     run = Run(tmp_path)
     assert run.main(Connector(session)) == 1
     assert (session.entered, session.exited) == (1, 1)
+
+
+def assert_rejected(
+    run: Run,
+    transport: FakeTransport,
+    capsys: pytest.CaptureFixture[str],
+    *,
+    stderr: str,
+) -> None:
+    """A rejected run: one `error:` line on stderr, nothing on stdout, sent or written."""
+    captured = capsys.readouterr()
+    assert [line for line in captured.err.splitlines() if line.startswith("error:")] == [stderr]
+    assert "Traceback" not in captured.err
+    assert captured.out == ""
+    assert run.out.getvalue() == ""
+    assert transport.requests == []
+    assert not run.state_dir.exists()
+
+
+def test_a_missing_config_file_is_rejected_before_guard_is_touched(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], caplog: pytest.LogCaptureFixture
+) -> None:
+    caplog.set_level(logging.INFO)
+    run, transport = Run(tmp_path), FakeTransport([])
+    missing = tmp_path / "missing.yaml"
+    connector = Connector(None)
+    assert run.main(connector, config=missing, transport=transport) == 2
+    assert_rejected(run, transport, capsys, stderr=f"error: config file not found: {missing}")
+    assert f"run rejected: config file not found: {missing}" in caplog.messages
+    assert connector.requested == []
+
+
+@pytest.mark.parametrize("kind", ["directory", "invalid-utf8"])
+def test_an_unreadable_config_file_is_rejected_without_a_traceback(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], kind: str
+) -> None:
+    config = tmp_path / "radar.yaml"
+    if kind == "directory":
+        config.mkdir()
+    else:
+        config.write_bytes(b"ops:\n  failures_before_alert: \xff\xfe\n")
+    run, transport = Run(tmp_path), FakeTransport([])
+    connector = Connector(None)
+    assert run.main(connector, config=config, transport=transport) == 2
+    assert_rejected(run, transport, capsys, stderr=f"error: cannot read config file {config}")
+    assert connector.requested == []
+
+
+def test_an_invalid_now_value_is_rejected(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], caplog: pytest.LogCaptureFixture
+) -> None:
+    caplog.set_level(logging.INFO)
+    run, transport = Run(tmp_path), FakeTransport([])
+    connector = Connector(None)
+    assert run.main(connector, now="not-a-time", transport=transport) == 2
+    assert_rejected(
+        run,
+        transport,
+        capsys,
+        stderr="error: invalid --now value, expected ISO 8601 like 2026-11-16T12:00:00Z",
+    )
+    assert "run rejected: invalid --now value" in caplog.messages
+    assert "not-a-time" not in caplog.text
+    assert connector.requested == []
+
+
+def test_a_malformed_env_file_is_rejected_naming_the_line_not_its_text(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    env_file = tmp_path / "bad.env"
+    env_file.write_text(f"TELEGRAM_CHAT_ID={GROUP}\nnot a pair {FAKE_TOKEN}\n", encoding="utf-8")
+    run, transport = Run(tmp_path), FakeTransport([])
+    connector = Connector(None)
+    code = run.main(connector, extra=["--env-file", str(env_file)], transport=transport)
+    assert code == 2
+    captured = capsys.readouterr()
+    assert captured.err.startswith("error: ")
+    assert "line 2" in captured.err
+    assert "not a pair" not in captured.err
+    assert FAKE_TOKEN not in captured.err
+    assert "Traceback" not in captured.err
+    assert (captured.out, run.out.getvalue()) == ("", "")
+    assert transport.requests == []
+    assert not run.state_dir.exists()
+    assert connector.requested == []
+
+
+def test_an_invalid_chat_id_is_rejected_without_echoing_the_value(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    run, transport = Run(tmp_path), FakeTransport([])
+    environ = {**ENVIRON, "TELEGRAM_CHAT_ID": "not-a-chat"}
+    connector = Connector(None)
+    assert run.main(connector, environ=environ, transport=transport) == 2
+    assert_rejected(
+        run,
+        transport,
+        capsys,
+        stderr="error: TELEGRAM_CHAT_ID must be a numeric chat id or an @username",
+    )
+    assert connector.requested == []
+
+
+def test_a_failed_guard_connection_is_remembered_and_not_retried(tmp_path: Path) -> None:
+    error = GuardCallError("Guard is unreachable")
+    session = FakeSession(enter_error=error)
+    connector = Connector(session)
+    guard = cli._LazyGuard(connector, tmp_path)
+    with pytest.raises(GuardCallError) as first:
+        guard.call("list_projects", {})
+    with pytest.raises(GuardCallError) as second:
+        guard.call("list_projects", {})
+    assert first.value is error
+    assert second.value is error
+    assert connector.requested == [tmp_path]
+    assert (session.entered, session.exited) == (1, 0)
+    guard.close()
+    assert session.exited == 0
