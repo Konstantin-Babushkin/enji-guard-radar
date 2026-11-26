@@ -205,3 +205,35 @@ def test_pick_drops_titles_with_known_secrets_and_accepts_generators() -> None:
 def test_pick_does_not_return_more_than_the_limit() -> None:
     findings = [(HIGH, f"Title number {word}") for word in ("one", "two", "three", "four", "five")]
     assert len(pick_titles(findings)) == MAX_TITLES_PER_SERIES
+
+
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [
+        ("Weak ... hashing", "Weak ... hashing"),
+        ("Weak ?! hashing", "Weak ?! hashing"),
+        ("Weak , ; found", "Weak , ; found"),
+        ("... Weak hashing )", "... Weak hashing )"),
+    ],
+    ids=["dots", "marks", "commas", "edges"],
+)
+def test_sanitize_keeps_tokens_made_only_of_punctuation(raw: str, expected: str) -> None:
+    assert sanitize_title(raw) == expected
+
+
+PHRASE = "correct horse battery"
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        "Leak correct  horse battery here",
+        "Leak correct\thorse battery here",
+        "Leak correct\u200bhorse battery here",
+    ],
+    ids=["double-space", "tab", "zero-width"],
+)
+def test_sanitize_checks_known_secrets_again_after_cleaning(raw: str) -> None:
+    assert PHRASE not in raw
+    assert sanitize_title(raw) == "Leak correct horse battery here"
+    assert sanitize_title(raw, (PHRASE,)) is None
