@@ -842,6 +842,134 @@ def test_missing_config_file_fails(tmp_path: Path) -> None:
     )
 
 
+def snapshot(directory: Path) -> dict[str, tuple[str, object, int]]:
+    """Every entry under `directory`: kind, content (bytes or symlink target) and mode."""
+    entries: dict[str, tuple[str, object, int]] = {}
+    for path in sorted(directory.rglob("*")):
+        mode = stat.S_IMODE(path.lstat().st_mode)
+        key = str(path.relative_to(directory))
+        if path.is_symlink():
+            entries[key] = ("symlink", str(path.readlink()), mode)
+        elif path.is_dir():
+            entries[key] = ("dir", None, mode)
+        else:
+            entries[key] = ("file", path.read_bytes(), mode)
+    return entries
+
+
+def unreadable_config(tmp_path: Path, kind: str) -> Path:
+    path = tmp_path / "radar.yml"
+    if kind == "directory":
+        path.mkdir()
+    else:
+        path.write_bytes(b"projects: \xff\xfe\n")
+    return path
+
+
+@pytest.mark.parametrize("kind", ["directory", "not-utf8"])
+def test_unreadable_config_file_fails_with_a_reason_only(
+    tmp_path: Path, kind: str, capsys: pytest.CaptureFixture[str]
+) -> None:
+    save_state(tmp_path)
+    save_credentials(tmp_path)
+    path = unreadable_config(tmp_path, kind)
+    before = snapshot(tmp_path)
+    code, out = run_doctor(
+        tmp_path,
+        transport=healthy_transport(),
+        session=FakeGuardSession(),
+        extra=["--config", str(path)],
+    )
+    assert code == 1
+    assert line(out, "config") == f"FAIL  config: config invalid: cannot read config file {path}"
+    assert (
+        line(out, "unevaluated projects") == "SKIP  unevaluated projects: needs a readable config"
+    )
+    assert line(out, "triage").startswith("SKIP")
+    assert snapshot(tmp_path) == before
+    assert before["guard-auth.json"][2] == 0o600
+    assert "Traceback" not in out + capsys.readouterr().err
+    assert "UnicodeDecodeError" not in out
+    assert "Errno" not in out
+
+
+def test_unstattable_credential_file_fails_with_a_reason_only(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    (tmp_path / "guard-auth.json").symlink_to("guard-auth.json")
+    before = snapshot(tmp_path)
+    assert [(name, kind, target) for name, (kind, target, _) in before.items()] == [
+        ("guard-auth.json", "symlink", "guard-auth.json")
+    ]
+    transport = healthy_transport()
+    code, out = run_doctor(tmp_path, transport=transport, session=FakeGuardSession())
+    assert code == 1
+    assert line(out, "guard login") == (
+        "FAIL  guard login: credential file cannot be read (permission or I/O error)"
+    )
+    assert line(out, "guard").startswith("PASS")
+    assert snapshot(tmp_path) == before
+    assert "Traceback" not in out + capsys.readouterr().err
+    assert "Errno" not in out
+    assert "symbolic links" not in out
+
+
+def test_missing_bot_token_skips_every_telegram_line_and_makes_no_request(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    save_credentials(tmp_path)
+    transport = FakeTransport([])
+    code, out = run_doctor(
+        tmp_path,
+        environ=environment(TELEGRAM_BOT_TOKEN=None),
+        transport=transport,
+        session=FakeGuardSession(),
+    )
+    assert code == 1
+    assert line(out, "settings") == "FAIL  settings: TELEGRAM_BOT_TOKEN not set"
+    assert line(out, "telegram token") == "SKIP  telegram token: TELEGRAM_BOT_TOKEN is not set"
+    assert line(out, "group chat") == "SKIP  group chat: needs a valid bot token"
+    assert line(out, "group permissions").startswith("SKIP")
+    assert line(out, "ops chat") == "SKIP  ops chat: needs a valid bot token"
+    assert transport.requests == []
+    assert "Traceback" not in out + capsys.readouterr().err
+
+
+def test_missing_bot_token_without_an_ops_chat_id_skips_the_ops_line_for_that(
+    tmp_path: Path,
+) -> None:
+    transport = FakeTransport([])
+    code, out = run_doctor(
+        tmp_path,
+        environ=environment(TELEGRAM_BOT_TOKEN=None, TELEGRAM_OPS_CHAT_ID=None),
+        transport=transport,
+    )
+    assert code == 1
+    assert line(out, "ops chat") == "SKIP  ops chat: no ops chat id"
+    assert transport.requests == []
+
+
+def test_missing_group_chat_id_skips_the_group_lines_after_a_good_get_me(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    save_credentials(tmp_path)
+    transport = FakeTransport([get_me_ok(), member("administrator")])
+    code, out = run_doctor(
+        tmp_path,
+        environ=environment(TELEGRAM_CHAT_ID=None),
+        transport=transport,
+        session=FakeGuardSession(),
+    )
+    assert code == 1
+    assert line(out, "settings") == "FAIL  settings: TELEGRAM_CHAT_ID not set"
+    assert line(out, "telegram token").startswith("PASS")
+    assert line(out, "group chat") == "SKIP  group chat: TELEGRAM_CHAT_ID is not set"
+    assert line(out, "group permissions") == "SKIP  group permissions: TELEGRAM_CHAT_ID is not set"
+    assert line(out, "ops chat").startswith("PASS")
+    assert [url.rsplit("/", 1)[-1] for url, _ in transport.requests] == ["getMe", "getChatMember"]
+    assert "Traceback" not in out + capsys.readouterr().err
+
+
 def test_secrecy_across_failures(
     tmp_path: Path, caplog: pytest.LogCaptureFixture, capsys: pytest.CaptureFixture[str]
 ) -> None:
