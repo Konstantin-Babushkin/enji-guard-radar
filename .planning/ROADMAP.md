@@ -34,8 +34,8 @@ Decimal phases appear between their surrounding integers in numeric order.
 
 - [x] **Phase 1: Working Pipeline on Fixtures** - Models, parser, stale rule, durable state and dedup, Telegram send and dry-run, all runnable on `fixtures/guard/`
 - [ ] **Phase 2: Guard Connection and Core Alerts** - Real read-only Guard adapter, `probe`, High-count rules, timer, `doctor` and ops-chat alert (gated on Guard access)
-- [ ] **Phase 3: Remaining Rules and the Digest** - AI readiness, tests, tooling and recurring rules, reminders and the always-sent weekly digest
-- [ ] **Phase 4: Claude Triage and Short Templates** - One-line alert and digest templates, then a priority and one short cause from Claude on High-findings items through a swappable CLI/T3 boundary, with rule-only fallback
+- [x] **Phase 3: Remaining Rules and the Digest** - AI readiness, tests, tooling and recurring rules, reminders and the always-sent weekly digest
+- [x] **Phase 4: Claude Triage and Short Templates** - One-line alert and digest templates, then a priority and one short cause from Claude on High-findings items through a swappable CLI/T3 boundary, with rule-only fallback
 
 ## Phase Details
 
@@ -81,25 +81,25 @@ Plans:
 
 Plans:
 **Wave 1**
-- [ ] 02-01-PLAN.md — Wave 1: State schema 2 (High history by task_id, poll health, v1 migration), history fold with M-clean-run clear, per-run re-arm (D-06)
-- [ ] 02-02-PLAN.md — Wave 1: High-count alert rule, counts-only alert text, strict `high` config and the age threshold with per-project override
-- [ ] 02-03-PLAN.md — Wave 1: Guard token layer (auth error contracts, credential file, refresh with rotation persisted before use, failure classification, lock)
+- [x] 02-01-PLAN.md — Wave 1: State schema 2 (High history by task_id, poll health, v1 migration), history fold with M-clean-run clear, per-run re-arm (D-06)
+- [x] 02-02-PLAN.md — Wave 1: High-count alert rule, counts-only alert text, strict `high` config and the age threshold with per-project override
+- [x] 02-03-PLAN.md — Wave 1: Guard token layer (auth error contracts, credential file, refresh with rotation persisted before use, failure classification, lock)
 
 **Wave 2** *(blocked on Wave 1 completion)*
-- [ ] 02-04-PLAN.md — Wave 2: High-count alerts in the run (fold per project, alerts from stored history, per-run rise edge table, updated baselines)
-- [ ] 02-05-PLAN.md — Wave 2: `auth` command (discovery, client registration, PKCE, hidden paste, read-only grant validation)
-- [ ] 02-06-PLAN.md — Wave 2: MCP adapter over the official SDK, behind the operator's dependency decision and package check (not autonomous)
+- [x] 02-04-PLAN.md — Wave 2: High-count alerts in the run (fold per project, alerts from stored history, per-run rise edge table, updated baselines)
+- [x] 02-05-PLAN.md — Wave 2: `auth` command (discovery, client registration, PKCE, hidden paste, read-only grant validation)
+- [x] 02-06-PLAN.md — Wave 2: MCP adapter over the official SDK, behind the operator's dependency decision and package check (not autonomous)
 
 **Wave 3** *(blocked on Wave 2 completion)*
-- [ ] 02-08-PLAN.md — Wave 3: `doctor` (Telegram token, chat membership, Guard reachability, unevaluated projects, local setup)
-- [ ] 02-12-PLAN.md — Wave 3: Do not re-read known reports (skip predicate in fetch_project; poll cost)
+- [x] 02-08-PLAN.md — Wave 3: `doctor` (Telegram token, chat membership, Guard reachability, unevaluated projects, local setup)
+- [x] 02-12-PLAN.md — Wave 3: Do not re-read known reports (skip predicate in fetch_project; poll cost)
 
 **Wave 4** *(blocked on Wave 3 completion)*
-- [ ] 02-07-PLAN.md — Wave 4: Poll health and the ops chat (K failures, one outage, one recovery, save on failed polls)
-- [ ] 02-09-PLAN.md — Wave 4: `probe` with allowlist sanitizer, round-trip and leak checks, recorded-fixture contract test
+- [x] 02-07-PLAN.md — Wave 4: Poll health and the ops chat (K failures, one outage, one recovery, save on failed polls)
+- [x] 02-09-PLAN.md — Wave 4: `probe` with allowlist sanitizer, round-trip and leak checks, recorded-fixture contract test
 
 **Wave 5** *(blocked on Wave 4 completion)*
-- [ ] 02-10-PLAN.md — Wave 5: Unattended live run (real Guard by default, lazy connect inside the lock, poll cost), systemd units, cron fallback, runbook
+- [x] 02-10-PLAN.md — Wave 5: Unattended live run (real Guard by default, lazy connect inside the lock, poll cost), systemd units, cron fallback, runbook
 
 **Wave 6** *(gated on the operator and the production host)*
 - [ ] 02-11-PLAN.md — Wave 6: Human live verification (auth, first probe, real dry-run review, test-chat check, 7-day soak, failure drill, doctor on the host)
@@ -118,25 +118,25 @@ Plans:
 
 Plans:
 **Wave 1**
-- [ ] 03-01-PLAN.md — Wave 1: State schema 3 (scores, tooling observations, reminder clocks, digest record, bounded resolved log; schemas 1 and 2 still read)
-- [ ] 03-02-PLAN.md — Wave 1: Config for the digest, reminders, score thresholds (off by default), recurring N and tooling gaps, with the example file
-- [ ] 03-03-PLAN.md — Wave 1: Pure "is the digest due" decision (planned moment, window, deferral while Guard is down, skip)
-- [ ] 03-04-PLAN.md — Wave 1: Pure reminders (due function and text) and the shared message helpers made public
+- [x] 03-01-PLAN.md — Wave 1: State schema 3 (scores, tooling observations, reminder clocks, digest record, bounded resolved log; schemas 1 and 2 still read)
+- [x] 03-02-PLAN.md — Wave 1: Config for the digest, reminders, score thresholds (off by default), recurring N and tooling gaps, with the example file
+- [x] 03-03-PLAN.md — Wave 1: Pure "is the digest due" decision (planned moment, window, deferral while Guard is down, skip)
+- [x] 03-04-PLAN.md — Wave 1: Pure reminders (due function and text) and the shared message helpers made public
 
 **Wave 2** *(blocked on Wave 1 completion)*
-- [ ] 03-05-PLAN.md — Wave 2: Pure score rules (RULE-05, RULE-06) and recurring rule (RULE-08)
-- [ ] 03-06-PLAN.md — Wave 2: Pure tooling-gap rule (RULE-07) and the reader's run-list completeness flag
-- [ ] 03-07-PLAN.md — Wave 2: `doctor` lines for the digest schedule and whether score thresholds are set
+- [x] 03-05-PLAN.md — Wave 2: Pure score rules (RULE-05, RULE-06) and recurring rule (RULE-08)
+- [x] 03-06-PLAN.md — Wave 2: Pure tooling-gap rule (RULE-07) and the reader's run-list completeness flag
+- [x] 03-07-PLAN.md — Wave 2: `doctor` lines for the digest schedule and whether score thresholds are set
 
 **Wave 3** *(blocked on Wave 2 completion)*
-- [ ] 03-08-PLAN.md — Wave 3: Pure digest builder and text (worst first, cap, all-clear, resolved, unread note, splitting)
-- [ ] 03-09-PLAN.md — Wave 3: Collect scores, tooling observations and the resolved log in the run (bounded report reads)
+- [x] 03-08-PLAN.md — Wave 3: Pure digest builder and text (worst first, cap, all-clear, resolved, unread note, splitting)
+- [x] 03-09-PLAN.md — Wave 3: Collect scores, tooling observations and the resolved log in the run (bounded report reads)
 
 **Wave 4** *(blocked on Wave 3 completion)*
-- [ ] 03-10-PLAN.md — Wave 4: Reminders in the run (ack-before-mark, shared delivery helper) and the runbook section
+- [x] 03-10-PLAN.md — Wave 4: Reminders in the run (ack-before-mark, shared delivery helper) and the runbook section
 
 **Wave 5** *(blocked on Wave 4 completion)*
-- [ ] 03-11-PLAN.md — Wave 5: Weekly digest in the run (window, deferral, skip, dry-run), runbook operator steps and data notes
+- [x] 03-11-PLAN.md — Wave 5: Weekly digest in the run (window, deferral, skip, dry-run), runbook operator steps and data notes
 
 ### Phase 4: Claude Triage and Short Templates
 **Goal**: Alerts, reminders and the weekly digest read as one short line per item (in English and Russian), and a fresh High-findings alert read in this run can carry one more line from Claude with a priority and a short cause (`P1 · <cause>`) in the configured message language. The set of alerts is exactly what the rules alone would have sent.
@@ -152,31 +152,31 @@ Plans:
 
 Plans:
 **Wave 1**
-- [ ] 04-01-PLAN.md — Wave 1: Claude CLI route check on the radar host with the operator's setup-token token, recorded in docs/triage-notes.md (operator-gated, not autonomous)
-- [ ] 04-02-PLAN.md — Wave 1: Short one-line alert and summary templates in en and ru, shared line helpers, `P1 · ` catalog entry
-- [ ] 04-03-PLAN.md — Wave 1: Parser keeps finding titles in memory only (never logged, never stored; state stays schema 3)
-- [ ] 04-04-PLAN.md — Wave 1: Pure `sanitize_title` and `pick_titles` (ids, paths, links, code spans, secrets removed; Unicode-aware)
-- [ ] 04-05-PLAN.md — Wave 1: Strict `triage:` config (off by default) with the example file, and the Claude token setting
+- [x] 04-01-PLAN.md — Wave 1: Claude CLI route check on the radar host with the operator's setup-token token, recorded in docs/triage-notes.md (operator-gated, not autonomous)
+- [x] 04-02-PLAN.md — Wave 1: Short one-line alert and summary templates in en and ru, shared line helpers, `P1 · ` catalog entry
+- [x] 04-03-PLAN.md — Wave 1: Parser keeps finding titles in memory only (never logged, never stored; state stays schema 3)
+- [x] 04-04-PLAN.md — Wave 1: Pure `sanitize_title` and `pick_titles` (ids, paths, links, code spans, secrets removed; Unicode-aware)
+- [x] 04-05-PLAN.md — Wave 1: Strict `triage:` config (off by default) with the example file, and the Claude token setting
 
 **Wave 2** *(blocked on Wave 1 completion)*
-- [ ] 04-06-PLAN.md — Wave 2: Short reminder template in en and ru
-- [ ] 04-07-PLAN.md — Wave 2: Triager port, typed models, request builder and nonce-delimited prompt, shared fake
+- [x] 04-06-PLAN.md — Wave 2: Short reminder template in en and ru
+- [x] 04-07-PLAN.md — Wave 2: Triager port, typed models, request builder and nonce-delimited prompt, shared fake
 
 **Wave 3** *(blocked on Wave 2 completion)*
-- [ ] 04-08-PLAN.md — Wave 3: Two-level validation of Claude's reply
-- [ ] 04-09-PLAN.md — Wave 3: Short weekly digest in en and ru, tooling gaps grouped per repo, age footer
-- [ ] 04-10-PLAN.md — Wave 3: Item-level render seam for the `P1 · <cause>` line
-- [ ] 04-11-PLAN.md — Wave 3: Triage cost record, call and daily lines, separate `state/triage-cost.json`
+- [x] 04-08-PLAN.md — Wave 3: Two-level validation of Claude's reply
+- [x] 04-09-PLAN.md — Wave 3: Short weekly digest in en and ru, tooling gaps grouped per repo, age footer
+- [x] 04-10-PLAN.md — Wave 3: Item-level render seam for the `P1 · <cause>` line
+- [x] 04-11-PLAN.md — Wave 3: Triage cost record, call and daily lines, separate `state/triage-cost.json`
 
 **Wave 4** *(blocked on Wave 3 completion)*
-- [ ] 04-12-PLAN.md — Wave 4: Triage in the run with the fake triager (fresh High alerts only, one call, rule-only fallback, cost)
+- [x] 04-12-PLAN.md — Wave 4: Triage in the run with the fake triager (fresh High alerts only, one call, rule-only fallback, cost)
 
 **Wave 5** *(blocked on Wave 4 completion)*
-- [ ] 04-13-PLAN.md — Wave 5: `claude -p` adapter and CLI wiring, CLI-process e2e with a fake binary (needs `Route verified: yes` from 04-01)
-- [ ] 04-14-PLAN.md — Wave 5: On/off equality matrix and hostile-text suite
+- [x] 04-13-PLAN.md — Wave 5: `claude -p` adapter and CLI wiring, CLI-process e2e with a fake binary (needs `Route verified: yes` from 04-01)
+- [x] 04-14-PLAN.md — Wave 5: On/off equality matrix and hostile-text suite
 
 **Wave 6** *(blocked on Wave 5 completion; does not wait for 04-13 if 04-01 says the route is not verified)*
-- [ ] 04-15-PLAN.md — Wave 6: `doctor` triage line and the runbook Triage section
+- [x] 04-15-PLAN.md — Wave 6: `doctor` triage line and the runbook Triage section
 
 ## Gates and Open Items
 
@@ -207,6 +207,6 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 (Phase 4 may be planned in 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 1. Working Pipeline on Fixtures | 7/7 | Complete | 2026-11-17 |
-| 2. Guard Connection and Core Alerts | 0/12 | Planned | - |
-| 3. Remaining Rules and the Digest | 0/11 | Planned | - |
-| 4. Claude Triage and Short Templates | 0/TBD | Not started | - |
+| 2. Guard Connection and Core Alerts | 11/12 | In progress (02-11 human live verification outstanding) | - |
+| 3. Remaining Rules and the Digest | 11/11 | Complete | 2026-11-18 |
+| 4. Claude Triage and Short Templates | 15/15 | Complete | 2026-11-23 |

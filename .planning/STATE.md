@@ -1,19 +1,19 @@
 ---
 gsd_state_version: "1.0"
-current_phase: 1
-current_phase_name: Working Pipeline on Fixtures
-status: phase_complete
-stopped_at: Phase 3 planned (11 plans); next is queueing cf tasks
-last_updated: "2026-11-18T04:28:25.554Z"
-last_activity: 2026-11-17
-last_activity_desc: Phase 1 live check on fixtures passed (baseline, one alert delivered, identical rerun silent); make verify 420 passed
+current_phase: 2
+current_phase_name: Guard Connection and Core Alerts
+status: executing
+stopped_at: Phases 3 and 4 merged; Phase 2 plan 02-11 (human live verification) is the only open plan
+last_updated: "2026-11-26T00:00:00.000Z"
+last_activity: 2026-11-26
+last_activity_desc: Planning docs synced with merged work; 44 of 45 plans merged, only 02-11 (operator live verification) remains
 state_head: 74f6683794a25ae04949d59820c6447096e93dff
 progress:
   total_phases: 4
-  completed_phases: 1
-  total_plans: 30
-  completed_plans: 9
-  percent: 25
+  completed_phases: 3
+  total_plans: 45
+  completed_plans: 44
+  percent: 98
 ---
 
 # Project State
@@ -23,16 +23,16 @@ progress:
 See: .planning/PROJECT.md (updated 2026-11-16)
 
 **Core value:** Stakeholders learn about a real problem in Telegram, in a few lines and without false alarms, instead of finding out weeks later or never.
-**Current focus:** Phase 1 - Working Pipeline on Fixtures
+**Current focus:** Phase 2 - Guard Connection and Core Alerts (only 02-11, the operator live verification, is open)
 
 ## Current Position
 
-Phase: 1 (Working Pipeline on Fixtures) — COMPLETE
-Plan: 7 of 7 in current phase
-Status: Complete; Phase 2 is next (gated on the radar's read-only Guard login)
-Last activity: 2026-11-17 - live check on fixtures: first run baselined, second run delivered one escaped alert to the test chat, identical rerun sent nothing
+Phase: 2 (Guard Connection and Core Alerts) — 11 of 12 plans merged
+Plan: 02-11 (human live verification) is open; plans 02-01 to 02-10 and 02-12 are merged
+Status: Phases 1, 3 and 4 complete; Phase 2 waits on operator live verification (auth, probe, soak, failure drill, doctor on the host)
+Last activity: 2026-11-26 - planning docs synced with merged work (44 of 45 plans merged)
 
-Progress: [███░░░░░░░] 25%
+Progress: [█████████░] 98%
 
 ## Performance Metrics
 
@@ -86,6 +86,6 @@ Items acknowledged and deferred at milestone close, most recent first:
 
 ## Session Continuity
 
-Last session: 2026-11-18T04:28:25.482Z
-Stopped at: Phase 3 planned (11 plans); next is queueing cf tasks
-Resume file: .planning/phases/03-remaining-rules-and-the-digest/03-01-PLAN.md
+Last session: 2026-11-26T00:00:00.000Z
+Stopped at: Phases 3 and 4 merged; Phase 2 plan 02-11 (human live verification) is the only open plan
+Resume file: .planning/phases/02-guard-connection-and-core-alerts/02-11-PLAN.md

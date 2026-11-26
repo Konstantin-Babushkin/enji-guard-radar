@@ -1,3 +1,5 @@
+> **Historical (note added 2026-11-26).** This is the init-time handover from 2026-11-16, written while `/gsd-new-project` was mid-flow. It no longer describes the project. For the current state read `.planning/STATE.md` and `.planning/ROADMAP.md`.
+
 # Handover — enji-guard-radar (2026-11-16)
 
 Read this first in a new session. Then read `.planning/PROJECT.md`, `.planning/REQUIREMENTS.md` and `.planning/research/SUMMARY.md`.
