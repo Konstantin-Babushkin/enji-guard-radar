@@ -460,3 +460,208 @@ def test_open_guard_without_a_login_reports_not_authenticated(tmp_path: Path) ->
         pass
     assert raised.value.kind is AuthFailureKind.NOT_AUTHENTICATED
     assert wire.requests == []
+
+
+# --- the real connect(), session open failures and the error fallbacks ---------------------------
+
+
+class HandshakeWire:
+    """A MockTransport handler that speaks just enough streamable-HTTP MCP to open a session."""
+
+    def __init__(self) -> None:
+        self.requests: list[httpx2.Request] = []
+        self.methods: list[str] = []
+
+    def __call__(self, request: httpx2.Request) -> httpx2.Response:
+        self.requests.append(request)
+        if request.method != "POST":
+            return httpx2.Response(405)
+        message = json.loads(request.content)
+        method = message.get("method", "")
+        self.methods.append(method)
+        if "id" not in message:  # a notification: acknowledged, no body
+            return httpx2.Response(202)
+        if method == "server/discover":  # a legacy server: the SDK falls back to initialize
+            error = {"code": -32601, "message": "Method not found"}
+            return httpx2.Response(
+                200, json={"jsonrpc": "2.0", "id": message["id"], "error": error}
+            )
+        result: dict[str, Any] = {}
+        if method == "initialize":
+            result = {
+                "protocolVersion": message["params"]["protocolVersion"],
+                "capabilities": {"tools": {}},
+                "serverInfo": {"name": "fake-guard", "version": "0"},
+            }
+        elif method == "tools/list":
+            properties: dict[str, Any] = {"project_id": {}, "cursor": {}}
+            result = {
+                "tools": [
+                    {
+                        "name": "list_repositories",
+                        "inputSchema": {"type": "object", "properties": properties},
+                    },
+                    {"name": "list_projects", "inputSchema": {"type": "object"}},
+                ]
+            }
+        body = {"jsonrpc": "2.0", "id": message["id"], "result": result}
+        return httpx2.Response(200, json=body)
+
+
+def test_for_url_opens_a_real_session_with_the_bearer_token() -> None:
+    wire, source = HandshakeWire(), RecordingSource()
+    adapter = McpGuardTools.for_url(URL, source, http_transport=httpx2.MockTransport(wire))
+    with adapter:
+        assert adapter.tool_names() == {"list_projects", "list_repositories"}
+        assert adapter.tool_arguments()["list_repositories"] == ("cursor", "project_id")
+        assert adapter.tool_arguments()["list_projects"] == ()
+    assert wire.methods[:3] == ["server/discover", "initialize", "notifications/initialized"]
+    assert "tools/list" in wire.methods
+    assert {str(r.url) for r in wire.requests} == {URL}
+    assert {r.headers["Authorization"] for r in wire.requests} == {f"Bearer {TOKEN}"}
+
+
+class FailingListTools:
+    """A fake SDK client whose tools/list fails with an exception that carries secrets."""
+
+    def __init__(self, failure: Exception, events: list[str]) -> None:
+        self._failure = failure
+        self._events = events
+
+    async def __aenter__(self) -> "FailingListTools":
+        self._events.append("entered")
+        return self
+
+    async def __aexit__(self, *exc: object) -> None:
+        self._events.append("exited")
+
+    async def list_tools(self) -> None:
+        raise self._failure
+
+
+def failing_list_tools(failure: Exception, events: list[str]) -> McpGuardTools:
+    # The adapter only needs an async context manager yielding an object with list_tools.
+    return McpGuardTools(lambda: FailingListTools(failure, events))  # type: ignore[arg-type,return-value]
+
+
+LEAKS = (SERVER_SECRET, "guard.example", TOKEN, FAKE_ACCESS_TOKEN)
+
+
+def assert_nothing_leaks(error: BaseException, caplog: pytest.LogCaptureFixture) -> None:
+    """No token, URL or server text in the exception text or in the radar's own log lines."""
+    ours = [r.getMessage() for r in caplog.records if r.name.startswith("enji_guard_radar")]
+    assert not any(leak in str(error) for leak in LEAKS)
+    assert not any(leak in line for line in ours for leak in LEAKS)
+
+
+def test_list_tools_failure_closes_the_session_and_reports_a_fixed_text(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    caplog.set_level(logging.DEBUG)
+    events: list[str] = []
+    adapter = failing_list_tools(ValueError(f"boom {SERVER_SECRET} {TOKEN}"), events)
+    with pytest.raises(GuardCallError) as raised, adapter:
+        pytest.fail("entering the session must fail")  # pragma: no cover
+    assert str(raised.value) == "Guard call failed (ValueError)"
+    assert raised.value.cause is GuardFailure.UNAVAILABLE
+    assert raised.value.__cause__ is None
+    assert events == ["entered", "exited"]
+    assert adapter.tool_names() == frozenset()
+    with pytest.raises(GuardCallError, match="not open"):
+        adapter.call("list_projects", {})
+    ours = [r.getMessage() for r in caplog.records if r.name.startswith("enji_guard_radar")]
+    assert any("ValueError" in line for line in ours)
+    assert_nothing_leaks(raised.value, caplog)
+
+
+def test_list_tools_failure_leaves_the_adapter_enterable_again(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    caplog.set_level(logging.DEBUG)
+    events: list[str] = []
+    adapter = failing_list_tools(RuntimeError(f"down {SERVER_SECRET} {TOKEN}"), events)
+    for _ in range(2):
+        with pytest.raises(GuardCallError) as raised, adapter:
+            pytest.fail("entering the session must fail")  # pragma: no cover
+        assert str(raised.value) == "Guard call failed (RuntimeError)"
+        assert raised.value.cause is GuardFailure.UNAVAILABLE
+        assert raised.value.__cause__ is None
+        assert_nothing_leaks(raised.value, caplog)
+    assert events == ["entered", "exited", "entered", "exited"]
+
+
+def test_a_guard_call_error_from_the_session_is_re_raised_as_is_without_a_retry(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    # `_guarded` must not classify, wrap or retry a GuardCallError the operation raised itself.
+    caplog.set_level(logging.DEBUG)
+    fixed = GuardCallError("Guard said no", cause=GuardFailure.DATA)
+    events: list[str] = []
+    adapter = failing_list_tools(fixed, events)
+    with pytest.raises(GuardCallError) as raised, adapter:
+        pytest.fail("entering the session must fail")  # pragma: no cover
+    assert raised.value is fixed
+    assert str(raised.value) == "Guard said no"
+    assert raised.value.cause is GuardFailure.DATA
+    assert events == ["entered", "exited"]  # opened once: no retry
+    assert not [
+        r for r in caplog.records if "guard call failed" in r.getMessage()
+    ]  # not classified
+    assert_nothing_leaks(raised.value, caplog)
+
+
+def test_a_401_with_a_guard_call_error_does_not_force_a_refresh(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    caplog.set_level(logging.DEBUG)
+    broken = GuardCallError("login broken", cause=GuardFailure.AUTH)
+    source = RecordingSource(error=broken)
+    wire = Wire(401)
+    error = failure_of(wire, source)
+    assert error is broken
+    assert str(error) == "login broken"
+    assert error.cause is GuardFailure.AUTH
+    assert source.forced == [False]  # asked once, never forced, never retried
+    assert wire.requests == []
+    assert_nothing_leaks(error, caplog)
+
+
+def test_open_session_without_a_portal_is_refused(caplog: pytest.LogCaptureFixture) -> None:
+    caplog.set_level(logging.DEBUG)
+    adapter = McpGuardTools.for_url(URL, RecordingSource())
+    with pytest.raises(GuardCallError, match="Guard session is not open") as raised:
+        adapter._open_session()
+    assert adapter.tool_names() == frozenset()
+    with pytest.raises(GuardCallError, match="not open"):
+        adapter.call("list_projects", {})
+    assert_nothing_leaks(raised.value, caplog)
+
+
+def test_an_unclassified_failure_during_a_call_is_a_fixed_unavailable_text(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    caplog.set_level(logging.DEBUG)
+    fake = FakeGuard()
+    with McpGuardTools(lambda: Client(fake.server)) as adapter:
+        assert adapter.tool_names()
+        failure = KeyError(f"{SERVER_SECRET} {TOKEN}")
+        adapter._client = FailingCallClient(failure)  # type: ignore[assignment]
+        with pytest.raises(GuardCallError) as raised:
+            adapter.call("list_projects", {})
+    assert str(raised.value) == "Guard call failed (KeyError)"
+    assert raised.value.cause is GuardFailure.UNAVAILABLE
+    assert raised.value.__cause__ is None
+    ours = [r.getMessage() for r in caplog.records if r.name.startswith("enji_guard_radar")]
+    assert any("KeyError" in line for line in ours)
+    assert_nothing_leaks(raised.value, caplog)
+    # Leaving the block closed the session: the adapter is back to refusing calls.
+    with pytest.raises(GuardCallError, match="not open"):
+        adapter.call("list_projects", {})
+
+
+class FailingCallClient:
+    def __init__(self, failure: Exception) -> None:
+        self._failure = failure
+
+    async def call_tool(self, name: str, arguments: dict[str, str]) -> None:
+        raise self._failure
