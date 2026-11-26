@@ -34,6 +34,9 @@ from enji_guard_radar.stale import StaleVerdict, evaluate_stale
 FIXTURES = Path(__file__).resolve().parents[1] / "fixtures" / "guard"
 PROJECT_A_ID = "00000000-0000-4000-8000-00000000a001"
 SECURITY = "get_audit_report_security.json"
+# One scope for the fake pages and the read_report calls: if they differ, every call misses.
+PROJECT = "p-1"
+REPO = "repo_1"
 
 
 def _project_a() -> ProjectOk:
@@ -124,29 +127,28 @@ def test_report_read_across_three_pages_equals_single_page() -> None:
     first, second = len(text) // 3, 2 * len(text) // 3
     single = InMemoryGuardTools(
         {
-            call_key(
-                "get_audit_report", project_id="p-1", repo_id="repo_1", task_id=task_id
-            ): _page(task_id, text, "v1", None)
+            call_key("get_audit_report", project_id=PROJECT, repo_id=REPO, task_id=task_id): _page(
+                task_id, text, "v1", None
+            )
         }
     )
     paged = InMemoryGuardTools(
         {
+            call_key("get_audit_report", project_id=PROJECT, repo_id=REPO, task_id=task_id): _page(
+                task_id, text[:first], "v1", "p2"
+            ),
             call_key(
-                "get_audit_report", project_id="p-1", repo_id="repo_1", task_id=task_id
-            ): _page(task_id, text[:first], "v1", "p2"),
-            call_key(
-                "get_audit_report", project_id="p-1", repo_id="repo_1", task_id=task_id, cursor="p2"
+                "get_audit_report", project_id=PROJECT, repo_id=REPO, task_id=task_id, cursor="p2"
             ): _page(task_id, text[first:second], "v1", "p3"),
             call_key(
-                "get_audit_report", project_id="p-1", repo_id="repo_1", task_id=task_id, cursor="p3"
+                "get_audit_report", project_id=PROJECT, repo_id=REPO, task_id=task_id, cursor="p3"
             ): _page(task_id, text[second:], "v1", None),
         }
     )
-    expected = read_report(single, task_id, "audit.security", project_id="p-1", repo_id="repo_1")
+    expected = read_report(single, task_id, "audit.security", project_id=PROJECT, repo_id=REPO)
     assert isinstance(expected, AuditReport)
     assert (
-        read_report(paged, task_id, "audit.security", project_id="p-1", repo_id="repo_1")
-        == expected
+        read_report(paged, task_id, "audit.security", project_id=PROJECT, repo_id=REPO) == expected
     )
     assert len(paged.calls) == 3
 
@@ -454,7 +456,7 @@ def _tools(*pages: dict[str, object] | Exception) -> InMemoryGuardTools:
     """Pages answer in order: the first without a cursor, then cursors p2, p3, ..."""
     responses: dict[Key, dict[str, object] | Exception] = {}
     for index, page in enumerate(pages):
-        scope = {"project_id": "p-1", "repo_id": "repo_1", "task_id": TASK}
+        scope = {"project_id": PROJECT, "repo_id": REPO, "task_id": TASK}
         if index:
             scope["cursor"] = f"p{index + 1}"
         key = call_key("get_audit_report", **scope)
@@ -536,7 +538,7 @@ def test_read_report_failures_are_unknown(
     tools: InMemoryGuardTools, reason: str, caplog: pytest.LogCaptureFixture
 ) -> None:
     with caplog.at_level(logging.WARNING):
-        result = read_report(tools, TASK, "audit.security", project_id="p-1", repo_id="repo_1")
+        result = read_report(tools, TASK, "audit.security", project_id=PROJECT, repo_id=REPO)
     assert result == ReportUnknown(task_id=TASK, action_key="audit.security", reason=reason)
     assert [r.levelno for r in caplog.records] == [logging.WARNING]
     assert TASK in caplog.text
@@ -552,7 +554,7 @@ def test_read_report_more_than_50_pages_is_unknown() -> None:
             return _page(TASK, "x", "v1", "next")
 
     tools = Forever()
-    result = read_report(tools, TASK, "audit.security", project_id="p-1", repo_id="repo_1")
+    result = read_report(tools, TASK, "audit.security", project_id=PROJECT, repo_id=REPO)
     assert isinstance(result, ReportUnknown)
     assert result.reason == f"more than {MAX_REPORT_PAGES} pages"
     assert tools.calls == MAX_REPORT_PAGES
@@ -561,7 +563,7 @@ def test_read_report_more_than_50_pages_is_unknown() -> None:
 def test_read_report_too_many_characters_is_unknown() -> None:
     big = "x" * (MAX_REPORT_CHARS // 2 + 1)
     tools = _tools(_more(0, big), _last(big))
-    result = read_report(tools, TASK, "audit.security", project_id="p-1", repo_id="repo_1")
+    result = read_report(tools, TASK, "audit.security", project_id=PROJECT, repo_id=REPO)
     assert isinstance(result, ReportUnknown)
     assert result.reason == "report too large"
     assert len(tools.calls) == 2
@@ -572,6 +574,6 @@ def test_read_report_non_object_page_is_unknown() -> None:
         def call(self, tool: str, args: Mapping[str, str]) -> Mapping[str, object]:
             return cast("Mapping[str, object]", ["not", "an", "object"])
 
-    result = read_report(ListTools(), TASK, "audit.security", project_id="p-1", repo_id="repo_1")
+    result = read_report(ListTools(), TASK, "audit.security", project_id=PROJECT, repo_id=REPO)
     assert isinstance(result, ReportUnknown)
     assert result.reason == "page is not an object"
