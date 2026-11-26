@@ -15,7 +15,9 @@ from enji_guard_radar.messages import (
     audit_short,
     clean_name,
     high_line,
+    high_where,
     marker,
+    pack_items,
     render_alert,
     render_messages,
     telegram_length,
@@ -192,6 +194,97 @@ def test_high_line_arrow_and_repo_variants() -> None:
     assert high_line(alert, language="ru", show_repo=False, arrow=False) == (
         "🔴 <b>Project A</b> · security высокие 1 · 8 д"
     )
+
+
+@pytest.mark.parametrize(
+    ("repo_name", "expected"),
+    [
+        ("acme/r1", "audit.security (acme/r1)"),
+        ("  acme \n r1\x00 ", "audit.security (acme r1)"),
+        ("a<b>&", "audit.security (a&lt;b&gt;&amp;)"),
+        ("", f"audit.security ({UNNAMED_PROJECT})"),
+    ],
+    ids=["plain", "cleaned", "escaped", "empty-name"],
+)
+def test_high_where_names_the_audit_and_the_cleaned_escaped_repo(
+    repo_name: str, expected: str
+) -> None:
+    assert high_where(high(repo_name=repo_name)) == expected
+
+
+def test_high_where_needs_a_repo_name() -> None:
+    alert = high().model_copy(update={"repo_name": None})
+    with pytest.raises(ValueError, match=r"^a High alert needs repo_name$"):
+        high_where(alert)
+
+
+@pytest.mark.parametrize("missing", ["age_days", "last_run_at"])
+def test_render_alert_rejects_a_stale_alert_without_age_or_last_run(missing: str) -> None:
+    alert = stale("B").model_copy(update={missing: None})
+    with pytest.raises(ValueError, match=r"^a stale alert needs age_days and last_run_at$"):
+        render_alert(alert)
+
+
+@pytest.mark.parametrize(
+    ("missing", "message"),
+    [
+        ("age_days", "a High alert needs age_days"),
+        ("repo_name", "a High alert needs repo_name"),
+        ("count", "a High alert needs count"),
+        ("seen_since", "a High alert needs seen_since"),
+    ],
+)
+def test_render_alert_rejects_a_high_alert_missing_a_field(missing: str, message: str) -> None:
+    alert = high().model_copy(update={missing: None})
+    with pytest.raises(ValueError, match=f"^{re.escape(message)}$"):
+        render_alert(alert)
+
+
+@pytest.mark.parametrize("missing", ["age_days", "count"])
+@pytest.mark.parametrize("bad_first", [True, False])
+def test_render_messages_rejects_a_high_alert_without_age_or_count(
+    missing: str, bad_first: bool
+) -> None:
+    good = high(repo="r1", audit="audit.a", age=3)
+    bad = high(repo="r2", audit="audit.b", age=9).model_copy(update={missing: None})
+    alerts = [bad, good] if bad_first else [good, bad]
+    with pytest.raises(ValueError, match=r"^a High alert needs age_days and count$"):
+        render_messages(alerts, collapse_above=9)
+
+
+@pytest.mark.parametrize(
+    ("items", "header_units", "max_chars", "expected"),
+    [
+        ([], 10, 20, []),
+        (["aaa", "bbb"], 10, 20, [[0, 1]]),
+        (["aaa", "bbb"], 10, 18, [[0, 1]]),
+        (["aaa", "bbb"], 10, 17, [[0], [1]]),
+        (["a" * 9], 10, 20, [[0]]),
+        (["\U0001f600" * 4], 10, 19, [[0]]),
+        (["aaa", "bbb", "ccc"], 10, 18, [[0, 1], [2]]),
+    ],
+    ids=["empty", "fits", "exact", "one-over", "single-exact", "utf16", "three"],
+)
+def test_pack_items_greedy_chunks(
+    items: list[str], header_units: int, max_chars: int, expected: list[list[int]]
+) -> None:
+    assert pack_items(items, header_units, max_chars) == expected
+
+
+@pytest.mark.parametrize(
+    ("items", "header_units", "max_chars"),
+    [
+        (["a" * 10], 10, 20),
+        (["aa", "a" * 20], 5, 20),
+        (["\U0001f600" * 5], 10, 20),
+    ],
+    ids=["first-one-over", "later-item", "utf16-units"],
+)
+def test_pack_items_rejects_an_item_that_cannot_fit_with_the_header(
+    items: list[str], header_units: int, max_chars: int
+) -> None:
+    with pytest.raises(ValueError, match=r"^a single summary item does not fit in max_chars$"):
+        pack_items(items, header_units, max_chars)
 
 
 def test_group_message_never_shows_repo_or_audit() -> None:
