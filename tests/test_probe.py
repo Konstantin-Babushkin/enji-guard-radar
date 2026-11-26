@@ -16,7 +16,8 @@ from typing import Any, Self
 import pytest
 from guard_fakes import Key, call_key, report_markdown, run_item, world
 
-from enji_guard_radar import cli, probe_sanitize
+from enji_guard_radar import cli, cli_probe, probe_sanitize
+from enji_guard_radar.config import ConfigError
 from enji_guard_radar.guard import (
     ARG_CURSOR,
     ARG_PROJECT_ID,
@@ -823,7 +824,9 @@ def test_probe_auth_expired_writes_nothing_and_names_the_auth_command(
     assert no_leftovers(tmp_path, out_dir)
 
 
-def test_probe_skips_paused_and_excluded_projects(tmp_path: Path) -> None:
+def test_probe_skips_paused_and_excluded_projects(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
     config = tmp_path / "radar.yaml"
     config.write_text(f'projects:\n  "{RAW_PAUSED_PROJECT}":\n    mode: paused\n', encoding="utf-8")
     responses = world(
@@ -833,10 +836,12 @@ def test_probe_skips_paused_and_excluded_projects(tmp_path: Path) -> None:
         reports_by_task={},
     )
     session = FakeGuardSession(responses)
-    code, _output = run_probe(
-        tmp_path / "recorded", session, tmp_path, extra=["--config", str(config)]
-    )
+    with caplog.at_level(logging.INFO):
+        code, _output = run_probe(
+            tmp_path / "recorded", session, tmp_path, extra=["--config", str(config)]
+        )
     assert code == 0
+    assert "probe skips a project that is paused or excluded" in caplog.text
     assert session.calls
     assert all(RAW_PAUSED_PROJECT not in args.values() for _tool, args in session.calls)
     assert any(args.get(ARG_PROJECT_ID) == RAW_PROJECT for _tool, args in session.calls)
@@ -863,3 +868,84 @@ def test_probe_output_replays_failures_as_errors(tmp_path: Path) -> None:
     errors = [call["error"] for call in manifest["calls"] if "error" in call]
     assert errors == ["recorded failure (unavailable)"]
     assert "failed calls: 1" in output
+
+
+def write_unreadable_config(kind: str, tmp_path: Path) -> Path:
+    path = tmp_path / "radar.yaml"
+    if kind == "directory":
+        path.mkdir()  # reading a directory raises IsADirectoryError, an OSError
+    else:
+        path.write_bytes(b"projects:\n  \xff\xfe: bad\n")  # not UTF-8: UnicodeDecodeError
+    return path
+
+
+@pytest.mark.parametrize("kind", ["directory", "invalid-utf8"])
+def test_probe_rejects_a_config_it_cannot_read_and_writes_nothing(
+    kind: str, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    config = write_unreadable_config(kind, tmp_path)
+    out_dir = tmp_path / "recorded"
+    code, output = run_probe(out_dir, None, tmp_path, extra=["--config", str(config)])
+    assert code == 2
+    assert output == ""
+    error = capsys.readouterr().err
+    assert f"error: cannot read config file {config}" in error
+    assert "Traceback" not in error
+    assert no_leftovers(tmp_path, out_dir)
+
+
+@pytest.mark.parametrize("kind", ["directory", "invalid-utf8"])
+def test_unreadable_config_error_has_no_chained_exception(kind: str, tmp_path: Path) -> None:
+    config = write_unreadable_config(kind, tmp_path)
+    with pytest.raises(ConfigError) as caught:
+        cli_probe._read_config(config)
+    assert str(caught.value) == f"cannot read config file {config}"
+    assert caught.value.__cause__ is None
+    assert caught.value.__suppress_context__ is True
+
+
+def test_probe_counts_a_project_whose_fetch_is_unknown_and_walks_the_rest(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    responses = world(
+        projects=((RAW_PROJECT, "One"), (RAW_PAUSED_PROJECT, "Two")),
+        repos_by_project={RAW_PROJECT: []},
+        runs_by_repo={},
+        reports_by_task={},
+        failures={
+            call_key(TOOL_LIST_REPOSITORIES, **{ARG_PROJECT_ID: RAW_PAUSED_PROJECT}): (
+                GuardCallError("down")
+            )
+        },
+    )
+    session = FakeGuardSession(responses)
+    out_dir = tmp_path / "recorded"
+    with caplog.at_level(logging.INFO):
+        code, _output = run_probe(out_dir, session, tmp_path)
+    assert code == 0
+    assert "probe walked Guard: " in caplog.text
+    assert "1 project(s) unknown" in caplog.text
+    asked = [
+        args.get(ARG_PROJECT_ID) for tool, args in session.calls if tool == TOOL_LIST_REPOSITORIES
+    ]
+    assert asked == [RAW_PROJECT, RAW_PAUSED_PROJECT]
+    assert (out_dir / "calls.json").is_file()
+
+
+def test_probe_stops_when_guard_is_unavailable_and_writes_nothing(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], caplog: pytest.LogCaptureFixture
+) -> None:
+    session = FakeGuardSession({}, enter_error=GuardCallError("connection timed out"))
+    out_dir = tmp_path / "recorded"
+    with caplog.at_level(logging.INFO):
+        code, output = run_probe(out_dir, session, tmp_path)
+    assert code == 1
+    assert output == ""
+    error = capsys.readouterr().err
+    assert error.splitlines()[-1] == (
+        "error: Guard unavailable (connection timed out); nothing was written"
+    )
+    assert "Traceback" not in error
+    assert "probe stopped: Guard unavailable" in caplog.text
+    assert "Traceback" not in caplog.text
+    assert no_leftovers(tmp_path, out_dir)
