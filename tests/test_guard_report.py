@@ -454,9 +454,10 @@ def _tools(*pages: dict[str, object] | Exception) -> InMemoryGuardTools:
     """Pages answer in order: the first without a cursor, then cursors p2, p3, ..."""
     responses: dict[Key, dict[str, object] | Exception] = {}
     for index, page in enumerate(pages):
-        key = call_key("get_audit_report", task_id=TASK)
+        scope = {"project_id": "p-1", "repo_id": "repo_1", "task_id": TASK}
         if index:
-            key = call_key("get_audit_report", task_id=TASK, cursor=f"p{index + 1}")
+            scope["cursor"] = f"p{index + 1}"
+        key = call_key("get_audit_report", **scope)
         responses[key] = page
     return InMemoryGuardTools(responses)
 
@@ -474,29 +475,69 @@ def _last(text: str, **changes: object) -> dict[str, object]:
 
 
 @pytest.mark.parametrize(
-    "tools",
+    ("tools", "reason"),
     [
         pytest.param(
             _tools(_more(0, GOOD[:20]), _last(GOOD[20:], content_version="v2")),
+            "content_version changed between pages",
             id="content_version_changes",
         ),
-        pytest.param(_tools(_more(0, GOOD, next_cursor=None)), id="has_more_without_cursor"),
-        pytest.param(_tools(_last(GOOD, report_status="pending")), id="report_pending"),
-        pytest.param(_tools(_last(GOOD, task_id="other")), id="task_id_differs"),
-        pytest.param(_tools(_more(0, GOOD[:20]), GuardCallError("boom")), id="page_2_call_fails"),
-        pytest.param(_tools(GuardCallError("boom")), id="page_1_call_fails"),
-        pytest.param(_tools(_last("", content=None)), id="content_not_a_string"),
-        pytest.param(_tools(_last(GOOD, has_more="no")), id="has_more_not_a_bool"),
-        pytest.param(_tools(_last(GOOD, content_version=7)), id="content_version_not_a_string"),
-        pytest.param(_tools(), id="no_page_recorded"),
+        pytest.param(
+            _tools(_more(0, GOOD, next_cursor=None)),
+            "has_more without next_cursor",
+            id="has_more_without_cursor",
+        ),
+        pytest.param(
+            _tools(_last(GOOD, report_status="pending")),
+            "report not ready: pending",
+            id="report_pending",
+        ),
+        pytest.param(
+            _tools(_last(GOOD, report_status=None)),
+            "report not ready: not a string",
+            id="report_status_not_a_string",
+        ),
+        pytest.param(
+            _tools(_last(GOOD, task_id="other")),
+            "page task_id differs from the request",
+            id="task_id_differs",
+        ),
+        pytest.param(
+            _tools(_more(0, GOOD[:20]), GuardCallError("boom")),
+            "get_audit_report failed: boom",
+            id="page_2_call_fails",
+        ),
+        pytest.param(
+            _tools(GuardCallError("boom")), "get_audit_report failed: boom", id="page_1_call_fails"
+        ),
+        pytest.param(
+            _tools(_last("", content=None)),
+            "content is missing or not a string",
+            id="content_not_a_string",
+        ),
+        pytest.param(
+            _tools(_last(GOOD, has_more="no")),
+            "has_more is missing or not a boolean",
+            id="has_more_not_a_bool",
+        ),
+        pytest.param(
+            _tools(_last(GOOD, content_version=7)),
+            "content_version is missing or not a string",
+            id="content_version_not_a_string",
+        ),
+        pytest.param(
+            _tools(),
+            "get_audit_report failed: no recorded response for get_audit_report",
+            id="no_page_recorded",
+        ),
     ],
 )
 def test_read_report_failures_are_unknown(
-    tools: InMemoryGuardTools, caplog: pytest.LogCaptureFixture
+    tools: InMemoryGuardTools, reason: str, caplog: pytest.LogCaptureFixture
 ) -> None:
     with caplog.at_level(logging.WARNING):
         result = read_report(tools, TASK, "audit.security", project_id="p-1", repo_id="repo_1")
-    assert isinstance(result, ReportUnknown)
+    assert result == ReportUnknown(task_id=TASK, action_key="audit.security", reason=reason)
     assert [r.levelno for r in caplog.records] == [logging.WARNING]
     assert TASK in caplog.text
 
@@ -511,20 +552,19 @@ def test_read_report_more_than_50_pages_is_unknown() -> None:
             return _page(TASK, "x", "v1", "next")
 
     tools = Forever()
-    assert isinstance(
-        read_report(tools, TASK, "audit.security", project_id="p-1", repo_id="repo_1"),
-        ReportUnknown,
-    )
+    result = read_report(tools, TASK, "audit.security", project_id="p-1", repo_id="repo_1")
+    assert isinstance(result, ReportUnknown)
+    assert result.reason == f"more than {MAX_REPORT_PAGES} pages"
     assert tools.calls == MAX_REPORT_PAGES
 
 
 def test_read_report_too_many_characters_is_unknown() -> None:
     big = "x" * (MAX_REPORT_CHARS // 2 + 1)
     tools = _tools(_more(0, big), _last(big))
-    assert isinstance(
-        read_report(tools, TASK, "audit.security", project_id="p-1", repo_id="repo_1"),
-        ReportUnknown,
-    )
+    result = read_report(tools, TASK, "audit.security", project_id="p-1", repo_id="repo_1")
+    assert isinstance(result, ReportUnknown)
+    assert result.reason == "report too large"
+    assert len(tools.calls) == 2
 
 
 def test_read_report_non_object_page_is_unknown() -> None:
@@ -532,7 +572,6 @@ def test_read_report_non_object_page_is_unknown() -> None:
         def call(self, tool: str, args: Mapping[str, str]) -> Mapping[str, object]:
             return cast("Mapping[str, object]", ["not", "an", "object"])
 
-    assert isinstance(
-        read_report(ListTools(), TASK, "audit.security", project_id="p-1", repo_id="repo_1"),
-        ReportUnknown,
-    )
+    result = read_report(ListTools(), TASK, "audit.security", project_id="p-1", repo_id="repo_1")
+    assert isinstance(result, ReportUnknown)
+    assert result.reason == "page is not an object"
