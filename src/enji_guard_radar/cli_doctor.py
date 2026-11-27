@@ -11,7 +11,7 @@ import shutil
 import stat
 import sys
 from collections.abc import Mapping
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any, TextIO
 
@@ -153,18 +153,31 @@ def _guard_facts(connector: GuardConnector, state_dir: Path) -> GuardFacts:
 def _sheet_facts(
     config: RadarConfig, reader: SheetReader, state_dir: Path, now: datetime
 ) -> SheetFacts:
-    """Facts only: the sheet is read, the stored copy is read, nothing is written."""
+    """Facts only: the sheet is read, the stored copy is read, nothing is written.
+
+    A stored copy counts only if it still validates against the current YAML, exactly as the
+    poll treats it.
+    """
     record = FileSheetStore(state_dir).load()
-    age = None if record.last_good is None else now - record.last_good.fetched_at
+    age: timedelta | None = None
+    copy_unusable = False
+    if record.last_good is not None:
+        try:
+            apply_sheet(config, record.last_good.data)
+        except SheetInvalid:
+            copy_unusable = True
+        else:
+            age = now - record.last_good.fetched_at
     try:
         data = reader.read()
     except SheetUnavailable as error:
-        return SheetFacts(unreachable=error.cause.value, copy_age=age)
+        unreachable = f"{error.cause.value}: {error}"
+        return SheetFacts(unreachable=unreachable, copy_age=age, copy_unusable=copy_unusable)
     try:
         apply_sheet(config, data)
     except SheetInvalid as error:
-        return SheetFacts(invalid=str(error), copy_age=age)
-    return SheetFacts(copy_age=age)
+        return SheetFacts(invalid=str(error), copy_age=age, copy_unusable=copy_unusable)
+    return SheetFacts(copy_age=age, copy_unusable=copy_unusable)
 
 
 def _triage_facts(

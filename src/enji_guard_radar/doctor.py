@@ -366,12 +366,15 @@ def verdict_high_priority(config: RadarConfig | None) -> CheckResult:
 class SheetFacts:
     """What the shell found out about the settings sheet. Details never carry a cell value."""
 
-    # The failure class when the sheet could not be read (key, network, denied, ...).
+    # Why the sheet could not be read: the failure class and its sanitized message, which names
+    # the key variable when that is the problem.
     unreachable: str | None = None
     # Tab, row and column of what is wrong when the sheet was read but is not valid.
     invalid: str | None = None
-    # Age of the last good copy; None = no copy was stored yet.
+    # Age of the last good copy; None = no copy was stored yet or the stored one is unusable.
     copy_age: timedelta | None = None
+    # A copy is stored but no longer validates against the current YAML: the poll ignores it.
+    copy_unusable: bool = False
 
 
 def _age_text(age: timedelta) -> str:
@@ -391,11 +394,12 @@ def verdict_sheet(config: RadarConfig | None, facts: SheetFacts | None) -> Check
         return _result(
             NAME_SHEET, CheckStatus.SKIP, "sheet.enabled is false: settings come from YAML only"
         )
-    copy = (
-        "no good copy stored yet"
-        if facts.copy_age is None
-        else f"last good copy {_age_text(facts.copy_age)} old"
-    )
+    if facts.copy_unusable:
+        copy = "stored copy no longer validates against the current YAML and is ignored"
+    elif facts.copy_age is None:
+        copy = "no good copy stored yet"
+    else:
+        copy = f"last good copy {_age_text(facts.copy_age)} old"
     if facts.unreachable is not None:
         state = f"configured, not reachable ({facts.unreachable}); {copy}"
     elif facts.invalid is not None:

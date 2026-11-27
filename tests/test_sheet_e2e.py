@@ -15,6 +15,7 @@ from pathlib import Path
 
 import pytest
 from sheet_fakes import (
+    PROJECT_A,
     PROJECT_B,
     SPREADSHEET_ID,
     FakeSheetReader,
@@ -23,13 +24,17 @@ from sheet_fakes import (
     sheet,
 )
 from telegram_fakes import FAKE_TOKEN, FakeTime, FakeTransport, ok_response
+from test_priority_e2e import DIGEST_AT, SECURITY_LINE
 from test_serve_e2e import Harness
 from test_sheet_client import KEY_JSON, FakeSheetsHttp
 
 from enji_guard_radar import cli
+from enji_guard_radar.ledger import deserialize_state
 from enji_guard_radar.ports import SheetFailure
 from enji_guard_radar.settings import ENV_SHEET_KEY
-from enji_guard_radar.sheet_store import SHEET_FILE
+from enji_guard_radar.sheet_settings import SheetData
+from enji_guard_radar.sheet_store import SHEET_FILE, FileSheetStore
+from enji_guard_radar.sheet_sync import SheetCopy, SheetRecord
 
 FIXTURES = Path(__file__).resolve().parents[1] / "fixtures" / "guard"
 NOW = "2026-11-16T12:00:00Z"
@@ -323,7 +328,7 @@ def test_doctor_reports_the_sheet_in_every_state(tmp_path: Path) -> None:
     run_live(tmp_path, FakeSheetReader(PAUSE_B), FakeTransport([]))
     unreachable = doctor_line(tmp_path, FakeSheetReader(SheetFailure.DENIED), config)
     assert unreachable.startswith("WARN")
-    assert "not reachable (denied)" in unreachable
+    assert "not reachable (denied:" in unreachable
     assert "last good copy" in unreachable
     invalid = doctor_line(tmp_path, FakeSheetReader(BAD_SHEET), config)
     assert invalid.startswith("WARN")
@@ -351,7 +356,22 @@ def test_doctor_names_the_missing_key_variable(tmp_path: Path) -> None:
     )
     (line,) = [x for x in out.getvalue().splitlines() if "settings sheet:" in x]
     assert line.startswith("FAIL")
-    assert ENV_SHEET_KEY in line or "key" in line
+    assert ENV_SHEET_KEY in line
+
+
+def test_doctor_and_effective_config_agree_when_the_stored_copy_no_longer_fits(
+    tmp_path: Path,
+) -> None:
+    config = write_config(tmp_path)
+    copy = SheetCopy(fetched_at=datetime(2026, 11, 20, tzinfo=UTC), data=BAD_SHEET)
+    FileSheetStore(tmp_path / "state").save(SheetRecord(last_good=copy))
+    down = FakeSheetReader(SheetFailure.NETWORK)
+    line = doctor_line(tmp_path, down, config)
+    assert line.startswith("FAIL")
+    assert "no longer validates" in line
+    assert "YAML alone" in line
+    _, out = effective(tmp_path, FakeSheetReader(SheetFailure.NETWORK), config)
+    assert out.splitlines()[0].startswith("# source: YAML only, no usable sheet copy")
 
 
 # --- serve -----------------------------------------------------------------------------------
@@ -401,3 +421,64 @@ def test_serve_applies_a_schedule_changed_in_the_sheet_without_a_restart(
     assert datetime(2026, 11, 23, tzinfo=UTC) < harness.now < datetime(2026, 11, 24, tzinfo=UTC)
     assert harness.now - timedelta(hours=3) < datetime(2026, 11, 23, 5, tzinfo=UTC)
     assert signal.getsignal(signal.SIGTERM) is not None
+
+
+# --- high priority audit types set in the sheet ---------------------------------------------------
+
+
+def priority_run(tmp_path: Path, reader: FakeSheetReader) -> list[str]:
+    """A live run on the fixture world at digest time; returns the lines of the one message sent."""
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    config = tmp_path / "radar.yaml"
+    config.write_text(
+        (FIXTURES / "radar.yaml").read_text(encoding="utf-8")
+        + f"sheet:\n  enabled: true\n  spreadsheet_id: {SPREADSHEET_ID}\n",
+        encoding="utf-8",
+    )
+    transport = FakeTransport([ok_response(1)])
+    code = cli.main(
+        [*run_args(tmp_path)[:-2], "--now", DIGEST_AT],
+        environ={"TELEGRAM_BOT_TOKEN": FAKE_TOKEN, "TELEGRAM_CHAT_ID": "-1001234567890"},
+        transport=transport,
+        sleep=FakeTime().sleep,
+        stdout=io.StringIO(),
+        sheet_reader=reader,
+    )
+    assert code == 0
+    ((_, payload),) = transport.requests
+    return str(payload["text"]).split("\n")
+
+
+def types_row(project_id: str, types: str) -> SheetData:
+    return sheet(projects_grid({"project_id": project_id, "high_priority_audit_types": types}))
+
+
+def test_without_the_sheet_the_fixture_security_series_alerts(tmp_path: Path) -> None:
+    lines = priority_run(tmp_path, FakeSheetReader(sheet()))
+    assert f"🔴 {SECURITY_LINE}" in lines
+    assert "Low priority · 1" not in lines
+
+
+def test_a_project_list_in_the_sheet_makes_its_security_series_low_priority(
+    tmp_path: Path,
+) -> None:
+    lines = priority_run(tmp_path, FakeSheetReader(types_row(PROJECT_A, "audit.tech-health")))
+    assert f"🟡 {SECURITY_LINE}" in lines
+    assert "Low priority · 1" in lines
+    assert not any(line.startswith("🔴") for line in lines)
+    state = deserialize_state((tmp_path / "state" / "state.json").read_bytes())
+    assert [c for c in state.conditions if c.key.action_key == "audit.security"] == []
+    (history,) = [h for h in state.histories if h.action_key == "audit.security"]
+    assert history.open is True
+
+
+def test_a_list_that_names_the_type_or_belongs_to_another_project_keeps_it_high(
+    tmp_path: Path,
+) -> None:
+    named = priority_run(
+        tmp_path / "named", FakeSheetReader(types_row(PROJECT_A, "audit.security"))
+    )
+    other = priority_run(tmp_path / "other", FakeSheetReader(types_row(PROJECT_B, "audit.tests")))
+    for lines in (named, other):
+        assert f"🔴 {SECURITY_LINE}" in lines
+        assert "Low priority · 1" not in lines
