@@ -6,6 +6,7 @@ import pytest
 from test_high_pipeline import CALM_CONFIG, PID, SECURITY, Sim
 
 from enji_guard_radar.config import ConfigError, RadarConfig, parse_config
+from enji_guard_radar.model import AlertKey
 
 TECH_HEALTH = "audit.tech-health"
 OTHER = "p-2"
@@ -115,3 +116,69 @@ def test_project_reminder_interval_beats_the_global_one(tmp_path: Path) -> None:
     assert len(sim.poll(1).messages) == 1
     assert sim.poll(3).reminders_delivered == 0
     assert sim.poll(4).reminders_delivered == 1
+
+
+def test_a_project_list_reclassifies_an_alerted_series_without_listing_it_resolved(
+    tmp_path: Path,
+) -> None:
+    sim = Sim(tmp_path)
+    sim.poll(0)
+    sim.add_run(high=3, day=1)
+    assert len(sim.poll(1).messages) == 1
+
+    sim.config_text = CALM_CONFIG + (
+        f'projects:\n  "{PID}":\n    high_priority_audit_types: [{TECH_HEALTH}]\n'
+    )
+    report = sim.poll(2)
+    assert report.messages == ()
+    assert report.resolved == ()
+    assert sim.state().resolved == ()
+    assert [c for c in sim.state().conditions if c.key.level == "high"] == []
+    assert sim.history().open is True
+
+
+def test_a_list_for_another_project_leaves_this_projects_alerts_and_resolution_alone(
+    tmp_path: Path,
+) -> None:
+    sim = Sim(tmp_path)
+    sim.poll(0)
+    sim.add_run(high=3, day=1)
+    assert len(sim.poll(1).messages) == 1
+
+    sim.config_text = CALM_CONFIG + (
+        f'projects:\n  "{OTHER}":\n    high_priority_audit_types: [{TECH_HEALTH}]\n'
+    )
+    assert sim.poll(2).messages == ()
+    assert len([c for c in sim.state().conditions if c.key.level == "high"]) == 1
+    resolved: list[AlertKey] = []
+    for day in (3, 4):
+        sim.add_run(high=0, day=day)
+        resolved += sim.poll(day).resolved
+    assert len(resolved) == 1
+
+
+QUIET_TOOLING = "tooling_gaps:\n  audit_types:\n    - audit.recon\n"
+WEDNESDAY = 2  # Sim day 0 is a Monday and polls run at 12:00 UTC, after the digest's 05:00.
+
+
+@pytest.mark.parametrize(
+    ("projects_yaml", "is_low"),
+    [
+        ("", False),
+        (f'projects:\n  "{PID}":\n    high_priority_audit_types: [{TECH_HEALTH}]\n', True),
+        (f'projects:\n  "{PID}":\n    high_priority_audit_types: [{SECURITY}]\n', False),
+        (f'projects:\n  "{OTHER}":\n    high_priority_audit_types: [{TECH_HEALTH}]\n', False),
+    ],
+    ids=["no list", "list without the type", "list with the type", "list of another project"],
+)
+def test_the_digest_splits_low_priority_by_the_project_list(
+    tmp_path: Path, projects_yaml: str, is_low: bool
+) -> None:
+    sim = Sim(tmp_path, CALM_CONFIG + QUIET_TOOLING + projects_yaml, digest_on=True)
+    sim.poll(0)
+    sim.add_run(high=3, day=1)
+    sim.poll(1)
+    (message,) = sim.poll(WEDNESDAY).digest_messages
+    lines = message.text.split("\n")
+    assert ("Low priority · 1" in lines) is is_low
+    assert any(line.startswith("🟡" if is_low else "🔴") and "High 3" in line for line in lines)
