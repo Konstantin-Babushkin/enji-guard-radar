@@ -101,9 +101,11 @@ locked dependencies) and at run time (Guard, Telegram).
 ### Day to day
 
 - **Update:** `git pull && docker compose up -d --build`.
-- **Change the schedule or any config:** edit `config/radar.yaml`, then
-  `docker compose restart radar`. Every run re-reads the config, except `schedule`, which is read
-  once when `serve` starts, so a schedule change needs the restart.
+- **Change the schedule or any config:** edit `config/radar.yaml`; every poll re-reads it, and
+  `serve` takes `schedule.every_minutes` again after each poll, so a change applies from the next
+  slot without a restart (the same holds for `schedule.every_minutes` set in the settings sheet).
+  A new `sheet:` section or a new key in `.env` needs `docker compose restart radar`, because
+  compose mounts the env file when the container starts.
 - **Stop:** `docker compose stop radar`. It lets a running poll finish (up to two minutes);
   state is written atomically, so even a forced stop leaves a valid state file.
 - **Run by hand while `serve` runs:** `docker compose run --rm radar run --config /config/radar.yaml --state-dir /state --env-file /run/radar.env`
@@ -173,6 +175,105 @@ resolved or downloaded at run time.
 Tokens, codes and the pasted redirect address never go into chat, tickets, shell history or
 logs.
 
+## Settings from a Google Sheet
+
+Optional. Non-developers keep the per-project settings and the global defaults in one private
+Google Sheet instead of `radar.yaml`. It ships **off** (`sheet.enabled: false`).
+
+How it behaves:
+
+- `radar.yaml` stays the base. Every poll reads the sheet and its values **override** the YAML
+  field by field. An empty cell means "not set": the YAML value, or the default, applies. A cell
+  cannot reset a YAML value to null.
+- Strict, like the YAML: an unknown column or key, a duplicate project id, a number out of range
+  or text where a number belongs makes the **whole sheet invalid**. Nothing of an invalid sheet
+  is applied. The error names the tab, the row and the column, never the cell's content.
+- An unreachable or invalid sheet keeps the **last good copy** in use (`sheet-settings.json` in
+  the state directory, mode 0600, survives a restart). The copy is merged over the current YAML
+  each time. With no usable copy the radar runs on `radar.yaml` alone.
+- The ops chat gets one message after `ops.failures_before_alert` failed reads in a row (at the
+  first failed read when no copy exists to fall back on), and one when the sheet works again.
+- The sheet cannot set triage, ops or sheet values, the poll schedule per project, or any secret.
+  `schedule.every_minutes` and `digest.*` are global only.
+
+### Set it up
+
+1. In the Google Cloud console create a project (or use one), enable the **Google Sheets API**,
+   create a **service account** (no roles needed) and add a **JSON key** to it. Keep the file
+   out of git and out of chat.
+2. Create the spreadsheet with two tabs named exactly `projects` and `globals` (templates
+   below) and **share it with the service account's e-mail address as Viewer**. Share it with
+   nobody else you do not want editing the radar.
+3. Put the key in the env file (`radar.env` or `.env`) as **one line of JSON**. The env file is
+   `KEY=VALUE` per line, so minify the key file first:
+
+   ```
+   python3 -c 'import json,sys; print("GOOGLE_SERVICE_ACCOUNT_JSON=" + json.dumps(json.load(open(sys.argv[1]))))' key.json
+   ```
+
+   Paste the printed line into the env file, then delete `key.json`. The value is redacted from logs and messages; it never goes into YAML.
+4. Switch it on in `radar.yaml` with the id from the sheet's address
+   (`https://docs.google.com/spreadsheets/d/<spreadsheet_id>/edit`):
+
+   ```
+   sheet:
+     enabled: true
+     spreadsheet_id: <spreadsheet_id>
+   ```
+
+   Restart `serve` once (the env file is read at container start in Docker).
+5. Check it. `doctor` has a `settings sheet` line (configured, reachable, valid, age of the last
+   good copy), and `effective-config` prints the merged result with its source on the first line:
+
+   ```
+   enji-guard-radar effective-config --config /etc/enji-guard-radar/radar.yaml --state-dir /var/lib/enji-guard-radar --env-file /etc/enji-guard-radar/radar.env
+   ```
+
+   With Docker add `docker compose run --rm radar` in front and use `/config/radar.yaml`,
+   `/state` and `/run/radar.env`.
+
+### Sheet template
+
+Paste each block into cell A1 of its tab (Google Sheets splits CSV text into columns with
+Data, then Split text to columns) or import it with File, Import. The header row is exact; the
+first row of a tab is always the header.
+
+`projects`, one row per Guard project id (`mode` is `active`, `paused` or `excluded`;
+`high_priority_audit_types` is a comma-separated list of `audit.<name>`; empty = the global
+setting; `name` is free text for humans and is ignored):
+
+```csv
+project_id,name,mode,high_priority_audit_types,stale_after_days,high_aged_after_days,reminder_every_days,tooling_window_days,ai_readiness_below,tests_below
+```
+
+`globals`, two columns. Keys are the dotted paths of `radar.yaml`; allowed sections are
+`defaults`, `alerts`, `high`, `messages` (only `language`), `schedule`, `digest`, `reminders`,
+`scores`, `recurring` and `tooling_gaps`. List values are comma-separated:
+
+```csv
+key,value
+```
+
+Example rows (replace the ids and values):
+
+```csv
+project_id,name,mode,high_priority_audit_types,stale_after_days,high_aged_after_days,reminder_every_days,tooling_window_days,ai_readiness_below,tests_below
+00000000-0000-4000-8000-00000000a001,Shop,active,"audit.security,audit.dependency-vulnerabilities",7,,3,,60,
+00000000-0000-4000-8000-00000000a005,Back office,paused,,,,,,,
+```
+
+```csv
+key,value
+schedule.every_minutes,60
+digest.weekday,friday
+digest.hour_utc,6
+messages.language,ru
+reminders.every_days,5
+high.high_priority_audit_types,"audit.security,audit.tech-health"
+```
+
+The sheet's own version history is the change audit; the radar keeps none.
+
 ## Guard login (auth)
 
 The radar logs in to Guard with its own login, once, interactively:
@@ -195,8 +296,9 @@ sudo -u enji-guard-radar /opt/enji-guard-radar/.venv/bin/enji-guard-radar doctor
 ```
 
 Every line must be PASS (SKIP is fine for the timer hint, and for the `triage` line while triage is
-off). Fix any FAIL before going on. Add `--config /etc/enji-guard-radar/radar.yaml` to see the
-config-based lines for your real config, the `triage` line included.
+off, and for the `settings sheet` line while `sheet.enabled` is false). Fix any FAIL before going
+on. Add `--config /etc/enji-guard-radar/radar.yaml` to see the config-based lines for your real
+config, the `triage` and `settings sheet` lines included.
 
 ## Probe and fixture review
 
