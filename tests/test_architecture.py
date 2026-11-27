@@ -27,6 +27,10 @@ SHELL_MODULES = {
     "cli_doctor",
     "cli_probe",
     "cli_serve",
+    "cli_config",
+    # The Google Sheets client and the sheet record file.
+    "sheet_client",
+    "sheet_store",
     # Triage cost file and the Claude CLI adapter (plans 04-11 and 04-13).
     "triage_cost_store",
     "claude_cli_triager",

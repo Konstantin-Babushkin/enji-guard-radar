@@ -2,6 +2,12 @@
 
 Operator idea, 2026-11-23.
 
+**Status: built (T-0164).** Decisions of 2026-11-27: the sheet overrides the YAML field by field;
+an unreachable or invalid sheet keeps the last good copy and alerts the ops chat once; auth is a
+read-only Google service account whose key lives in the env file; only per-project thresholds
+are time settings. How to set it up: `docs/deploy.md`, "Settings from a Google Sheet". The open
+questions below are answered there; the audit is the sheet's own version history.
+
 ## What
 
 Keep the per-project settings (which projects are watched, high/low priority audit types,

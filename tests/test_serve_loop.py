@@ -246,3 +246,43 @@ def test_signal_handlers_set_the_flag_and_are_restored(sig: signal.Signals, name
         signal.raise_signal(signal.SIGTERM if sig is signal.SIGINT else signal.SIGINT)
         assert stop.name == name  # the first signal's name wins
     assert {s: signal.getsignal(s) for s in before} == before
+
+
+def test_a_changed_interval_sets_the_grid_for_the_next_slot_without_a_restart(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    w = world(at(2), tmp_path)
+    w.stop_after_polls = 3
+    serve_loop(
+        every_minutes=EVERY,
+        state_dir=w.state_dir,
+        poll=w.poll,
+        clock=w.clock,
+        stop=w.stop,
+        wait=w.wait,
+        current_every_minutes=lambda: 60,
+    )
+
+    # The catch-up run at 02:00 still ran on the 180-minute grid; then 60 minutes apply.
+    assert w.poll_times == [at(2), at(3), at(4)]
+    assert "serve: schedule changed every_minutes=180->60, applies from the next slot" in (
+        messages(caplog)
+    )
+
+
+def test_an_unchanged_interval_logs_nothing_extra(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    w = world(at(2), tmp_path)
+    w.stop_after_polls = 2
+    serve_loop(
+        every_minutes=EVERY,
+        state_dir=w.state_dir,
+        poll=w.poll,
+        clock=w.clock,
+        stop=w.stop,
+        wait=w.wait,
+        current_every_minutes=lambda: EVERY,
+    )
+    assert w.poll_times == [at(2), at(3)]
+    assert not [line for line in messages(caplog) if "schedule changed" in line]

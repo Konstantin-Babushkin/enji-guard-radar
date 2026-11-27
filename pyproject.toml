@@ -5,6 +5,7 @@ description = "Polls Enji Guard, triages project health with Claude, alerts a Te
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
+    "google-auth>=2.63.1",
     "httpx2>=2.16",
     "mcp>=2.3,<3",
     "pydantic>=2.12",

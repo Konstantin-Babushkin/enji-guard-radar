@@ -11,7 +11,7 @@ import shutil
 import stat
 import sys
 from collections.abc import Mapping
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any, TextIO
 
@@ -27,20 +27,32 @@ from enji_guard_radar.doctor import (
     CredentialFacts,
     DoctorReport,
     GuardFacts,
+    SheetFacts,
     TelegramFact,
     TriageFacts,
 )
 from enji_guard_radar.guard import GUARD_READ_TOOLS, GuardDataError, parse_projects_page
 from enji_guard_radar.guard_credentials import CredentialStore
 from enji_guard_radar.ledger import Loaded, StateLoad
-from enji_guard_radar.ports import Clock, GuardAuthError, GuardCallError, GuardConnector
+from enji_guard_radar.ports import (
+    Clock,
+    GuardAuthError,
+    GuardCallError,
+    GuardConnector,
+    SheetReader,
+    SheetUnavailable,
+)
 from enji_guard_radar.secret_guard import configure_logging, redact
 from enji_guard_radar.settings import (
     SettingsError,
     known_secrets,
     load_claude_token,
     load_settings,
+    load_sheet_key,
 )
+from enji_guard_radar.sheet_client import SheetsHttp, key_secrets, make_sheet_reader
+from enji_guard_radar.sheet_settings import SheetInvalid, apply_sheet
+from enji_guard_radar.sheet_store import FileSheetStore
 from enji_guard_radar.state_store import FileStateStore
 from enji_guard_radar.telegram import (
     HttpTransport,
@@ -136,6 +148,36 @@ def _guard_facts(connector: GuardConnector, state_dir: Path) -> GuardFacts:
             return GuardFacts(tool_names=names, project_count=len(page.items))
     except GuardCallError as error:
         return GuardFacts(failure=error)
+
+
+def _sheet_facts(
+    config: RadarConfig, reader: SheetReader, state_dir: Path, now: datetime
+) -> SheetFacts:
+    """Facts only: the sheet is read, the stored copy is read, nothing is written.
+
+    A stored copy counts only if it still validates against the current YAML, exactly as the
+    poll treats it.
+    """
+    record = FileSheetStore(state_dir).load()
+    age: timedelta | None = None
+    copy_unusable = False
+    if record.last_good is not None:
+        try:
+            apply_sheet(config, record.last_good.data)
+        except SheetInvalid:
+            copy_unusable = True
+        else:
+            age = now - record.last_good.fetched_at
+    try:
+        data = reader.read()
+    except SheetUnavailable as error:
+        unreachable = f"{error.cause.value}: {error}"
+        return SheetFacts(unreachable=unreachable, copy_age=age, copy_unusable=copy_unusable)
+    try:
+        apply_sheet(config, data)
+    except SheetInvalid as error:
+        return SheetFacts(invalid=str(error), copy_age=age, copy_unusable=copy_unusable)
+    return SheetFacts(copy_age=age, copy_unusable=copy_unusable)
 
 
 def _triage_facts(
@@ -240,6 +282,8 @@ def run_doctor(
     transport: HttpTransport,
     guard_connector: GuardConnector,
     clock: Clock,
+    sheet_reader: SheetReader | None = None,
+    sheet_http: SheetsHttp | None = None,
 ) -> int:
     env_file: Path = args.env_file or Path(DEFAULT_ENV_FILE)
     try:
@@ -275,6 +319,17 @@ def run_doctor(
     results.append(doctor.verdict_schedule(config, clock()))
     results.append(doctor.verdict_score_rules(config))
     results.append(doctor.verdict_high_priority(config))
+    sheet_secrets: tuple[str, ...] = ()
+    sheet_facts: SheetFacts | None = None
+    if config is not None and config.sheet.enabled:
+        sheet_key = load_sheet_key(environ, env_file)
+        sheet_secrets = key_secrets(sheet_key)
+        secrets.extend(sheet_secrets)
+        reader = make_sheet_reader(
+            config.sheet, sheet_key, injected=sheet_reader, http=sheet_http, clock=clock
+        )
+        sheet_facts = _sheet_facts(config, reader, args.state_dir, clock())
+    results.append(doctor.verdict_sheet(config, sheet_facts))
     claude_token = load_claude_token(environ, env_file)
     if claude_token is not None:
         secrets.append(claude_token.get_secret_value())

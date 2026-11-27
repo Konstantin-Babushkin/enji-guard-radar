@@ -91,9 +91,14 @@ def test_with_bad_flag_file_exit_2_names_path_and_leaks_nothing(
     assert SECRET not in captured.out + captured.err + caplog.text
 
 
-def test_example_file_lists_telegram_names_with_placeholders_only() -> None:
+def test_example_file_lists_the_secret_names_with_placeholders_only() -> None:
     example = read_env_file(REPO / "project.env.example")
-    assert set(example) == {"TELEGRAM_BOT_TOKEN", "TELEGRAM_CHAT_ID", "TELEGRAM_OPS_CHAT_ID"}
+    assert set(example) == {
+        "TELEGRAM_BOT_TOKEN",
+        "TELEGRAM_CHAT_ID",
+        "TELEGRAM_OPS_CHAT_ID",
+        "GOOGLE_SERVICE_ACCOUNT_JSON",
+    }
     assert all(value.startswith("replace-with-") for value in example.values())
 
 

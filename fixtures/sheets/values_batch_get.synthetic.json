@@ -1,0 +1,26 @@
+{
+  "spreadsheetId": "1AbC-def_GHIjklmnop",
+  "valueRanges": [
+    {
+      "range": "projects!A1:J1000",
+      "majorDimension": "ROWS",
+      "values": [
+        ["project_id", "name", "mode", "high_priority_audit_types", "stale_after_days", "high_aged_after_days", "reminder_every_days", "tooling_window_days", "ai_readiness_below", "tests_below"],
+        ["00000000-0000-4000-8000-00000000a001", "Shop", "active", "audit.security, audit.tech-health", "7", "", "3", "", "60"],
+        ["00000000-0000-4000-8000-00000000a002", "Back office", "paused"],
+        [],
+        ["00000000-0000-4000-8000-00000000a003", "Legacy", "excluded"]
+      ]
+    },
+    {
+      "range": "'globals'!A1:B1000",
+      "majorDimension": "ROWS",
+      "values": [
+        ["key", "value"],
+        ["digest.weekday", "friday"],
+        ["schedule.every_minutes", "60"],
+        ["messages.language", ""]
+      ]
+    }
+  ]
+}

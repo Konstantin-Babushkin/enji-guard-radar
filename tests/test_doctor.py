@@ -271,7 +271,8 @@ def test_doctor_passes_on_a_healthy_setup(
     assert "all audit types are high priority" in line(out, "high priority types")
     assert line(out, "timer").startswith("SKIP")
     assert line(out, "triage") == "SKIP  triage: off"
-    assert out.rstrip().endswith("doctor: 13 pass, 0 fail, 0 warn, 3 skip")
+    assert line(out, "settings sheet").startswith("SKIP"), out
+    assert out.rstrip().endswith("doctor: 13 pass, 0 fail, 0 warn, 4 skip")
     urls = [url.rsplit("/", 1)[1] for url, _ in transport.requests]
     assert urls == ["getMe", "getChatMember", "getChat", "getChatMember"]
     payloads = [payload for _, payload in transport.requests]

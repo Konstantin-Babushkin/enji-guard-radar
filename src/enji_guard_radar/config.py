@@ -63,6 +63,8 @@ TRIAGE_TIMEOUT_MAX = 300
 TRIAGE_COST_MIN = 0.01
 TRIAGE_COST_MAX = 5.0
 # A short token: it later becomes a CLI argument, so no spaces or shell characters (T-04-10).
+# The id in the sheet's address: letters, digits, dash, underscore.
+SPREADSHEET_ID_PATTERN = r"^[A-Za-z0-9_-]{10,128}$"
 TRIAGE_MODEL_PATTERN = r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$"
 WEEKDAY_NAMES = ("monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday")
 AI_READINESS_ACTION_KEY = "audit.ai-readiness"
@@ -88,6 +90,20 @@ class Thresholds(BaseModel):
     )
 
 
+def _check_audit_types(value: tuple[str, ...]) -> tuple[str, ...]:
+    """Shared shape rule for every configured audit-type list (RULE-10)."""
+    if not value:
+        message = "must be null or a non-empty list"
+        raise ValueError(message)
+    if any(AUDIT_TYPE_PATTERN.fullmatch(item) is None for item in value):
+        message = "every audit type must look like audit.<name> (lowercase, digits, dashes)"
+        raise ValueError(message)
+    if len(set(value)) != len(value):
+        message = "audit types must not repeat"
+        raise ValueError(message)
+    return value
+
+
 ProjectMode = Literal["active", "paused", "excluded"]
 Weekday = Literal["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"]
 
@@ -107,20 +123,17 @@ class ProjectSettings(BaseModel):
     tooling_window_days: StrictInt | None = Field(
         default=None, ge=TOOLING_WINDOW_MIN, le=TOOLING_WINDOW_MAX
     )
+    # None = the global `high.high_priority_audit_types`; a list = exactly those alert here.
+    high_priority_audit_types: tuple[str, ...] | None = None
+    # None = the global `reminders.every_days`.
+    reminder_every_days: StrictInt | None = Field(
+        default=None, ge=REMINDER_DAYS_MIN, le=REMINDER_DAYS_MAX
+    )
 
-
-def _check_audit_types(value: tuple[str, ...]) -> tuple[str, ...]:
-    """Shared shape rule for every configured audit-type list (RULE-10)."""
-    if not value:
-        message = "must be null or a non-empty list"
-        raise ValueError(message)
-    if any(AUDIT_TYPE_PATTERN.fullmatch(item) is None for item in value):
-        message = "every audit type must look like audit.<name> (lowercase, digits, dashes)"
-        raise ValueError(message)
-    if len(set(value)) != len(value):
-        message = "audit types must not repeat"
-        raise ValueError(message)
-    return value
+    @field_validator("high_priority_audit_types")
+    @classmethod
+    def _audit_types_well_formed(cls, value: tuple[str, ...] | None) -> tuple[str, ...] | None:
+        return None if value is None else _check_audit_types(value)
 
 
 class HighSettings(BaseModel):
@@ -247,6 +260,21 @@ class ToolingGapSettings(BaseModel):
         return _check_audit_types(value)
 
 
+class SheetSettings(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    # Settings from a Google Sheet override this file; ships off. The key is a secret in the env.
+    enabled: StrictBool = False
+    spreadsheet_id: str | None = Field(default=None, pattern=SPREADSHEET_ID_PATTERN)
+
+    @model_validator(mode="after")
+    def _enabled_needs_an_id(self) -> "SheetSettings":
+        if self.enabled and self.spreadsheet_id is None:
+            message = "spreadsheet_id is required when enabled is true"
+            raise ValueError(message)
+        return self
+
+
 # Only the local Claude CLI; no T3 or API value until a route is verified (D-01).
 TriageBackend = Literal["claude_cli"]
 
@@ -280,6 +308,7 @@ class RadarConfig(BaseModel):
     recurring: RecurringSettings = Field(default_factory=RecurringSettings)
     tooling_gaps: ToolingGapSettings = Field(default_factory=ToolingGapSettings)
     triage: TriageSettings = Field(default_factory=TriageSettings)
+    sheet: SheetSettings = Field(default_factory=SheetSettings)
     projects: dict[str, ProjectSettings] = Field(default_factory=dict)
 
     def mode_for(self, project_id: str) -> ProjectMode:
@@ -301,6 +330,20 @@ class RadarConfig(BaseModel):
             if value is not None
         }
         return self.defaults.model_copy(update=update) if update else self.defaults
+
+    def high_types_for(self, project_id: str) -> tuple[str, ...] | None:
+        """The project's high-priority audit types over the global list; None = every type."""
+        override = self.projects.get(project_id)
+        if override is not None and override.high_priority_audit_types is not None:
+            return override.high_priority_audit_types
+        return self.high.high_priority_audit_types
+
+    def reminder_days_for(self, project_id: str) -> int:
+        """The project's reminder interval over the global one."""
+        override = self.projects.get(project_id)
+        if override is not None and override.reminder_every_days is not None:
+            return override.reminder_every_days
+        return self.reminders.every_days
 
     def score_threshold_for(self, project_id: str, action_key: str) -> int | None:
         """The score below which the rule flags; None when off or not a score audit (D-08)."""

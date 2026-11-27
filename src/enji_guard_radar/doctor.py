@@ -8,7 +8,7 @@ description, so the report is safe to paste into a ticket.
 import stat
 from collections.abc import Mapping
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from enum import StrEnum
 from pathlib import Path
 from typing import Literal
@@ -38,6 +38,7 @@ NAME_SCHEDULE = "schedule"
 NAME_SCORES = "score rules"
 NAME_HIGH_PRIORITY = "high priority types"
 NAME_TRIAGE = "triage"
+NAME_SHEET = "settings sheet"
 NAME_CREDENTIALS = "guard login"
 NAME_TOKEN = "telegram token"
 NAME_GROUP = "group chat"
@@ -359,6 +360,55 @@ def verdict_high_priority(config: RadarConfig | None) -> CheckResult:
         CheckStatus.PASS,
         f"{count} {noun} high priority; every other audit type is digest-only",
     )
+
+
+@dataclass(frozen=True)
+class SheetFacts:
+    """What the shell found out about the settings sheet. Details never carry a cell value."""
+
+    # Why the sheet could not be read: the failure class and its sanitized message, which names
+    # the key variable when that is the problem.
+    unreachable: str | None = None
+    # Tab, row and column of what is wrong when the sheet was read but is not valid.
+    invalid: str | None = None
+    # Age of the last good copy; None = no copy was stored yet or the stored one is unusable.
+    copy_age: timedelta | None = None
+    # A copy is stored but no longer validates against the current YAML: the poll ignores it.
+    copy_unusable: bool = False
+
+
+def _age_text(age: timedelta) -> str:
+    minutes = max(int(age.total_seconds() // 60), 0)
+    days, rest = divmod(minutes, 24 * 60)
+    hours, mins = divmod(rest, 60)
+    if days:
+        return f"{days}d {hours}h"
+    return f"{hours}h {mins}m" if hours else f"{mins}m"
+
+
+def verdict_sheet(config: RadarConfig | None, facts: SheetFacts | None) -> CheckResult:
+    """Settings sheet: configured, reachable, valid, and how old the last good copy is."""
+    if config is None:
+        return _result(NAME_SHEET, CheckStatus.SKIP, SKIP_NEEDS_CONFIG)
+    if not config.sheet.enabled or facts is None:
+        return _result(
+            NAME_SHEET, CheckStatus.SKIP, "sheet.enabled is false: settings come from YAML only"
+        )
+    if facts.copy_unusable:
+        copy = "stored copy no longer validates against the current YAML and is ignored"
+    elif facts.copy_age is None:
+        copy = "no good copy stored yet"
+    else:
+        copy = f"last good copy {_age_text(facts.copy_age)} old"
+    if facts.unreachable is not None:
+        state = f"configured, not reachable ({facts.unreachable}); {copy}"
+    elif facts.invalid is not None:
+        state = f"configured, reachable, not valid ({facts.invalid}); {copy}"
+    else:
+        return _result(NAME_SHEET, CheckStatus.PASS, f"configured, reachable, valid; {copy}")
+    if facts.copy_age is None:
+        return _result(NAME_SHEET, CheckStatus.FAIL, f"{state}; the radar runs on YAML alone")
+    return _result(NAME_SHEET, CheckStatus.WARN, f"{state}; the copy is in use")
 
 
 def verdict_credentials(facts: CredentialFacts, *, path: Path, now: datetime) -> CheckResult:

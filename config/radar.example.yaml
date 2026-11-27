@@ -45,7 +45,8 @@ ops:
 # When `enji-guard-radar serve` polls (the Docker Compose service runs it). Slots are multiples of
 # every_minutes counted from 00:00 UTC, so 180 means 00:00, 03:00, 06:00, ... UTC. The value must
 # divide 1440 (1, 2, 3, 4, 5, 6, 8, 9, 10, 12, 15, 18, 20, 24, 30, 36, 40, 45, 48, 60, 72, 80, 90,
-# 120, 144, 180, 240, 288, 360, 480, 720, 1440). A restart of `serve` applies a change; `run`
+# 120, 144, 180, 240, 288, 360, 480, 720, 1440). `serve` takes the value again after every poll, so
+# a change here or in the settings sheet applies from the next slot without a restart; `run`
 # ignores this section.
 schedule:
   every_minutes: 180
@@ -109,6 +110,17 @@ triage:
   # Budget for one call in US dollars (0.01..5).
   max_cost_usd_per_call: 0.50
 
+# Settings from a Google Sheet (docs/deploy.md, "Settings from a Google Sheet"). Ships OFF.
+# When enabled, every poll reads the sheet and its values override this file field by field
+# (an empty cell means "not set": the value here applies). An unreachable or invalid sheet keeps
+# the last good copy (state/sheet-settings.json) and tells the ops chat once. The service account
+# key is a secret: it goes in the env file as GOOGLE_SERVICE_ACCOUNT_JSON, never in this file.
+# The sheet cannot set triage, ops or sheet values, and cannot reset a value here to null.
+sheet:
+  enabled: false
+  # The long id in the sheet's address: https://docs.google.com/spreadsheets/d/<spreadsheet_id>/edit
+  # spreadsheet_id: 1AbCdEfGhIjKlMnOpQrStUvWxYz0123456789
+
 # Per-project settings, keyed by Guard project id. Override beats defaults.
 # mode: active (default) | paused (listed as "not checked", no Guard calls) | excluded (ignored).
 #
@@ -119,6 +131,10 @@ triage:
 #     ai_readiness_below: 60    # 0..100; 0 disables the rule for this project
 #     tests_below: 50           # 0..100; 0 disables the rule for this project
 #     tooling_window_days: 90   # 7..365
+#     reminder_every_days: 3    # 1..90; this project's reminder interval instead of reminders.every_days
+#     high_priority_audit_types:  # non-empty list; instead of high.high_priority_audit_types
+#       - audit.security
+#       - audit.dependency-vulnerabilities
 #   "00000000-0000-4000-8000-00000000a005":
 #     mode: paused
 #   "00000000-0000-4000-8000-00000000a006":

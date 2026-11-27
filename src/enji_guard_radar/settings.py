@@ -2,7 +2,7 @@
 
 import logging
 import re
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from pathlib import Path
 
 from pydantic import BaseModel, ConfigDict, SecretStr
@@ -15,6 +15,8 @@ ENV_OPS_CHAT_ID = "TELEGRAM_OPS_CHAT_ID"
 # ASSUMPTION: CLAUDE_CODE_OAUTH_TOKEN is the name the claude CLI reads; plan 04-13 corrects it
 # if docs/triage-notes.md shows another.
 ENV_CLAUDE_TOKEN = "CLAUDE_CODE_OAUTH_TOKEN"
+# The Google service account key file as one line of JSON; read-only access to the settings sheet.
+ENV_SHEET_KEY = "GOOGLE_SERVICE_ACCOUNT_JSON"
 
 logger = logging.getLogger(__name__)
 
@@ -101,12 +103,23 @@ def load_claude_token(environ: Mapping[str, str], dotenv_path: Path | None) -> S
     return SecretStr(token) if token is not None else None
 
 
+def load_sheet_key(environ: Mapping[str, str], dotenv_path: Path | None) -> SecretStr | None:
+    """The service account key JSON from the environment, else `.env`; unset gives None."""
+    dotenv = read_dotenv(dotenv_path) if dotenv_path is not None else {}
+    key = _pick(ENV_SHEET_KEY, environ, dotenv)
+    logger.info("sheet service account key: %s", "set" if key is not None else "not set")
+    return SecretStr(key) if key is not None else None
+
+
 def known_secrets(
-    settings: TelegramSettings, claude_token: SecretStr | None = None
+    settings: TelegramSettings,
+    claude_token: SecretStr | None = None,
+    extra: Iterable[str] = (),
 ) -> tuple[str, ...]:
     secrets: list[str] = []
     if settings.bot_token is not None:
         secrets.append(settings.bot_token.get_secret_value())
     if claude_token is not None:
         secrets.append(claude_token.get_secret_value())
+    secrets.extend(extra)
     return tuple(secrets)

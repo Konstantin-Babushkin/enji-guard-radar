@@ -37,6 +37,7 @@ _EN: dict[str, Entry] = {
     "noun.item": ("item", "items"),
     # Plural for one as well: the English text has always said "1 failed polls in a row".
     "noun.failed_poll": ("failed polls", "failed polls"),
+    "noun.failed_read": ("failed read", "failed reads"),
     "severity.high": "high",
     "severity.medium": "medium",
     "severity.low": "low",
@@ -106,6 +107,25 @@ _EN: dict[str, Entry] = {
     "ops.reason.auth_client_gone": "Guard login client registration is gone: run `{command}`",
     "ops.reason.auth_rejected": "Guard login rejected: run `{command}`",
     "ops.reason.auth_forbidden": "Guard refused access (scope or permission): run `{command}`",
+    "ops.sheet.outage": (
+        "Radar settings sheet cannot be used: {reason}. Failing since {since} UTC "
+        "({failures} in a row). {fallback} "
+        "The radar keeps reading the sheet and reports here once when it works again."
+    ),
+    "ops.sheet.recovered": "Radar settings sheet works again (failing since {since} UTC).",
+    "ops.sheet.fallback_copy": "The last good copy from {fetched} UTC stays in use.",
+    "ops.sheet.fallback_yaml": "No good copy exists, so the radar runs on radar.yaml alone.",
+    "ops.sheet.reason.key": (
+        "the Google service account key is missing or invalid (check the key variable "
+        "in the env file)"
+    ),
+    "ops.sheet.reason.network": "Google is unreachable or failing",
+    "ops.sheet.reason.denied": (
+        "Google refused access (share the sheet with the service account and enable the Sheets API)"
+    ),
+    "ops.sheet.reason.not_found": "the spreadsheet was not found (check sheet.spreadsheet_id)",
+    "ops.sheet.reason.response": "Google answered with data the radar does not accept",
+    "ops.sheet.reason.invalid": "the sheet is invalid ({detail})",
     "ops.halt": (
         "Guard radar halted: the state file is corrupt ({reason}). "
         "Nothing was sent and nothing was reset. "
@@ -131,6 +151,7 @@ _RU: dict[str, Entry] = {
     "noun.problem": ("проблема", "проблемы", "проблем"),
     "noun.item": ("открытый пункт", "открытых пункта", "открытых пунктов"),
     "noun.failed_poll": ("неудачный опрос", "неудачных опроса", "неудачных опросов"),
+    "noun.failed_read": ("неудачное чтение", "неудачных чтения", "неудачных чтений"),
     "severity.high": "высокая",
     "severity.medium": "средняя",
     "severity.low": "низкая",
@@ -206,6 +227,25 @@ _RU: dict[str, Entry] = {
     "ops.reason.auth_forbidden": (
         "Guard отказал в доступе (права или область): выполните `{command}`"
     ),
+    "ops.sheet.outage": (
+        "Таблицу настроек радара нельзя использовать: {reason}. Сбои с {since} UTC "
+        "({failures} подряд). {fallback} "
+        "Радар продолжает читать таблицу и один раз сообщит здесь, когда она заработает."
+    ),
+    "ops.sheet.recovered": "Таблица настроек радара снова работает (сбои с {since} UTC).",
+    "ops.sheet.fallback_copy": "Продолжает действовать последняя рабочая копия от {fetched} UTC.",
+    "ops.sheet.fallback_yaml": "Рабочей копии нет, поэтому радар работает только по radar.yaml.",
+    "ops.sheet.reason.key": (
+        "ключ сервисного аккаунта Google не задан или неверен (проверьте переменную с ключом "
+        "в env-файле)"
+    ),
+    "ops.sheet.reason.network": "Google недоступен или сбоит",
+    "ops.sheet.reason.denied": (
+        "Google отказал в доступе (откройте таблицу сервисному аккаунту и включите Sheets API)"
+    ),
+    "ops.sheet.reason.not_found": "таблица не найдена (проверьте sheet.spreadsheet_id)",
+    "ops.sheet.reason.response": "Google ответил данными, которые радар не принимает",
+    "ops.sheet.reason.invalid": "таблица неверна ({detail})",
     "ops.halt": (
         "Guard radar остановлен: файл состояния повреждён ({reason}). "
         "Ничего не отправлено и ничего не сброшено. "
