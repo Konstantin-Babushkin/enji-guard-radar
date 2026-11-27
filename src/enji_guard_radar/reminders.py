@@ -47,13 +47,15 @@ def reminders_due(
     reminded_at: Mapping[SeriesKey, datetime],
     planned: Collection[AlertKey],
     every_days: int,
+    every_days_by_project: Mapping[str, int] | None = None,
     now: datetime,
 ) -> tuple[Alert, ...]:
     """Open High series whose last alert or reminder is at least `every_days` old, worst first.
 
     A series with no `alerted_at` was never alerted and is never reminded; a series being
     alerted in this run (`planned`) is not reminded. There is no cap: the same series is due
-    again every interval while it stays open.
+    again every interval while it stays open. `every_days_by_project` overrides `every_days` for
+    the projects it names.
     """
     if now.tzinfo is None:
         message = "now must be timezone-aware"
@@ -61,7 +63,10 @@ def reminders_due(
     if every_days < 1:
         message = "every_days must be at least 1"
         raise ValueError(message)
-    interval = timedelta(days=every_days)
+    by_project = every_days_by_project or {}
+    if any(days < 1 for days in by_project.values()):
+        message = "every_days must be at least 1"
+        raise ValueError(message)
     due: dict[AlertKey, Alert] = {}
     for alert in alerts:
         if alert.kind is not AlertKind.HIGH_FINDINGS or not alert.count or alert.key in planned:
@@ -75,7 +80,7 @@ def reminders_due(
         reminded = reminded_at.get(_series(alert.key))
         clock = alerted if reminded is None else max(alerted, reminded)
         elapsed = now - clock
-        if elapsed >= interval:
+        if elapsed >= timedelta(days=by_project.get(alert.key.project_id, every_days)):
             due[alert.key] = alert
             logger.debug(
                 "reminder due for %s: clock %d days old", alert.key.as_text(), elapsed.days

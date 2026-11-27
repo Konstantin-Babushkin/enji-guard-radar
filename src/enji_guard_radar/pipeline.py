@@ -321,7 +321,7 @@ def _run_locked(deps: Deps, now: datetime) -> RunReport:
         }
     )
     rec = reconcile(state, polled.evaluations, now)
-    rec = _without_reclassified(rec, deps.config.high.high_priority_audit_types)
+    rec = _without_reclassified(rec, deps.config.high_types_for)
     # Everything that closed between polls is remembered for the digest, on disk before any send.
     rec = rec.model_copy(update={"state": append_resolved(rec.state, rec.resolved, now)})
     logger.info(
@@ -436,13 +436,14 @@ def _run_locked(deps: Deps, now: datetime) -> RunReport:
 
 
 def _without_reclassified(
-    rec: Reconciliation, high_types: Collection[str] | None
+    rec: Reconciliation, high_types_for: Callable[[str], Collection[str] | None]
 ) -> Reconciliation:
     """Drop resolved High keys whose type is now low priority: the series is open, not closed."""
     kept = tuple(
         key
         for key in rec.resolved
-        if key.level != HIGH_LEVEL or is_high_priority(key.action_key, high_types)
+        if key.level != HIGH_LEVEL
+        or is_high_priority(key.action_key, high_types_for(key.project_id))
     )
     skipped = len(rec.resolved) - len(kept)
     if not skipped:
@@ -479,6 +480,10 @@ def _due_reminders(
         reminded_at=reminded_at,
         planned={alert.key for alert in planned},
         every_days=deps.config.reminders.every_days,
+        every_days_by_project={
+            project_id: deps.config.reminder_days_for(project_id)
+            for project_id in {alert.key.project_id for alert in open_high}
+        },
         now=now,
     )
     return render_reminders(due, language=deps.config.messages.language)
@@ -882,7 +887,6 @@ def _evaluate_projects(
         if configured_id not in listed_ids:
             logger.warning("config names project id %s, which Guard did not list", configured_id)
 
-    high_types = deps.config.high.high_priority_audit_types
     results: list[ProjectResult] = []
     evaluations: list[ProjectEvaluation] = []
     histories = {h.key(): h for h in state.histories}
@@ -913,6 +917,7 @@ def _evaluate_projects(
                 ProjectEvaluation(project_id=project.id, outcome=EvaluationOutcome.skipped)
             )
             continue
+        high_types = deps.config.high_types_for(project.id)
         skip = skip_report_for(project.id, histories, scores)
         data = fetch_project(deps.guard, project, skip_report=skip)
         threshold = deps.config.thresholds_for(project.id).stale_after_days
