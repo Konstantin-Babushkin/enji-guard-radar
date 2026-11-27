@@ -96,8 +96,13 @@ def serve_loop(
     clock: Clock,
     stop: StopRequest,
     wait: Callable[[float], object],
+    current_every_minutes: Callable[[], int] | None = None,
 ) -> None:
-    """Run `poll` on the slot grid until `stop` is set. `poll` returns the run's exit code."""
+    """Run `poll` on the slot grid until `stop` is set. `poll` returns the run's exit code.
+
+    `current_every_minutes` is asked after each poll: a changed value (the sheet or the YAML
+    changed `schedule.every_minutes`) sets the grid for the next slot, no restart needed.
+    """
 
     def wait_until(slot_time: datetime) -> bool:
         """False when a stop was requested before the slot came."""
@@ -134,6 +139,15 @@ def serve_loop(
             code = 2
         ended = clock()
         missed = skipped_slots(started, ended, every_minutes)
+        if current_every_minutes is not None:
+            refreshed = current_every_minutes()
+            if refreshed != every_minutes:
+                logger.info(
+                    "serve: schedule changed every_minutes=%d->%d, applies from the next slot",
+                    every_minutes,
+                    refreshed,
+                )
+                every_minutes = refreshed
         slot = next_slot(ended, every_minutes)
         reason = "scheduled"
         logger.info(
@@ -158,6 +172,7 @@ def run_serve(
     poll: Callable[[], int],
     clock: Clock,
     wait: Callable[[float], object] | None = None,
+    current_every_minutes: Callable[[], int] | None = None,
 ) -> int:
     """Install the stop handlers and loop. Returns 0 once stopped by a signal."""
     stop = StopRequest()
@@ -170,5 +185,6 @@ def run_serve(
             clock=clock,
             stop=stop,
             wait=pause,
+            current_every_minutes=current_every_minutes,
         )
     return 0
