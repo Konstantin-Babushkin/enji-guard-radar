@@ -78,6 +78,7 @@ def test_an_empty_key_variable_counts_as_not_set(tmp_path: Path) -> None:
     assert load_sheet_key({}, env) is None
 
 
-def test_the_env_example_names_the_key_variable_with_no_value() -> None:
-    example = read_env_file(ROOT / ".env.example")
-    assert example[ENV_SHEET_KEY] == ""
+def test_both_env_examples_name_the_key_variable_and_hold_no_real_value() -> None:
+    assert read_env_file(ROOT / ".env.example")[ENV_SHEET_KEY] == ""
+    placeholder = read_env_file(ROOT / "project.env.example")[ENV_SHEET_KEY]
+    assert placeholder.startswith("replace-with-")
