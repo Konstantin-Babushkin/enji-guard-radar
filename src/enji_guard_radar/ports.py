@@ -15,6 +15,7 @@ from enji_guard_radar.texts import ActionNotice
 
 if TYPE_CHECKING:
     # Type-only: loading ports must not load triage (secret_guard -> ports, titles -> secret_guard).
+    from enji_guard_radar.sheet_settings import SheetData
     from enji_guard_radar.triage import TriageOutcome, TriageRequest
 
 
@@ -137,4 +138,28 @@ class Triager(Protocol):
 
         No retry inside a run; the next run tries again.
         """
+        ...
+
+
+class SheetFailure(StrEnum):
+    """Why the settings sheet could not be read."""
+
+    KEY = "key"
+    NETWORK = "network"
+    DENIED = "denied"
+    NOT_FOUND = "not_found"
+    RESPONSE = "response"
+
+
+class SheetUnavailable(Exception):  # noqa: N818 - named for what the reader reports
+    """Message is sanitized text written by the adapter: never a URL, a key or a cell."""
+
+    def __init__(self, message: str, *, cause: SheetFailure) -> None:
+        super().__init__(message)
+        self.cause = cause
+
+
+class SheetReader(Protocol):
+    def read(self) -> SheetData:
+        """The cells of both tabs. Raise SheetUnavailable on any failure."""
         ...
