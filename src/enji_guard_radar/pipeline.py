@@ -7,7 +7,7 @@ saved right after that mark (at-least-once delivery).
 
 import logging
 from collections.abc import Callable, Collection, Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from enum import StrEnum
 
@@ -88,6 +88,13 @@ from enji_guard_radar.ports import (
 from enji_guard_radar.recurring_rules import is_recurring, trailing_high_runs
 from enji_guard_radar.reminders import mark_reminded, reminders_due, render_reminders
 from enji_guard_radar.score_rules import SCORE_ACTION_KEYS, LowScore, evaluate_scores
+from enji_guard_radar.sheet_sync import (
+    ConfigSource,
+    SheetOutage,
+    SheetResolution,
+    SheetSettingsSource,
+    sheet_ops_message,
+)
 from enji_guard_radar.stale import StaleResult, alert_for, evaluate_stale
 from enji_guard_radar.texts import (
     DEFAULT_LANGUAGE,
@@ -126,6 +133,9 @@ class Deps:
     triager: Triager | None = None
     cost_store: TriageCostStore | None = None
     known_secrets: tuple[str, ...] = ()
+    # With a sheet source the run reads the settings sheet under the state lock and uses the
+    # merged config; `config` is then the YAML base. None = the sheet is off.
+    sheet: SheetSettingsSource | None = None
 
 
 @dataclass(frozen=True)
@@ -205,6 +215,9 @@ class RunReport(BaseModel):
     # The weekly digest (D-01 to D-03): its fate this run and the messages it produced.
     digest: DigestStatus = DigestStatus.NOT_DUE
     digest_messages: tuple[OutboundMessage, ...] = ()
+    # The settings this run used (YAML, or YAML with the sheet over it) and where they came from.
+    effective_config: RadarConfig | None = None
+    config_source: ConfigSource = ConfigSource.YAML_ONLY
 
     @property
     def exit_code(self) -> int:
@@ -266,7 +279,15 @@ def run_once(deps: Deps) -> RunReport:
         if not acquired:
             logger.info("another radar run holds the state lock; exiting without doing anything")
             return _empty_report(now, RunOutcome.LOCKED)
-        return _run_locked(deps, now)
+        resolution = deps.sheet.resolve(deps.config, now) if deps.sheet is not None else None
+        run_deps = deps if resolution is None else replace(deps, config=resolution.config)
+        report = _run_locked(run_deps, now)
+        if resolution is not None and deps.sheet is not None:
+            _send_sheet_ops(run_deps, deps.sheet, resolution, now)
+        source = ConfigSource.YAML_ONLY if resolution is None else resolution.source
+        return report.model_copy(
+            update={"effective_config": run_deps.config, "config_source": source}
+        )
 
 
 def _run_locked(deps: Deps, now: datetime) -> RunReport:
@@ -642,6 +663,32 @@ def _send_digest(
     deps.store.save(state)
     logger.info("digest sent: %d message(s)", len(messages))
     return _DigestResult(state, DigestStatus.SENT, kept)
+
+
+def _send_sheet_ops(
+    deps: Deps, sheet: SheetSettingsSource, resolution: SheetResolution, now: datetime
+) -> None:
+    """Tell the ops chat the settings sheet failed or recovered; mark it once acknowledged."""
+    action = resolution.action
+    if action is None:
+        return
+    what = "outage" if isinstance(action, SheetOutage) else "recovery"
+    if deps.ops_notifier is None:
+        logger.error("ops chat not configured (%s): cannot report the sheet %s", OPS_CHAT_ENV, what)
+        return
+    message = sheet_ops_message(
+        action, language=deps.config.messages.language, copy_fetched_at=resolution.copy_fetched_at
+    )
+    outcome = deps.ops_notifier.send(message)
+    if not isinstance(outcome, Delivered):
+        logger.warning(
+            "ops message about the sheet %s not delivered (%s); retried next run",
+            what,
+            type(outcome).__name__,
+        )
+        return
+    sheet.acknowledge(resolution, now)
+    logger.info("ops chat told: sheet %s", what)
 
 
 def _log_poll(failures: int, failed: bool, cause: str) -> None:

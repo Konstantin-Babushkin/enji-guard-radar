@@ -13,7 +13,7 @@ from typing import TextIO
 
 from pydantic import SecretStr
 
-from enji_guard_radar import cli_auth, cli_doctor, cli_probe, cli_serve
+from enji_guard_radar import cli_auth, cli_config, cli_doctor, cli_probe, cli_serve
 from enji_guard_radar.config import ConfigError, RadarConfig, parse_config
 from enji_guard_radar.env_file import EnvFileError, read_env_file
 from enji_guard_radar.fixture_source import FixtureGuardTools
@@ -33,6 +33,7 @@ from enji_guard_radar.ports import (
     GuardTools,
     Notifier,
     Printed,
+    SheetReader,
     Triager,
 )
 from enji_guard_radar.secret_guard import SecretGatedNotifier, configure_logging, redact
@@ -44,8 +45,12 @@ from enji_guard_radar.settings import (
     known_secrets,
     load_claude_token,
     load_settings,
+    load_sheet_key,
     require_live,
 )
+from enji_guard_radar.sheet_client import SheetsHttp, key_secrets, make_sheet_reader
+from enji_guard_radar.sheet_store import FileSheetStore, ReadOnlySheetStore
+from enji_guard_radar.sheet_sync import SheetSettingsSource
 from enji_guard_radar.stale import StaleVerdict
 from enji_guard_radar.state_store import DryRunStateStore, FileStateStore
 from enji_guard_radar.telegram import HttpTransport, TelegramNotifier, UrllibTransport
@@ -187,6 +192,7 @@ def _build_parser() -> argparse.ArgumentParser:
         "--now", metavar="ISO8601", help="fixed clock, for example 2026-11-16T12:00:00Z"
     )
     cli_auth.add_parser(commands)
+    cli_config.add_parser(commands)
     cli_doctor.add_parser(commands)
     cli_probe.add_parser(commands)
     cli_serve.add_parser(commands)
@@ -279,6 +285,9 @@ def _run(
     sleep: Callable[[float], None] | None,
     guard_connector: GuardConnector | None,
     clock: Clock | None = None,
+    sheet_reader: SheetReader | None = None,
+    sheet_http: SheetsHttp | None = None,
+    on_config: Callable[[RadarConfig], None] | None = None,
 ) -> int:
     env_file: Path = args.env_file or Path(DEFAULT_ENV_FILE)
     try:
@@ -326,6 +335,19 @@ def _run(
         # The Claude token must be redacted from logs and output too (D-15).
         configure_logging(level=logging.INFO, known_secrets=secrets, stream=sys.stderr)
 
+    sheet: SheetSettingsSource | None = None
+    if config.sheet.enabled:
+        key = load_sheet_key(environ, env_file)
+        secrets = (*secrets, *key_secrets(key))
+        configure_logging(level=logging.INFO, known_secrets=secrets, stream=sys.stderr)
+        reader = make_sheet_reader(
+            config.sheet, key, injected=sheet_reader, http=sheet_http, clock=system_clock
+        )
+        file_store = FileSheetStore(args.state_dir)
+        sheet = SheetSettingsSource(
+            reader, ReadOnlySheetStore(file_store) if args.dry_run else file_store
+        )
+
     printer = PrintNotifier()
     notifier: Notifier
     ops_notifier: Notifier | None
@@ -354,6 +376,7 @@ def _run(
         triager=triager,
         cost_store=cost_store,
         known_secrets=triage_secrets,
+        sheet=sheet,
     )
     try:
         report = run_once(deps)
@@ -363,6 +386,9 @@ def _run(
     finally:
         if lazy is not None:
             lazy.close()
+    effective = report.effective_config if report.effective_config is not None else config
+    if on_config is not None:
+        on_config(effective)
     cost_line = format_poll_cost(
         guard.cost(),
         projects=len(report.results),
@@ -370,7 +396,9 @@ def _run(
     )
     logger.info("%s", cost_line)
     if args.dry_run:
-        dry_run = format_dry_run_report(report, printer.messages, language=config.messages.language)
+        dry_run = format_dry_run_report(
+            report, printer.messages, language=effective.messages.language
+        )
         text = dry_run + cost_line + "\n"
     else:
         text = format_live_summary(report)
@@ -379,6 +407,16 @@ def _run(
             text += follow_ups + "\n"
     out.write(redact(text, secrets))
     return report.exit_code
+
+
+class _LiveSchedule:
+    """The poll interval of the newest effective config: the one writer is `update`."""
+
+    def __init__(self, every_minutes: int) -> None:
+        self.every_minutes = every_minutes
+
+    def update(self, config: RadarConfig) -> None:
+        self.every_minutes = config.schedule.every_minutes
 
 
 def _serve(
@@ -391,8 +429,14 @@ def _serve(
     guard_connector: GuardConnector | None,
     clock: Clock,
     wait: Callable[[float], object] | None,
+    sheet_reader: SheetReader | None = None,
+    sheet_http: SheetsHttp | None = None,
 ) -> int:
-    """Poll on the slots of `schedule.every_minutes` until SIGTERM or SIGINT; exit 0."""
+    """Poll on the slots of `schedule.every_minutes` until SIGTERM or SIGINT; exit 0.
+
+    The interval is taken again from the effective config (YAML, then the sheet over it) after
+    every poll, so a change applies from the next slot without a restart.
+    """
     configure_logging(level=logging.INFO, known_secrets=(), stream=sys.stderr)
     try:
         config = read_config(args.config)
@@ -410,6 +454,8 @@ def _serve(
         env_file=args.env_file,
     )
 
+    schedule = _LiveSchedule(config.schedule.every_minutes)
+
     def poll() -> int:
         return _run(
             poll_args,
@@ -419,14 +465,18 @@ def _serve(
             sleep=sleep,
             guard_connector=guard_connector,
             clock=clock,
+            sheet_reader=sheet_reader,
+            sheet_http=sheet_http,
+            on_config=schedule.update,
         )
 
     return cli_serve.run_serve(
-        every_minutes=config.schedule.every_minutes,
+        every_minutes=schedule.every_minutes,
         state_dir=args.state_dir,
         poll=poll,
         clock=clock,
         wait=wait,
+        current_every_minutes=lambda: schedule.every_minutes,
     )
 
 
@@ -462,6 +512,8 @@ def main(
     guard_connector: GuardConnector | None = None,
     serve_clock: Clock | None = None,
     serve_wait: Callable[[float], object] | None = None,
+    sheet_reader: SheetReader | None = None,
+    sheet_http: SheetsHttp | None = None,
 ) -> int:
     out = stdout if stdout is not None else sys.stdout
     args = _build_parser().parse_args(argv)
@@ -474,6 +526,8 @@ def main(
             transport=transport,
             sleep=sleep,
             guard_connector=guard_connector,
+            sheet_reader=sheet_reader,
+            sheet_http=sheet_http,
         )
 
     if args.command == "serve":
@@ -486,6 +540,8 @@ def main(
             guard_connector=guard_connector,
             clock=serve_clock if serve_clock is not None else system_clock,
             wait=serve_wait,
+            sheet_reader=sheet_reader,
+            sheet_http=sheet_http,
         )
 
     if args.command == "auth":
@@ -506,6 +562,19 @@ def main(
             transport=transport if transport is not None else UrllibTransport(),
             guard_connector=guard_connector or (lambda d: open_guard(d, clock=system_clock)),
             clock=system_clock,
+            sheet_reader=sheet_reader,
+            sheet_http=sheet_http,
+        )
+
+    if args.command == "effective-config":
+        return cli_config.run_effective_config(
+            args,
+            out=out,
+            environ=environ if environ is not None else os.environ,
+            read_config=read_config,
+            clock=system_clock,
+            sheet_reader=sheet_reader,
+            sheet_http=sheet_http,
         )
 
     if args.command == "probe":

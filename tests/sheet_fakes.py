@@ -6,6 +6,7 @@ from enji_guard_radar.sheet_settings import (
     PROJECT_COLUMNS,
     SheetData,
 )
+from enji_guard_radar.sheet_sync import SheetRecord
 
 PROJECT_A = "00000000-0000-4000-8000-00000000a001"
 PROJECT_B = "00000000-0000-4000-8000-00000000a002"
@@ -47,3 +48,16 @@ class FakeSheetReader:
             message = f"scripted failure: {answer.value}"
             raise SheetUnavailable(message, cause=answer)
         return answer
+
+
+class MemorySheetStore:
+    def __init__(self) -> None:
+        self.record = SheetRecord()
+        self.saves = 0
+
+    def load(self) -> SheetRecord:
+        return self.record
+
+    def save(self, record: SheetRecord) -> None:
+        self.record = record
+        self.saves += 1
