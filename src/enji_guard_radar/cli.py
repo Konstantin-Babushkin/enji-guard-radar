@@ -444,10 +444,11 @@ def _serve(
         logger.error("serve rejected: %s", error)  # noqa: TRY400
         print(f"error: {error}", file=sys.stderr)
         return 2
-    # What `run` takes: a live poll, real Guard, no fixed clock. Config and env are read per run.
+    # What `run` takes: no fixed clock; config and env are read per run. Fixtures and dry-run
+    # are the same switches `run` has, so the offline mode shares the one poll path.
     poll_args = argparse.Namespace(
-        fixtures=None,
-        dry_run=False,
+        fixtures=args.fixtures,
+        dry_run=args.dry_run,
         now=None,
         config=args.config,
         state_dir=args.state_dir,
@@ -457,7 +458,7 @@ def _serve(
     schedule = _LiveSchedule(config.schedule.every_minutes)
 
     def poll() -> int:
-        return _run(
+        code = _run(
             poll_args,
             out,
             environ=environ,
@@ -469,6 +470,9 @@ def _serve(
             sheet_http=sheet_http,
             on_config=schedule.update,
         )
+        if code == 0 and args.ready_file is not None:
+            cli_serve.mark_ready(args.ready_file)
+        return code
 
     return cli_serve.run_serve(
         every_minutes=schedule.every_minutes,
