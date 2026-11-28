@@ -201,7 +201,7 @@ class DigestSettings(BaseModel):
     hour_utc: StrictInt = Field(default=5, ge=DIGEST_HOUR_MIN, le=DIGEST_HOUR_MAX)
     # A digest not acknowledged within this many hours of its planned moment is skipped (D-02).
     grace_hours: StrictInt = Field(default=24, ge=GRACE_HOURS_MIN, le=GRACE_HOURS_MAX)
-    # Items shown in one digest before the rest is summarised (D-06).
+    # Clean projects listed one by one in one digest before the rest is summarised (D-06).
     max_items: StrictInt = Field(default=10, ge=MAX_ITEMS_MIN, le=MAX_ITEMS_MAX)
 
     @property

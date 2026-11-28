@@ -75,7 +75,10 @@ def test_v1_state_file_upgrades_through_a_live_run(tmp_path: Path) -> None:
     assert len(transport.requests) == 2
     assert sum(text.startswith("🟡 <b>Project A") and "no scan" in text for text in texts) == 1
     assert (
-        sum(text.startswith("🔴 <b>Project A") and "High 1 in 1 audit" in text for text in texts)
+        sum(
+            text.startswith("🔴 <b>Project A") and "high problems 1, in audit security" in text
+            for text in texts
+        )
         == 1
     )
     state = load_state(tmp_path)

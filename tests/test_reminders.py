@@ -81,7 +81,10 @@ def test_one_reminder_for_a_series_whose_clock_is_a_week_old() -> None:
     messages = render_reminders(result)
     assert len(messages) == 1
     text = messages[0].text
-    assert text == "<b>Radar reminder · 1 open</b>\n🔴 <b>Acme</b> · security High 3 · 12d"
+    assert text == (
+        "<b>Radar reminder · open: 1 project</b>\n"
+        "🔴 <b>Acme</b>: high problems 3, in audit security · open for 12 days"
+    )
     assert messages[0].keys == (alert.key,)
     assert telegram_length(text) < TELEGRAM_MAX_CHARS
 
@@ -237,9 +240,9 @@ def test_short_reminder_text() -> None:
     second = high("Project D", pid="d", action="audit.tests", count=1, age=9)
     (message,) = render_reminders([first, second])
     assert message.text == (
-        "<b>Radar reminder · 2 open</b>\n"
-        "🔴 <b>Project A</b> · security High 3 · 15d\n"
-        "🔴 <b>Project D</b> · tests High 1 · 9d"
+        "<b>Radar reminder · open: 2 projects</b>\n"
+        "🔴 <b>Project A</b>: high problems 3, in audit security · open for 15 days\n"
+        "🔴 <b>Project D</b>: high problems 1, in audit tests · open for 9 days"
     )
 
 
@@ -250,9 +253,9 @@ def test_render_two_series_in_one_message_with_both_keys_in_order() -> None:
     assert len(messages) == 1
     lines = messages[0].text.split("\n")
     assert lines == [
-        "<b>Radar reminder · 2 open</b>",
-        "🔴 <b>Beta</b> · deps High 4 · 3d",
-        "🔴 <b>Acme</b> · security High 1 · 12d",
+        "<b>Radar reminder · open: 2 projects</b>",
+        "🔴 <b>Beta</b>: high problems 4, in audit deps · open for 3 days",
+        "🔴 <b>Acme</b>: high problems 1, in audit security · open for 12 days",
     ]
     assert messages[0].keys == (second.key, first.key)
 
@@ -266,10 +269,6 @@ def test_render_text_is_counts_only() -> None:
 def test_render_escapes_names_and_cuts_long_ones() -> None:
     text = render_reminders([high('<b>&"x')])[0].text
     assert '<b>&lt;b&gt;&amp;"x</b>' in text
-    both = render_reminders(
-        [high("Acme", repo_id="r1", repo="a<i>/b&c"), high("Acme", repo_id="r2", repo="other")]
-    )[0].text
-    assert "(a&lt;i&gt;/b&amp;c)" in both
     long_text = render_reminders([high("n" * 200)])[0].text
     assert "n" * (MAX_NAME_CHARS - 3) + "..." in long_text
     assert "n" * MAX_NAME_CHARS not in long_text
@@ -286,7 +285,9 @@ def test_split_into_numbered_messages_each_owning_its_keys() -> None:
     total = len(messages)
     for number, message in enumerate(messages, start=1):
         assert telegram_length(message.text) <= 1000
-        assert message.text.startswith(f"<b>Radar reminder · 60 open ({number}/{total})</b>")
+        assert message.text.startswith(
+            f"<b>Radar reminder · open: 60 projects ({number}/{total})</b>"
+        )
         assert len(message.text.split("\n")) - 1 == len(message.keys)
     assert keys_of(messages) == [a.key for a in alerts]
 
@@ -294,7 +295,7 @@ def test_split_into_numbered_messages_each_owning_its_keys() -> None:
 def test_split_not_needed_keeps_a_plain_title() -> None:
     messages = render_reminders([high(pid=f"p{i}") for i in range(3)])
     assert len(messages) == 1
-    assert messages[0].text.split("\n")[0] == "<b>Radar reminder · 3 open</b>"
+    assert messages[0].text.split("\n")[0] == "<b>Radar reminder · open: 3 projects</b>"
 
 
 def test_reminder_russian_text() -> None:
@@ -302,24 +303,44 @@ def test_reminder_russian_text() -> None:
     second = high("Project D", pid="d", action="audit.tests", count=1, age=9)
     (message,) = render_reminders([first, second], language="ru")
     assert message.text == (
-        "<b>Радар · напоминание · открыто: 2</b>\n"
-        "🔴 <b>Project A</b> · security высокие 3 · 15 д\n"
-        "🔴 <b>Project D</b> · tests высокие 1 · 9 д"
+        "<b>Радар · напоминание · открыто: 2 проекта</b>\n"
+        "🔴 <b>Project A</b>: высоких проблем 3, в аудите security · держится 15 дней\n"
+        "🔴 <b>Project D</b>: высоких проблем 1, в аудите tests · держится 9 дней"
     )
 
 
-def test_reminder_shows_repo_only_when_ambiguous() -> None:
+def test_reminder_is_one_line_per_project_whatever_the_audits_and_repos() -> None:
     alerts = [
-        high("P", pid="p", repo_id="r1", repo="r1", count=3),
-        high("P", pid="p", repo_id="r2", repo="r2", count=2),
-        high("Q", pid="q", repo_id="r1", repo="r1", action="audit.tests", count=1),
-        high("S", pid="s", repo_id="r1", repo="r1", action="audit.security", count=1),
-        high("S", pid="s", repo_id="r2", repo="r2", action="audit.tests", count=1),
+        high("P", pid="p", repo_id="r1", repo="acme/secret", count=3, age=20),
+        high("P", pid="p", repo_id="r2", repo="acme/other", count=2, age=9),
+        high("P", pid="p", repo_id="r1", action="audit.tests", count=1, age=4),
+        high("Q", pid="q", count=1, age=2),
     ]
-    lines = render_reminders(alerts)[0].text.split("\n")[1:]
-    assert "security (r1) High 3" in lines[0]
-    assert "security (r2) High 2" in lines[1]
-    assert not any("(" in line for line in lines[2:])
+    messages = render_reminders(alerts)
+    assert len(messages) == 1
+    lines = messages[0].text.split("\n")
+    assert lines == [
+        "<b>Radar reminder · open: 2 projects</b>",
+        "🔴 <b>P</b>: high problems 6, in 2 audits, mostly security · open for 20 days",
+        "🔴 <b>Q</b>: high problems 1, in audit security · open for 2 days",
+    ]
+    assert "acme/" not in messages[0].text
+    assert messages[0].keys == tuple(a.key for a in alerts)
+
+
+def test_reminder_keeps_every_series_key_of_a_project_in_one_chunk() -> None:
+    alerts = [
+        high(f"P{i:03d}".ljust(80, "n"), pid=f"p{i:03d}", repo_id=f"r{r}", count=5 - r)
+        for i in range(40)
+        for r in range(3)
+    ]
+    messages = render_reminders(alerts, max_chars=1000)
+    assert len(messages) > 1
+    for message in messages:
+        owners = {key.project_id for key in message.keys}
+        assert len(message.keys) == 3 * len(owners)
+        assert len(message.text.split("\n")) - 1 == len(owners)
+    assert keys_of(messages) == [a.key for a in alerts]
 
 
 def test_reminder_split_80_series_keeps_one_total_in_every_title() -> None:
@@ -328,7 +349,10 @@ def test_reminder_split_80_series_keeps_one_total_in_every_title() -> None:
     total = len(messages)
     assert total > 1
     for number, message in enumerate(messages, start=1):
-        assert message.text.split("\n")[0] == f"<b>Radar reminder · 80 open ({number}/{total})</b>"
+        assert (
+            message.text.split("\n")[0]
+            == f"<b>Radar reminder · open: 80 projects ({number}/{total})</b>"
+        )
         assert telegram_length(message.text) <= 1000
         assert len(message.text.split("\n")) - 1 == len(message.keys)
     assert keys_of(messages) == [a.key for a in alerts]
@@ -345,14 +369,14 @@ def test_reminder_has_no_claude_or_priority_text(language: Language) -> None:
 
 
 @pytest.mark.parametrize("language", ["en", "ru"])
-def test_reminder_escapes_name_and_repo(language: Language) -> None:
+def test_reminder_escapes_name_and_audit(language: Language) -> None:
     alerts = [
-        high('<b>&"x', pid="p", repo_id="r1", repo="a<i>/b&c"),
-        high('<b>&"x', pid="p", repo_id="r2", repo="d"),
+        high('<b>&"x', pid="p", repo_id="r1", action="audit.a<i>&c"),
+        high('<b>&"x', pid="p", repo_id="r2", action="audit.a<i>&c"),
     ]
     text = render_reminders(alerts, language=language)[0].text
     assert '<b>&lt;b&gt;&amp;"x</b>' in text
-    assert "(a&lt;i&gt;/b&amp;c)" in text
+    assert "a&lt;i&gt;&amp;c" in text
     assert "<i>" not in text
 
 
@@ -368,7 +392,6 @@ def test_invalid_max_chars_raises(max_chars: int) -> None:
 @pytest.mark.parametrize(
     "alert",
     [
-        high(repo=None),
         high(age=None),
         high(count=None),
     ],

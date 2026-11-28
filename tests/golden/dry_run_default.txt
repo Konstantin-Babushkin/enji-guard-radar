@@ -1,28 +1,22 @@
 DRY RUN at 2026-11-18T06:00:00Z: nothing is sent and no state is written.
 --- would send to group ---
-<b>Radar weekly · 8 open</b>
-Last poll: 2026-11-18 06:00 UTC
-1 project could not be read in that poll.
-🔴 <b>Project A &lt;core&gt; &amp; "tools"</b> · security High 1 · 8d
-🟡 <b>Project E (paused in config)</b> · no scan 105d
-🟡 <b>Project B</b> · no scan 28d
-🟡 <b>Project C (no repositories)</b> · no scan yet
-🟡 <b>Project A &lt;core&gt; &amp; "tools"</b> · acme/web-a · no runs 60d: dead-code, dependency-hygiene, implementation-unification, security
-🟡 <b>Project B</b> · acme/service-b · no runs 60d: dead-code, dependency-hygiene, implementation-unification
-🟡 <b>Project E (paused in config)</b> · acme/legacy-e · no runs 60d: dead-code, dependency-hygiene, implementation-unification, security
-🟡 <b>Project F (excluded in config)</b> · acme/tools-f · no runs 60d: dependency-hygiene, implementation-unification, security
-Clean · 1
-🟢 <b>Project F (excluded in config)</b> · no high issues
-Ages count from the radar's first sight.
+<b>Radar · weekly digest</b>
+High problems: 1 in 1 project, closed this week: 0.
+🔴 <b>Project A &lt;core&gt; &amp; "tools"</b> — 1 high problem; most in: security; 8 days
+🟡 <b>Project E (paused in config)</b> — no scan for 105 days
+🟡 <b>Project B</b> — no scan for 28 days
+🟡 <b>Project C (no repositories)</b> — no scan yet
+🟢 <b>Project F (excluded in config)</b> — clean
+⚠️ Could not read 1 project · poll 2026-11-18 06:00 UTC
 
 --- baseline, not sent (4) ---
-🔴 <b>Project A &lt;core&gt; &amp; "tools"</b> · security High 0→1 · 8d
+🔴 <b>Project A &lt;core&gt; &amp; "tools"</b>: high problems 1, in audit security · open for 8 days
 
-🟡 <b>Project B</b> · no scan 28d
+🟡 <b>Project B</b>: no scan for 28 days
 
-🟡 <b>Project C (no repositories)</b> · no scan yet
+🟡 <b>Project C (no repositories)</b>: no scan yet
 
-🟡 <b>Project E (paused in config)</b> · no scan 105d
+🟡 <b>Project E (paused in config)</b>: no scan for 105 days
 
 --- not checked (1) ---
 Project D (Guard unreachable): Guard data unavailable (list_repositories failed: simulated Guard outage)

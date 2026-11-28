@@ -11,13 +11,11 @@ from enji_guard_radar.messages import (
     TELEGRAM_MAX_CHARS,
     UNNAMED_PROJECT,
     age_text,
-    ambiguous_series,
     audit_short,
     clean_name,
-    high_line,
-    high_where,
     marker,
     pack_items,
+    project_high_line,
     render_alert,
     render_messages,
     telegram_length,
@@ -131,23 +129,107 @@ def test_telegram_length_counts_utf16_units() -> None:
 
 def test_high_alert_is_one_line() -> None:
     alert = high()
-    assert render_alert(alert) == "🔴 <b>Project A</b> · security High 0→1 · 8d"
-    assert render_alert(alert, language="ru") == "🔴 <b>Project A</b> · security высокие 0→1 · 8 д"
+    assert render_alert(alert) == (
+        "🔴 <b>Project A</b>: high problems 1, in audit security · open for 8 days"
+    )
+    assert render_alert(alert, language="ru") == (
+        "🔴 <b>Project A</b>: высоких проблем 1, в аудите security · держится 8 дней"
+    )
 
 
-def test_high_rise_starts_from_the_previous_count() -> None:
-    assert render_alert(high(count=3, previous=1)) == "🔴 <b>Project A</b> · security High 1→3 · 8d"
-    # a retried new series (no previous count) starts from 0
-    assert render_alert(high(count=4, previous=None)).endswith("High 0→4 · 8d")
+@pytest.mark.parametrize(
+    ("age", "english", "russian"),
+    [
+        (0, "today", "сегодня"),
+        (1, "open for 1 day", "держится 1 день"),
+        (2, "open for 2 days", "держится 2 дня"),
+        (5, "open for 5 days", "держится 5 дней"),
+        (21, "open for 21 days", "держится 21 день"),
+    ],
+)
+def test_alert_line_spells_the_age_out(age: int, english: str, russian: str) -> None:
+    alert = high(age=age)
+    assert render_alert(alert).endswith(f" · {english}")
+    assert render_alert(alert, language="ru").endswith(f" · {russian}")
+
+
+@pytest.mark.parametrize(
+    ("count", "previous", "english", "russian"),
+    [
+        (3, 1, "high problems 3 (was 1)", "высоких проблем 3 (было 1)"),
+        (3, None, "high problems 3,", "высоких проблем 3,"),
+        (3, 0, "high problems 3,", "высоких проблем 3,"),
+    ],
+    ids=["rise", "new series", "was zero"],
+)
+def test_alert_line_shows_the_rise_only_from_a_previous_count(
+    count: int, previous: int | None, english: str, russian: str
+) -> None:
+    alert = high(count=count, previous=previous)
+    assert english in render_alert(alert)
+    assert russian in render_alert(alert, language="ru")
+    if previous in (None, 0):
+        assert "was" not in render_alert(alert)
+        assert "было" not in render_alert(alert, language="ru")
+
+
+def test_alert_line_for_the_project_example_in_both_languages() -> None:
+    alert = high("Enji Fleet", audit="audit.dependency-hygiene", count=3, previous=1, age=1)
+    assert render_alert(alert, language="ru") == (
+        "🔴 <b>Enji Fleet</b>: высоких проблем 3 (было 1), в аудите dependency-hygiene"
+        " · держится 1 день"
+    )
+    assert render_alert(alert) == (
+        "🔴 <b>Enji Fleet</b>: high problems 3 (was 1), in audit dependency-hygiene"
+        " · open for 1 day"
+    )
+
+
+def test_alert_line_for_several_audits_counts_them_and_names_the_worst() -> None:
+    group = [
+        high(audit="audit.security", count=1, age=3),
+        high(audit="audit.tests", count=4, age=9),
+        high(audit="audit.dead-code", count=2, age=5, repo="r2"),
+    ]
+    assert project_high_line(group, "en") == (
+        "🔴 <b>Project A</b>: high problems 7, in 3 audits, mostly tests · open for 9 days"
+    )
+    assert project_high_line(group, "ru") == (
+        "🔴 <b>Project A</b>: высоких проблем 7, в 3 аудитах, больше всего tests · держится 9 дней"
+    )
+
+
+def test_alert_line_for_two_audits_uses_the_plural_of_the_noun() -> None:
+    group = [high(audit="audit.security"), high(audit="audit.tests", repo="r2")]
+    assert "in 2 audits" in project_high_line(group, "en")
+    assert "в 2 аудитах" in project_high_line(group, "ru")
+
+
+def test_alert_line_leaves_the_worst_audit_out_when_it_would_not_fit_one_line() -> None:
+    group = [
+        high("Project A", audit="audit.security", count=1),
+        high("Project A", audit="audit." + "x" * 60, count=5, repo="r2"),
+    ]
+    line = project_high_line(group, "en")
+    assert line == "🔴 <b>Project A</b>: high problems 6, in 2 audits · open for 8 days"
+    assert "x" not in line
+
+
+def test_alert_line_breaks_a_tie_between_audits_by_name() -> None:
+    group = [high(audit="audit.tests", count=2), high(audit="audit.dead-code", count=2, repo="r2")]
+    assert "mostly dead-code" in project_high_line(group, "en")
 
 
 def test_stale_line() -> None:
-    assert render_alert(stale("Project B", age=28)) == "🟡 <b>Project B</b> · no scan 28d"
-    assert render_alert(stale("Project B", age=1)) == "🟡 <b>Project B</b> · no scan 1d"
+    assert render_alert(stale("Project B", age=28)) == "🟡 <b>Project B</b>: no scan for 28 days"
+    assert render_alert(stale("Project B", age=1)) == "🟡 <b>Project B</b>: no scan for 1 day"
+    assert render_alert(stale("Project B", age=2), language="ru") == (
+        "🟡 <b>Project B</b>: нет проверок 2 дня"
+    )
 
 
 def test_never_ran_line_does_not_depend_on_the_repo_count() -> None:
-    expected = "🟡 <b>Project C</b> · no scan yet"
+    expected = "🟡 <b>Project C</b>: no scan yet"
     for repos in (0, 1, 3):
         assert render_alert(never_ran("Project C", repos=repos)) == expected
 
@@ -170,52 +252,17 @@ def test_audit_short_strips_the_prefix_and_escapes() -> None:
     assert audit_short("audit.<u>&") == "&lt;u&gt;&amp;"
 
 
-def test_age_text_in_both_languages() -> None:
-    assert (age_text(8, "en"), age_text(8, "ru"), age_text(105, "ru")) == ("8d", "8 д", "105 д")
-
-
-def test_ambiguous_series_needs_two_repos_of_one_project_and_audit() -> None:
-    first, second = high(repo="r1"), high(repo="r2")
-    other_audit = high(repo="r1", audit="audit.tests")
-    assert ambiguous_series([first, second, other_audit]) == {("p1", "audit.security")}
-    assert ambiguous_series([first, other_audit]) == frozenset()
-    assert ambiguous_series([first, first]) == frozenset()
-    assert ambiguous_series([stale("B"), stale("B")]) == frozenset()
-
-
-def test_high_line_arrow_and_repo_variants() -> None:
-    alert = high()
-    plain = "🔴 <b>Project A</b> · security High 1 · 8d"
-    assert high_line(alert, language="en", show_repo=False, arrow=False) == plain
-    assert high_line(alert, language="en", show_repo=False, arrow=True).endswith("High 0→1 · 8d")
-    assert high_line(alert, language="en", show_repo=True, arrow=True) == (
-        "🔴 <b>Project A</b> · security (acme/r1) High 0→1 · 8d"
-    )
-    assert high_line(alert, language="ru", show_repo=False, arrow=False) == (
-        "🔴 <b>Project A</b> · security высокие 1 · 8 д"
-    )
-
-
 @pytest.mark.parametrize(
-    ("repo_name", "expected"),
+    ("days", "english", "russian"),
     [
-        ("acme/r1", "audit.security (acme/r1)"),
-        ("  acme \n r1\x00 ", "audit.security (acme r1)"),
-        ("a<b>&", "audit.security (a&lt;b&gt;&amp;)"),
-        ("", f"audit.security ({UNNAMED_PROJECT})"),
+        (0, "today", "сегодня"),
+        (1, "1 day", "1 день"),
+        (3, "3 days", "3 дня"),
+        (11, "11 days", "11 дней"),
     ],
-    ids=["plain", "cleaned", "escaped", "empty-name"],
 )
-def test_high_where_names_the_audit_and_the_cleaned_escaped_repo(
-    repo_name: str, expected: str
-) -> None:
-    assert high_where(high(repo_name=repo_name)) == expected
-
-
-def test_high_where_needs_a_repo_name() -> None:
-    alert = high().model_copy(update={"repo_name": None})
-    with pytest.raises(ValueError, match=r"^a High alert needs repo_name$"):
-        high_where(alert)
+def test_age_text_is_today_or_the_counted_days(days: int, english: str, russian: str) -> None:
+    assert (age_text(days, "en"), age_text(days, "ru")) == (english, russian)
 
 
 @pytest.mark.parametrize("missing", ["age_days", "last_run_at"])
@@ -228,9 +275,8 @@ def test_render_alert_rejects_a_stale_alert_without_age_or_last_run(missing: str
 @pytest.mark.parametrize(
     ("missing", "message"),
     [
-        ("age_days", "a High alert needs age_days"),
-        ("repo_name", "a High alert needs repo_name"),
-        ("count", "a High alert needs count"),
+        ("age_days", "a High alert needs age_days and count"),
+        ("count", "a High alert needs age_days and count"),
         ("seen_since", "a High alert needs seen_since"),
     ],
 )
@@ -292,7 +338,9 @@ def test_group_message_never_shows_repo_or_audit() -> None:
     second = high(repo="r2", repo_name="acme/r2")
     tests_alert = high(repo="r1", audit="audit.tests", count=2)
     (message,) = render_messages([first, second, tests_alert], collapse_above=5)
-    assert message.text == "🔴 <b>Project A</b> · High 4 in 2 audits · 8d"
+    assert message.text == (
+        "🔴 <b>Project A</b>: high problems 4, in 2 audits, mostly security · open for 8 days"
+    )
     assert "acme/" not in message.text
     assert len(message.keys) == 3
 
@@ -301,7 +349,9 @@ def test_escaping_name_once() -> None:
     first = high('A<b>&"x"', repo="r1", repo_name="r<i>&", audit="audit.<u>")
     second = high('A<b>&"x"', repo="r2", repo_name="r2", audit="audit.<u>")
     line = render_messages([first, second], collapse_above=5)[0].text
-    assert line == '🔴 <b>A&lt;b&gt;&amp;"x"</b> · High 2 in 1 audit · 8d'
+    assert line == (
+        '🔴 <b>A&lt;b&gt;&amp;"x"</b>: high problems 2, in audit &lt;u&gt; · open for 8 days'
+    )
     assert "&amp;amp;" not in line
 
 
@@ -353,9 +403,9 @@ def test_collapse_header_and_items_worst_first() -> None:
     (message,) = render_messages(alerts, collapse_above=2)
     assert message.text.splitlines() == [
         "Radar · problems: 3 projects",
-        "🔴 <b>Project A</b> · High 1 in 1 audit · 8d",
-        "🟡 <b>Project E</b> · no scan 105d",
-        "🟡 <b>Project B</b> · no scan 28d",
+        "🔴 <b>Project A</b>: high problems 1, in audit security · open for 8 days",
+        "🟡 <b>Project E</b>: no scan for 105 days",
+        "🟡 <b>Project B</b>: no scan for 28 days",
     ]
     (russian,) = render_messages(alerts, collapse_above=2, language="ru")
     assert russian.text.splitlines()[0] == "Радар · проблемы: 3 проекта"
@@ -372,8 +422,8 @@ def test_summary_has_one_line_per_project() -> None:
     )
     assert message.text.splitlines() == [
         "Radar · problems: 2 projects",
-        "🔴 <b>Project A</b> · High 4 in 2 audits · 8d",
-        "🟡 <b>B</b> · no scan 27d",
+        "🔴 <b>Project A</b>: high problems 4, in 2 audits, mostly security · open for 8 days",
+        "🟡 <b>B</b>: no scan for 27 days",
     ]
 
 
@@ -421,7 +471,7 @@ def test_split_each_chunk_carries_the_keys_of_its_items() -> None:
     for part in parts:
         item_lines = part.text.split("\n")[1:]
         assert len(item_lines) == len(part.keys)
-        assert all(re.fullmatch(r"🟡 <b>.+</b> · no scan \d+d", line) for line in item_lines)
+        assert all(re.fullmatch(r"🟡 <b>.+</b>: no scan for \d+ days", line) for line in item_lines)
 
 
 @pytest.mark.parametrize("language", ["en", "ru"])

@@ -13,14 +13,14 @@ from enji_guard_radar.messages import (
     DEFAULT_MAX_CHARS,
     MIN_MAX_CHARS,
     TELEGRAM_MAX_CHARS,
-    ambiguous_series,
     clean_name,
-    high_line,
     pack_items,
+    project_groups,
+    project_high_line,
     telegram_length,
 )
 from enji_guard_radar.model import Alert, AlertKey, AlertKind, OutboundMessage
-from enji_guard_radar.texts import DEFAULT_LANGUAGE, Language, text
+from enji_guard_radar.texts import DEFAULT_LANGUAGE, Language, counted, text
 
 logger = logging.getLogger(__name__)
 
@@ -92,13 +92,10 @@ def reminders_due(
     return tuple(sorted(due.values(), key=_order))
 
 
-def _title(index: int, count: int, total: int, language: Language) -> str:
+def _title(index: int, count: int, projects: int, language: Language) -> str:
     suffix = f" ({index}/{count})" if count > 1 else ""
-    return f"<b>{text(language, 'reminder.short_title', count=total)}{suffix}</b>"
-
-
-def _item(alert: Alert, language: Language, show_repo: bool) -> str:
-    return high_line(alert, language=language, show_repo=show_repo, arrow=False)
+    counted_projects = counted(language, "noun.project", projects)
+    return f"<b>{text(language, 'reminder.short_title', projects=counted_projects)}{suffix}</b>"
 
 
 def render_reminders(
@@ -107,18 +104,15 @@ def render_reminders(
     max_chars: int = DEFAULT_MAX_CHARS,
     language: Language = DEFAULT_LANGUAGE,
 ) -> list[OutboundMessage]:
-    """One reminder message for all due series, in the given order; split only when too long."""
+    """One line per project for all due series, worst first; split only when too long."""
     if not MIN_MAX_CHARS <= max_chars <= TELEGRAM_MAX_CHARS:
         message = f"max_chars must be between {MIN_MAX_CHARS} and {TELEGRAM_MAX_CHARS}"
         raise ValueError(message)
     if not alerts:
         return []
-    ambiguous = ambiguous_series(alerts)
-    items = [
-        _item(alert, language, (alert.key.project_id, alert.key.action_key) in ambiguous)
-        for alert in alerts
-    ]
-    total = len(alerts)
+    groups = project_groups(alerts)
+    items = [project_high_line(group, language) for group in groups]
+    total = len(groups)
     head_units = telegram_length(_title(1, 1, total, language))
     chunks = pack_items(items, head_units, max_chars)
     if len(chunks) > 1:
@@ -134,8 +128,11 @@ def render_reminders(
     for number, indexes in enumerate(chunks, start=1):
         title = _title(number, len(chunks), total, language)
         text_ = "\n".join([title, *(items[i] for i in indexes)])
-        messages.append(OutboundMessage(text=text_, keys=tuple(alerts[i].key for i in indexes)))
-    logger.info("reminders: %d series in %d message(s)", len(alerts), len(messages))
+        keys = tuple(alert.key for i in indexes for alert in groups[i])
+        messages.append(OutboundMessage(text=text_, keys=keys))
+    logger.info(
+        "reminders: %d series of %d project(s) in %d message(s)", len(alerts), total, len(messages)
+    )
     return messages
 
 

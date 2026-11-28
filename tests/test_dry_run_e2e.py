@@ -22,9 +22,9 @@ LATER_NOW = "2026-12-01T12:00:00Z"
 LIVE_ENVIRON = {"TELEGRAM_BOT_TOKEN": FAKE_TOKEN, "TELEGRAM_CHAT_ID": "-1001234567890"}
 
 A_NAME = 'Project A &lt;core&gt; &amp; "tools"'
-A_HIGH_LINE = f"🔴 <b>{A_NAME}</b> · security High 0→1 · 6d"
-B_LINES = ["🟡 <b>Project B</b> · no scan 27d"]
-C_LINES = ["🟡 <b>Project C (no repositories)</b> · no scan yet"]
+A_HIGH_LINE = f"🔴 <b>{A_NAME}</b>: high problems 1, in audit security · open for 6 days"
+B_LINES = ["🟡 <b>Project B</b>: no scan for 27 days"]
+C_LINES = ["🟡 <b>Project C (no repositories)</b>: no scan yet"]
 
 
 @pytest.fixture(autouse=True)
@@ -149,7 +149,7 @@ def test_dry_run_lists_unreachable_project_d_as_not_checked(tmp_path: Path) -> N
 
 def test_dry_run_baselines_long_stale_project_e(tmp_path: Path) -> None:
     _, out = run_dry(tmp_path)
-    assert "🟡 <b>Project E (paused in config)</b> · no scan 104d" in out.splitlines()
+    assert "🟡 <b>Project E (paused in config)</b>: no scan for 104 days" in out.splitlines()
 
 
 def test_dry_run_summary_counts(tmp_path: Path) -> None:
@@ -167,9 +167,9 @@ def test_dry_run_orders_baseline_by_project_id(tmp_path: Path) -> None:
     _, out = run_dry(tmp_path)
     headlines = [line for line in section(out, "--- baseline") if line.startswith("🟡")]
     assert headlines == [
-        "🟡 <b>Project B</b> · no scan 27d",
-        "🟡 <b>Project C (no repositories)</b> · no scan yet",
-        "🟡 <b>Project E (paused in config)</b> · no scan 104d",
+        "🟡 <b>Project B</b>: no scan for 27 days",
+        "🟡 <b>Project C (no repositories)</b>: no scan yet",
+        "🟡 <b>Project E (paused in config)</b>: no scan for 104 days",
     ]
 
 
@@ -177,7 +177,10 @@ def test_dry_run_orders_would_send_worst_first(tmp_path: Path) -> None:
     seed_live_baseline(tmp_path)
     _, out = run_dry(tmp_path, LATER_NOW)
     headlines = [line for line in out.splitlines() if line.startswith("🟡")]
-    ages = [int(match.group(1)) for match in re.finditer(r"· no scan (\d+)d$", out, re.MULTILINE)]
+    ages = [
+        int(match.group(1))
+        for match in re.finditer(r"</b>: no scan for (\d+) days$", out, re.MULTILINE)
+    ]
     assert len(headlines) == len(ages) == 2
     assert ages == sorted(ages, reverse=True)
 
@@ -254,7 +257,7 @@ def test_future_newest_run_is_treated_as_fresh_with_a_warning(
     assert code == 0
     assert "is in the future" in caplog.text
     assert "treated as fresh" in caplog.text
-    assert not re.search(r"no scan \d+d", out)
+    assert not re.search(r"no scan for \d+ days", out)
 
 
 def test_dry_run_after_live_baseline_prints_would_send(tmp_path: Path) -> None:
@@ -267,7 +270,7 @@ def test_dry_run_after_live_baseline_prints_would_send(tmp_path: Path) -> None:
     assert code == 0
     lines = out.splitlines()
     assert lines.count("--- would send to group ---") == 1
-    assert f"🟡 <b>{A_NAME}</b> · no scan 20d" in lines
+    assert f"🟡 <b>{A_NAME}</b>: no scan for 20 days" in lines
     assert "--- baseline, not sent (0) ---" in lines
     assert state_snapshot(tmp_path / "state") == before
 
@@ -283,7 +286,7 @@ def test_dry_run_collapses_alerts_above_the_configured_threshold(tmp_path: Path)
     assert code == 0
     assert lines.count("--- would send to group ---") == 1
     assert "Radar · problems: 2 projects" in lines
-    assert f"🟡 <b>{A_NAME}</b> · no scan 20d" in lines
+    assert f"🟡 <b>{A_NAME}</b>: no scan for 20 days" in lines
     assert "1 message(s) would be sent" in out
 
 
@@ -296,5 +299,5 @@ def test_two_alerts_are_sent_individually_with_default_collapse(tmp_path: Path) 
     assert code == 0
     assert lines.count("--- would send to group ---") == 2
     assert not any(line.startswith("Radar ·") for line in lines)
-    assert f"🟡 <b>{A_NAME}</b> · no scan 20d" in lines
+    assert f"🟡 <b>{A_NAME}</b>: no scan for 20 days" in lines
     assert "2 message(s) would be sent" in out

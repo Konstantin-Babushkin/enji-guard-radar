@@ -214,7 +214,7 @@ def test_fresh_high_alert_gets_cause(tmp_path: Path) -> None:
     triager = fake()
     sim = first_alert_sim(tmp_path, triager)
     report = sim.poll(1)
-    assert texts(report) == [f"🔴 <b>Proj</b> · High 1 in 1 audit · 0d{P1_SQL}"]
+    assert texts(report) == [f"🔴 <b>Proj</b>: high problems 1, in audit security · today{P1_SQL}"]
     assert triager.calls == 1
     (request,) = triager.requests
     assert len(request.items) == 1
@@ -235,7 +235,7 @@ def test_off_disabled_makes_no_call_and_same_texts(tmp_path: Path) -> None:
 
 def test_off_without_triager_or_store_is_the_old_run(tmp_path: Path) -> None:
     sim = first_alert_sim(tmp_path, None)
-    assert texts(sim.poll(1)) == ["🔴 <b>Proj</b> · High 1 in 1 audit · 0d"]
+    assert texts(sim.poll(1)) == ["🔴 <b>Proj</b>: high problems 1, in audit security · today"]
 
 
 @dataclass
@@ -270,7 +270,9 @@ def test_one_call_for_three_fresh_alerts_in_two_projects(tmp_path: Path) -> None
     assert len(triager.requests[0].items) == 3
     # Proj holds two series (two repos) and is one line with one Claude line; Second is another.
     assert len(report.messages) == 2
-    assert report.messages[0].text.startswith("🔴 <b>Proj</b> · High 2 in 1 audit · ")
+    assert report.messages[0].text.startswith(
+        "🔴 <b>Proj</b>: high problems 2, in audit security · "
+    )
     assert len(report.messages[0].keys) == 2
     assert all(message.text.endswith(f"\n   P1 · {DEFAULT_CAUSE}") for message in report.messages)
     assert all(message.text.count("P1 ·") == 1 for message in report.messages)
@@ -294,7 +296,7 @@ def test_not_fresh_rearmed_alert_is_not_sent_to_claude(tmp_path: Path) -> None:
     sim.poll(1)
     sim.add_titled_run([SQL, HASH, REDIRECT], day=2)
     (text,) = texts(sim.poll(2))
-    assert text == "🔴 <b>Proj</b> · High 1→3 in 1 audit · 1d"
+    assert text == "🔴 <b>Proj</b>: high problems 3 (was 1), in audit security · open for 1 day"
     assert triager.calls == 1
 
 
@@ -321,7 +323,10 @@ def test_not_fresh_retried_alert_is_not_sent_to_claude_again(tmp_path: Path) -> 
     sim.add_titled_run([SQL], day=2)
     retried = sim.poll(2, notifier=notifier)
     assert retried.delivered == 1
-    assert notifier.sent[1] == "🔴 <b>Proj</b> · High 1→1 in 1 audit · 1d"
+    assert (
+        notifier.sent[1]
+        == "🔴 <b>Proj</b>: high problems 1 (was 1), in audit security · open for 1 day"
+    )
     assert triager.calls == 1
 
 
@@ -351,7 +356,7 @@ def test_no_titles_skips_with_log(tmp_path: Path, caplog: pytest.LogCaptureFixtu
     sim.add_titled_run(["https://example.com/a/b"], day=1)
     with caplog.at_level(logging.INFO):
         report = sim.poll(1)
-    assert texts(report) == ["🔴 <b>Proj</b> · High 1 in 1 audit · 0d"]
+    assert texts(report) == ["🔴 <b>Proj</b>: high problems 1, in audit security · today"]
     assert triager.calls == 0
     assert "triage skipped: no usable titles" in caplog.text
 
@@ -391,7 +396,7 @@ def test_fallback_is_the_rule_only_run(tmp_path: Path, outcome: TriageOutcome) -
 def test_fallback_unknown_ids_reply_is_rule_only(tmp_path: Path) -> None:
     reply = json.dumps({"items": [{"item_id": "i9", "priority": "p1", "cause": "Some cause"}]})
     sim = first_alert_sim(tmp_path, FakeTriager([TriageReply(text=reply, seconds=1.0)]))
-    assert texts(sim.poll(1)) == ["🔴 <b>Proj</b> · High 1 in 1 audit · 0d"]
+    assert texts(sim.poll(1)) == ["🔴 <b>Proj</b>: high problems 1, in audit security · today"]
 
 
 # ---- partial ---------------------------------------------------------------------------------
@@ -508,7 +513,9 @@ def test_logs_contain_no_title_or_cause(tmp_path: Path, caplog: pytest.LogCaptur
     sim.add_titled_run([title], day=1)
     with caplog.at_level(logging.DEBUG):
         report = sim.poll(1)
-    assert texts(report) == [f"🔴 <b>Proj</b> · High 1 in 1 audit · 0d\n   P1 · {cause}"]
+    assert texts(report) == [
+        f"🔴 <b>Proj</b>: high problems 1, in audit security · today\n   P1 · {cause}"
+    ]
     assert title not in caplog.text
     assert cause not in caplog.text
     assert "triage call:" in caplog.text

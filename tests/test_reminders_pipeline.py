@@ -14,7 +14,6 @@ from test_high_pipeline import (
     CHAT_ID,
     PID,
     PROJECT,
-    REPO,
     REPO2,
     RID,
     RID2,
@@ -59,10 +58,10 @@ def test_reminder_comes_at_the_interval_and_not_before(tmp_path: Path) -> None:
     assert first.reminders_delivered == 1
     (message,) = first.reminder_messages
     lines = message.text.split("\n")
-    assert lines[0] == "<b>Radar reminder · 1 open</b>"
+    assert lines[0] == "<b>Radar reminder · open: 1 project</b>"
     assert len(lines) == 2
     assert lines[1].startswith("🔴 <b>")
-    assert "· security High 2 · " in lines[1]
+    assert ": high problems 2, in audit security · " in lines[1]
 
     assert sim.poll(8).reminder_messages == ()
     assert sim.poll(14).reminder_messages == ()
@@ -174,7 +173,7 @@ def test_baselined_series_is_not_reminded_until_a_rise_alerts_it(tmp_path: Path)
 
     sim.add_run(high=4, day=31)
     (rise,) = texts(sim.poll(31))
-    assert rise == "🔴 <b>Proj</b> · High 2→4 in 1 audit · 31d"
+    assert rise == "🔴 <b>Proj</b>: high problems 4 (was 2), in audit security · open for 31 days"
     assert sim.poll(37).reminder_messages == ()
     assert len(sim.poll(38).reminder_messages) == 1
 
@@ -183,7 +182,7 @@ def test_exclusions_stale_project_is_never_reminded(tmp_path: Path) -> None:
     sim = Sim(tmp_path, "defaults:\n  stale_after_days: 14\n", reminders_on=True)
     sim.poll(0)
     stale = sim.poll(20)
-    assert any(text.startswith("🟡 <b>Proj</b> · no scan") for text in texts(stale))
+    assert any(text.startswith("🟡 <b>Proj</b>: no scan") for text in texts(stale))
     for day in (30, 50):
         report = sim.poll(day)
         assert report.reminder_messages == ()
@@ -244,8 +243,9 @@ def test_exclusions_two_due_series_are_one_message_and_two_clocks(tmp_path: Path
     sim.poll(1)
     report = sim.poll(8)
     (message,) = report.reminder_messages
-    assert REPO in message.text
-    assert REPO2 in message.text
+    assert len(message.text.split("\n")) == 2  # the title and one line for the project
+    assert "high problems 5" in message.text
+    assert len(message.keys) == 2
     assert report.reminders_delivered == 1
     clocks = sim.state().reminders
     assert {clock.repo_id for clock in clocks} == {RID, RID2}

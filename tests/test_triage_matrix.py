@@ -257,9 +257,15 @@ def test_off_baselines_never_call_the_triager(tmp_path: Path) -> None:
 def test_scenarios_exercise_what_they_name(tmp_path: Path) -> None:
     """Guards the matrix against passing vacuously: each scenario sends what its name says."""
     kinds = {name: run("off", name, tmp_path)[0] for name in SCENARIOS}
-    assert [t for t, _ in kinds["fresh"].messages] == ["🔴 <b>Proj</b> · High 1 in 1 audit · 0d"]
-    assert [t for t, _ in kinds["rise"].messages] == ["🔴 <b>Proj</b> · High 1→3 in 1 audit · 1d"]
-    assert [t for t, _ in kinds["retry"].messages] == ["🔴 <b>Proj</b> · High 1→1 in 1 audit · 1d"]
+    assert [t for t, _ in kinds["fresh"].messages] == [
+        "🔴 <b>Proj</b>: high problems 1, in audit security · today"
+    ]
+    assert [t for t, _ in kinds["rise"].messages] == [
+        "🔴 <b>Proj</b>: high problems 3 (was 1), in audit security · open for 1 day"
+    ]
+    assert [t for t, _ in kinds["retry"].messages] == [
+        "🔴 <b>Proj</b>: high problems 1 (was 1), in audit security · open for 1 day"
+    ]
     assert kinds["reminder"].counts[5]
     assert kinds["reminder"].messages
     assert kinds["digest"].counts[8]

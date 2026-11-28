@@ -8,6 +8,7 @@ import pytest
 from enji_guard_radar.digest import DigestInput, build_digest, render_digest
 from enji_guard_radar.guard_auth import AUTH_FAILURE_TEXT
 from enji_guard_radar.health import Outage, Recovered, ops_message
+from enji_guard_radar.high_rules import LowSeries
 from enji_guard_radar.ledger import ResolvedItem
 from enji_guard_radar.messages import (
     DEFAULT_MAX_CHARS,
@@ -15,7 +16,6 @@ from enji_guard_radar.messages import (
     UNNAMED_PROJECT,
     clean_name,
     days_text,
-    high_findings_text,
     render_alert,
     render_messages,
     summary_header,
@@ -25,10 +25,8 @@ from enji_guard_radar.model import Alert, AlertKey, AlertKind, OutboundMessage, 
 from enji_guard_radar.pipeline import ops_message_for_actions, ops_message_for_halt
 from enji_guard_radar.ports import AuthFailureKind, GuardFailure
 from enji_guard_radar.reminders import render_reminders
-from enji_guard_radar.score_rules import LowScore
 from enji_guard_radar.secret_guard import find_secret
 from enji_guard_radar.texts import ActionCode, ActionNotice, Language, render_action
-from enji_guard_radar.tooling_rules import ToolingGap
 
 NOW = datetime(2026, 11, 18, 6, 0, tzinfo=UTC)
 CYRILLIC = re.compile("[А-Яа-яЁё]")
@@ -90,54 +88,65 @@ def keys_of(messages: list[OutboundMessage]) -> list[AlertKey]:
 
 # --- one alert per kind, both languages ---
 
+HIGH_ONE = "🔴 <b>Project A</b>: high problems {count}{rise}, in audit security · open for {age}"
+HIGH_ONE_RU = (
+    "🔴 <b>Project A</b>: высоких проблем {count}{rise}, в аудите security · держится {age}"
+)
+
 ALERT_TABLE = [
     pytest.param(
         stale(age=1),
-        "🟡 <b>Project B</b> · no scan 1d",
-        "🟡 <b>Project B</b> · нет проверок 1 д",
+        "🟡 <b>Project B</b>: no scan for 1 day",
+        "🟡 <b>Project B</b>: нет проверок 1 день",
         id="stale-1-day",
     ),
     pytest.param(
         stale(age=22),
-        "🟡 <b>Project B</b> · no scan 22d",
-        "🟡 <b>Project B</b> · нет проверок 22 д",
+        "🟡 <b>Project B</b>: no scan for 22 days",
+        "🟡 <b>Project B</b>: нет проверок 22 дня",
         id="stale-22-days",
     ),
     pytest.param(
         never_ran(repos=0),
-        "🟡 <b>Project C</b> · no scan yet",
-        "🟡 <b>Project C</b> · проверок ещё не было",
+        "🟡 <b>Project C</b>: no scan yet",
+        "🟡 <b>Project C</b>: проверок ещё не было",
         id="never-ran-no-repos",
     ),
     pytest.param(
         never_ran(repos=5),
-        "🟡 <b>Project C</b> · no scan yet",
-        "🟡 <b>Project C</b> · проверок ещё не было",
+        "🟡 <b>Project C</b>: no scan yet",
+        "🟡 <b>Project C</b>: проверок ещё не было",
         id="never-ran-5-repos",
     ),
     pytest.param(
         high(1),
-        "🔴 <b>Project A</b> · security High 0→1 · 8d",
-        "🔴 <b>Project A</b> · security высокие 0→1 · 8 д",
+        HIGH_ONE.format(count=1, rise="", age="8 days"),
+        HIGH_ONE_RU.format(count=1, rise="", age="8 дней"),
         id="high-new-series",
     ),
     pytest.param(
         high(5),
-        "🔴 <b>Project A</b> · security High 0→5 · 8d",
-        "🔴 <b>Project A</b> · security высокие 0→5 · 8 д",
+        HIGH_ONE.format(count=5, rise="", age="8 days"),
+        HIGH_ONE_RU.format(count=5, rise="", age="8 дней"),
         id="high-5",
     ),
     pytest.param(
         high(3, previous=1),
-        "🔴 <b>Project A</b> · security High 1→3 · 8d",
-        "🔴 <b>Project A</b> · security высокие 1→3 · 8 д",
+        HIGH_ONE.format(count=3, rise=" (was 1)", age="8 days"),
+        HIGH_ONE_RU.format(count=3, rise=" (было 1)", age="8 дней"),
         id="high-rise",
     ),
     pytest.param(
         high(21, aged=True, age=21),
-        "🔴 <b>Project A</b> · security High 0→21 · 21d",
-        "🔴 <b>Project A</b> · security высокие 0→21 · 21 д",
+        HIGH_ONE.format(count=21, rise="", age="21 days"),
+        HIGH_ONE_RU.format(count=21, rise="", age="21 день"),
         id="high-aged-looks-the-same",
+    ),
+    pytest.param(
+        high(2, age=0),
+        "🔴 <b>Project A</b>: high problems 2, in audit security · today",
+        "🔴 <b>Project A</b>: высоких проблем 2, в аудите security · сегодня",
+        id="high-seen-today",
     ),
 ]
 
@@ -152,32 +161,26 @@ def test_render_alert_in_both_languages(alert: Alert, english: str, russian: str
 LINE_TABLE = [
     pytest.param(
         stale(age=5),
-        "🟡 <b>Project B</b> · no scan 5d",
-        "🟡 <b>Project B</b> · нет проверок 5 д",
+        "🟡 <b>Project B</b>: no scan for 5 days",
+        "🟡 <b>Project B</b>: нет проверок 5 дней",
         id="stale",
     ),
     pytest.param(
         never_ran(repos=2),
-        "🟡 <b>Project C</b> · no scan yet",
-        "🟡 <b>Project C</b> · проверок ещё не было",
+        "🟡 <b>Project C</b>: no scan yet",
+        "🟡 <b>Project C</b>: проверок ещё не было",
         id="never-ran",
     ),
     pytest.param(
-        high(1),
-        "🔴 <b>Project A</b> · High 1 in 1 audit · 8d",
-        "🔴 <b>Project A</b> · высокие 1 в 1 аудите · 8 д",
-        id="high-first-alert-shows-the-count",
-    ),
-    pytest.param(
         high(3),
-        "🔴 <b>Project A</b> · High 3 in 1 audit · 8d",
-        "🔴 <b>Project A</b> · высокие 3 в 1 аудите · 8 д",
+        HIGH_ONE.format(count=3, rise="", age="8 days"),
+        HIGH_ONE_RU.format(count=3, rise="", age="8 дней"),
         id="high",
     ),
     pytest.param(
         high(3, previous=1),
-        "🔴 <b>Project A</b> · High 1→3 in 1 audit · 8d",
-        "🔴 <b>Project A</b> · высокие 1→3 в 1 аудите · 8 д",
+        HIGH_ONE.format(count=3, rise=" (was 1)", age="8 days"),
+        HIGH_ONE_RU.format(count=3, rise=" (было 1)", age="8 дней"),
         id="high-rise",
     ),
 ]
@@ -223,26 +226,6 @@ def test_days_text_in_both_languages(count: int, english: str, russian: str) -> 
     assert days_text(count, language="ru") == russian
 
 
-@pytest.mark.parametrize(
-    ("count", "russian"),
-    [
-        (1, "1 находка высокой серьёзности"),
-        (2, "2 находки высокой серьёзности"),
-        (5, "5 находок высокой серьёзности"),
-        (11, "11 находок высокой серьёзности"),
-        (12, "12 находок высокой серьёзности"),
-        (21, "21 находка высокой серьёзности"),
-        (22, "22 находки высокой серьёзности"),
-        (25, "25 находок высокой серьёзности"),
-    ],
-)
-def test_high_findings_text_in_russian(count: int, russian: str) -> None:
-    assert high_findings_text(count, language="ru") == russian
-    assert high_findings_text(count) == (
-        "1 High finding" if count == 1 else f"{count} High findings"
-    )
-
-
 # --- names ---
 
 
@@ -264,8 +247,6 @@ def test_html_in_names_is_escaped_once_in_russian() -> None:
         assert 'Проект &lt;b&gt;&amp; "Ко"' in text
         assert "&amp;amp;" not in text
         assert not re.search(r"<(?!/?b>)", text)
-    shown = render_alert(alert, language="ru", show_repo=True)
-    assert "security (acme/&lt;web&gt;&amp;co)" in shown
 
 
 # --- ordering and the same set of alerts ---
@@ -339,7 +320,8 @@ def test_cyrillic_names_split_between_items_within_the_limit(
     for part in parts:  # whole items only: one line per key, each ending in its closing bracket
         lines = part.text.split("\n")[1:]
         assert len(lines) == len(part.keys)
-        assert all(re.fullmatch(r"🟡 <b>.+</b> · .+ \d+ ?[dд]", line) for line in lines)
+        stale_line = r"🟡 <b>.+</b>: (no scan for \d+ days|нет проверок \d+ (день|дня|дней))"
+        assert all(re.fullmatch(stale_line, line) for line in lines)
         assert "&lt;тест&gt;" in part.text
         assert "<тест>" not in part.text
 
@@ -357,7 +339,7 @@ def test_russian_worst_case_item_fits_the_minimum_message_size(name: str) -> Non
         high(99999, previous=99998, aged=True, age=36500, name=name, repo=name),
     ]
     for alert in alerts:
-        assert telegram_length(render_alert(alert, language="ru", show_repo=True)) <= MIN_MAX_CHARS
+        assert telegram_length(render_alert(alert, language="ru")) <= MIN_MAX_CHARS
         parts = render_messages(
             [alert, *[stale("o", pid=f"o{i}") for i in range(3)]],
             collapse_above=3,
@@ -387,14 +369,14 @@ def test_reminder_in_both_languages() -> None:
     (english,) = render_reminders(alerts)
     (russian,) = render_reminders(alerts, language="ru")
     assert english.text == (
-        "<b>Radar reminder · 2 open</b>\n"
-        "🔴 <b>Project A</b> · security High 1 · 8d\n"
-        "🔴 <b>Ёлка &amp; Ко</b> · security High 5 · 22d"
+        "<b>Radar reminder · open: 2 projects</b>\n"
+        "🔴 <b>Project A</b>: high problems 1, in audit security · open for 8 days\n"
+        "🔴 <b>Ёлка &amp; Ко</b>: high problems 5, in audit security · open for 22 days"
     )
     assert russian.text == (
-        "<b>Радар · напоминание · открыто: 2</b>\n"
-        "🔴 <b>Project A</b> · security высокие 1 · 8 д\n"
-        "🔴 <b>Ёлка &amp; Ко</b> · security высокие 5 · 22 д"
+        "<b>Радар · напоминание · открыто: 2 проекта</b>\n"
+        "🔴 <b>Project A</b>: высоких проблем 1, в аудите security · держится 8 дней\n"
+        "🔴 <b>Ёлка &amp; Ко</b>: высоких проблем 5, в аудите security · держится 22 дня"
     )
     assert english.keys == russian.keys == tuple(a.key for a in alerts)
 
@@ -409,7 +391,7 @@ def test_reminder_split_keeps_every_series_once_in_order_in_russian() -> None:
     assert len(russian) > 1
     assert keys_of(russian) == keys_of(english) == [a.key for a in alerts]
     for number, message in enumerate(russian, start=1):
-        title = "Радар · напоминание · открыто: 40"
+        title = "Радар · напоминание · открыто: 40 проектов"
         assert message.text.startswith(f"<b>{title} ({number}/{len(russian)})</b>\n")
         assert telegram_length(message.text) <= MIN_MAX_CHARS
         assert len(message.text.split("\n")) - 1 == len(message.keys)
@@ -421,29 +403,15 @@ def test_reminder_split_keeps_every_series_once_in_order_in_russian() -> None:
 POLL = datetime(2026, 11, 18, 6, 0, tzinfo=UTC)
 
 
-def low_score(name: str = "Gamma") -> LowScore:
-    return LowScore(
+def low_series(name: str = "Gamma") -> LowSeries:
+    return LowSeries(
         project_id="p4",
         project_name=name,
         repo_id="r4",
         repo_name="acme/web",
         action_key="audit.tests",
-        score=40,
-        threshold=60,
-        completed_at=datetime(2026, 11, 10, 8, 0, tzinfo=UTC),
-    )
-
-
-def gap(last: datetime | None, *, pid: str = "p5") -> ToolingGap:
-    return ToolingGap(
-        project_id=pid,
-        project_name="Delta",
-        repo_id="r5",
-        repo_name="acme/lib",
-        action_key="audit.dead-code",
-        last_completed_at=last,
-        age_days=None if last is None else (POLL - last).days,
-        window_days=60,
+        high_now=4,
+        opened_at=POLL - timedelta(days=8),
     )
 
 
@@ -465,12 +433,11 @@ def full_input(**more: object) -> DigestInput:
         "last_poll_at": POLL,
         "max_items": 50,
         "high": (high(2, pid="h1", age=16, name="Acme <web>"),),
-        "recurring_runs": {("h1", "r1", "audit.security"): 3},
+        "low_priority": (low_series(),),
         "stale": (stale("Beta", pid="s1", age=21), never_ran("Nova", pid="n1", repos=1)),
-        "low_scores": (low_score(),),
-        "tooling_gaps": (gap(None), gap(datetime(2026, 9, 1, 12, 0, tzinfo=UTC), pid="p6")),
         "resolved": (closed("high"), closed("stale", "p2"), closed("never_ran", "p3")),
-        "project_names": {"p1": "Acme", "p2": "Beta", "p3": ""},
+        "clean_projects": ("c1",),
+        "project_names": {"c1": "Delta"},
         "unread_projects": 2,
     }
     return DigestInput.model_validate(base | more)
@@ -487,20 +454,14 @@ def digest_text(inp: DigestInput, language: Language, max_chars: int = DEFAULT_M
 def test_full_digest_in_english() -> None:
     assert digest_text(full_input(), "en") == "\n".join(
         [
-            "<b>Radar weekly · 6 open</b>",
-            "Last poll: 2026-11-18 06:00 UTC",
-            "2 projects could not be read in that poll.",
-            "🔴 <b>Acme &lt;web&gt;</b> · security High 2 · 16d · recurring 3 runs",
-            "🟡 <b>Beta</b> · no scan 21d",
-            "🟡 <b>Nova</b> · no scan yet",
-            "🟡 <b>Gamma</b> · tests 40/100 · 8d",
-            "🟡 <b>Delta</b> · acme/lib · no runs 60d: dead-code",
-            "🟡 <b>Delta</b> · acme/lib · no runs 60d: dead-code",
-            "Resolved · 3",
-            "<b>Acme</b> · security closed",
-            "<b>Beta</b> · no scan closed",
-            "<b>(unnamed project)</b> · no scan yet closed",
-            "Ages count from the radar's first sight.",
+            "<b>Radar · weekly digest</b>",
+            "High problems: 6 in 2 projects, closed this week: 1.",
+            "🔴 <b>Acme &lt;web&gt;</b> — 2 high problems; most in: security; 16 days",
+            "🟡 <b>Gamma</b> — 4 high problems, low priority; most in: tests; 8 days",
+            "🟡 <b>Beta</b> — no scan for 21 days",
+            "🟡 <b>Nova</b> — no scan yet",
+            "🟢 <b>Delta</b> — clean",
+            "⚠️ Could not read 2 projects · poll 2026-11-18 06:00 UTC",
         ]
     )
 
@@ -508,21 +469,14 @@ def test_full_digest_in_english() -> None:
 def test_full_digest_in_russian() -> None:
     assert digest_text(full_input(), "ru") == "\n".join(
         [
-            "<b>Радар · дайджест · открыто: 6</b>",
-            "Последний опрос: 2026-11-18 06:00 UTC",
-            "В этом опросе не удалось прочитать: 2 проекта.",
-            "🔴 <b>Acme &lt;web&gt;</b> · security высокие 2 · 16 д"
-            " · повторяется, запусков подряд: 3",
-            "🟡 <b>Beta</b> · нет проверок 21 д",
-            "🟡 <b>Nova</b> · проверок ещё не было",
-            "🟡 <b>Gamma</b> · tests 40/100 · 8 д",
-            "🟡 <b>Delta</b> · acme/lib · нет запусков 60 д: dead-code",
-            "🟡 <b>Delta</b> · acme/lib · нет запусков 60 д: dead-code",
-            "Закрыто · 3",
-            "<b>Acme</b> · security: закрыто",
-            "<b>Beta</b> · нет проверок: закрыто",
-            "<b>(проект без названия)</b> · проверок ещё не было: закрыто",
-            "Возраст считается с первого появления в радаре.",
+            "<b>Радар · недельная сводка</b>",
+            "Высоких проблем: 6 в 2 проектах, закрыто за неделю: 1.",
+            "🔴 <b>Acme &lt;web&gt;</b> — 2 высокие проблемы; больше всего: безопасность; 16 дней",
+            "🟡 <b>Gamma</b> — 4 высокие проблемы, низкий приоритет; больше всего: тесты; 8 дней",
+            "🟡 <b>Beta</b> — нет проверок 21 день",
+            "🟡 <b>Nova</b> — проверок ещё не было",
+            "🟢 <b>Delta</b> — чисто",
+            "⚠️ Не удалось прочитать 2 проекта · опрос 2026-11-18 06:00 UTC",
         ]
     )
 
@@ -530,19 +484,17 @@ def test_full_digest_in_russian() -> None:
 @pytest.mark.parametrize(
     ("hidden", "english", "russian"),
     [
-        (1, "+1 more open item not shown.", "Не показано ещё: 1 открытый пункт."),
-        (2, "+2 more open items not shown.", "Не показано ещё: 2 открытых пункта."),
-        (5, "+5 more open items not shown.", "Не показано ещё: 5 открытых пунктов."),
-        (11, "+11 more open items not shown.", "Не показано ещё: 11 открытых пунктов."),
-        (21, "+21 more open items not shown.", "Не показано ещё: 21 открытый пункт."),
-        (22, "+22 more open items not shown.", "Не показано ещё: 22 открытых пункта."),
+        (1, "and 1 more project clean", "и ещё 1 проект чисто"),
+        (2, "and 2 more projects clean", "и ещё 2 проекта чисто"),
+        (5, "and 5 more projects clean", "и ещё 5 проектов чисто"),
+        (11, "and 11 more projects clean", "и ещё 11 проектов чисто"),
+        (21, "and 21 more projects clean", "и ещё 21 проект чисто"),
+        (22, "and 22 more projects clean", "и ещё 22 проекта чисто"),
     ],
 )
-def test_digest_more_line_plurals(hidden: int, english: str, russian: str) -> None:
-    stale_alerts = tuple(stale(f"S{i}", pid=f"s{i}", age=10 + i) for i in range(hidden + 2))
-    inp = full_input(
-        max_items=2, high=(), stale=stale_alerts, low_scores=(), tooling_gaps=(), resolved=()
-    )
+def test_digest_clean_more_line_plurals(hidden: int, english: str, russian: str) -> None:
+    ids = tuple(f"c{i:03d}" for i in range(hidden + 2))
+    inp = full_input(max_items=2, clean_projects=ids, project_names=dict.fromkeys(ids, "X"))
     assert english in digest_text(inp, "en").split("\n")
     assert russian in digest_text(inp, "ru").split("\n")
 
@@ -558,20 +510,18 @@ def test_digest_more_line_plurals(hidden: int, english: str, russian: str) -> No
 )
 def test_digest_unread_note_plurals(unread: int, english: str, russian: str) -> None:
     inp = full_input(unread_projects=unread)
-    assert f"{english} could not be read in that poll." in digest_text(inp, "en").split("\n")
-    assert f"В этом опросе не удалось прочитать: {russian}." in digest_text(inp, "ru").split("\n")
+    assert f"⚠️ Could not read {english} · poll 2026-11-18 06:00 UTC" in digest_text(
+        inp, "en"
+    ).split("\n")
+    assert f"⚠️ Не удалось прочитать {russian} · опрос 2026-11-18 06:00 UTC" in digest_text(
+        inp, "ru"
+    ).split("\n")
 
 
-def test_digest_resolved_overflow_line() -> None:
-    items = tuple(closed("stale", f"p{i}", days=i + 1) for i in range(8))
-    inp = full_input(resolved=items, project_names={})
-    assert "+3 more resolved." in digest_text(inp, "en").split("\n")
-    assert "Закрыто ещё: 3." in digest_text(inp, "ru").split("\n")
-    assert "Закрыто · 8" in digest_text(inp, "ru").split("\n")
-
-
-EN_CLEAR = "<b>Radar weekly</b> · nothing open · last poll 2026-11-18 06:00 UTC"
-RU_CLEAR = "<b>Радар · дайджест</b> · ничего не открыто · последний опрос 2026-11-18 06:00 UTC"
+EN_CLEAR = "<b>Radar · weekly digest</b> · nothing open · last poll 2026-11-18 06:00 UTC"
+RU_CLEAR = (
+    "<b>Радар · недельная сводка</b> · ничего не открыто · последний опрос 2026-11-18 06:00 UTC"
+)
 
 
 def test_digest_all_clear() -> None:
@@ -583,36 +533,36 @@ def test_digest_all_clear() -> None:
 def test_digest_all_clear_with_unread_projects() -> None:
     inp = DigestInput(last_poll_at=POLL, max_items=10, unread_projects=3)
     assert digest_text(inp, "en") == (
-        "<b>Radar weekly</b> · nothing open in the projects read · last poll 2026-11-18 06:00 UTC\n"
-        "3 projects could not be read in that poll."
+        "<b>Radar · weekly digest</b> · nothing open in the projects read"
+        " · last poll 2026-11-18 06:00 UTC\n"
+        "⚠️ Could not read 3 projects"
     )
     assert digest_text(inp, "ru") == (
-        "<b>Радар · дайджест</b> · ничего не открыто в прочитанных проектах"
+        "<b>Радар · недельная сводка</b> · ничего не открыто в прочитанных проектах"
         " · последний опрос 2026-11-18 06:00 UTC\n"
-        "В этом опросе не удалось прочитать: 3 проекта."
+        "⚠️ Не удалось прочитать 3 проекта"
     )
 
 
-def test_digest_has_the_same_items_in_the_same_order_in_both_languages() -> None:
+def test_digest_has_the_same_projects_in_the_same_order_in_both_languages() -> None:
     inp = full_input()
     english = build_digest(inp)
     russian = build_digest(inp, language="ru")
-    assert [i.tier for i in english.items] == [i.tier for i in russian.items]
-    assert (english.hidden_items, english.total_items) == (
-        russian.hidden_items,
-        russian.total_items,
+    assert [line[:1] for line in english.project_lines] == [
+        line[:1] for line in russian.project_lines
+    ]
+    assert english.model_dump(exclude={"project_lines", "clean_lines", "language"}) == (
+        russian.model_dump(exclude={"project_lines", "clean_lines", "language"})
     )
-    assert english.resolved_total == russian.resolved_total
 
 
 def test_digest_split_with_cyrillic_names_is_numbered_and_whole() -> None:
     names = [("Проект & <тест> " + str(i)).ljust(80, "Ж") for i in range(40)]
     inp = full_input(
         high=(),
-        recurring_runs={},
+        low_priority=(),
         stale=tuple(stale(n, pid=f"s{i:02d}", age=10 + i) for i, n in enumerate(names)),
-        low_scores=(),
-        tooling_gaps=(),
+        clean_projects=(),
         resolved=(),
         unread_projects=0,
     )
@@ -621,7 +571,8 @@ def test_digest_split_with_cyrillic_names_is_numbered_and_whole() -> None:
     assert len(messages) > 1
     for number, message in enumerate(messages, start=1):
         assert message.text.startswith(
-            f"<b>Радар · дайджест · открыто: 40 ({number}/{len(messages)})</b>\n"
+            f"<b>Радар · недельная сводка ({number}/{len(messages)})</b>\n"
+            "Открытых высоких проблем нет, закрыто за неделю: 0.\n"
         )
         assert telegram_length(message.text) <= MIN_MAX_CHARS
         assert find_secret(message.text, []) is None

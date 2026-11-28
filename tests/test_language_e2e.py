@@ -70,8 +70,9 @@ def test_golden_default_dry_run_output(tmp_path: Path) -> None:
 ALERT_AT = "2026-12-01T12:00:00Z"
 CYRILLIC = re.compile("[А-Яа-яЁё]")
 ENGLISH_PHRASES = re.compile(
-    "weekly|no scan|problems|need attention|Last poll|no runs|Ages count|"
-    "more open|could not be read|Resolved|closed|Open items|Tooling gap|Stale:|High:"
+    "weekly|no scan|problems|need attention|Last poll|Poll |no runs|Ages count|"
+    "more open|could not be read|Could not read|Resolved|closed|Open items|Tooling gap|Stale:|"
+    "High:|most in|clean"
 )
 FRAME = re.compile(r"^(---|summary:|follow-ups:|DRY RUN)", re.MULTILINE)
 PROJECT_A = 'Project A &lt;core&gt; &amp; "tools"'
@@ -118,12 +119,12 @@ def test_alerts_in_russian_match_the_english_ones(tmp_path: Path, ru_config: Pat
     assert english.returncode == russian.returncode == 0
 
     assert blocks(english.stdout, "") == [
-        [f"🟡 <b>{PROJECT_A}</b> · no scan 20d"],
-        ["🟡 <b>Project F (excluded in config)</b> · no scan 16d"],
+        [f"🟡 <b>{PROJECT_A}</b>: no scan for 20 days"],
+        ["🟡 <b>Project F (excluded in config)</b>: no scan for 16 days"],
     ]
     assert blocks(russian.stdout, "") == [
-        [f"🟡 <b>{PROJECT_A}</b> · нет проверок 20 д"],
-        ["🟡 <b>Project F (excluded in config)</b> · нет проверок 16 д"],
+        [f"🟡 <b>{PROJECT_A}</b>: нет проверок 20 дней"],
+        ["🟡 <b>Project F (excluded in config)</b>: нет проверок 16 дней"],
     ]
     assert not ENGLISH_PHRASES.search(russian.stdout)
     assert FRAME.findall(english.stdout) == FRAME.findall(russian.stdout)
@@ -146,15 +147,15 @@ def test_collapsed_alerts_are_one_line_per_project_in_both_languages(
     assert blocks(english.stdout, "") == [
         [
             "Radar · problems: 2 projects",
-            f"🟡 <b>{PROJECT_A}</b> · no scan 20d",
-            "🟡 <b>Project F (excluded in config)</b> · no scan 16d",
+            f"🟡 <b>{PROJECT_A}</b>: no scan for 20 days",
+            "🟡 <b>Project F (excluded in config)</b>: no scan for 16 days",
         ]
     ]
     assert blocks(russian.stdout, "") == [
         [
             "Радар · проблемы: 2 проекта",
-            f"🟡 <b>{PROJECT_A}</b> · нет проверок 20 д",
-            "🟡 <b>Project F (excluded in config)</b> · нет проверок 16 д",
+            f"🟡 <b>{PROJECT_A}</b>: нет проверок 20 дней",
+            "🟡 <b>Project F (excluded in config)</b>: нет проверок 16 дней",
         ]
     ]
     assert not ENGLISH_PHRASES.search(russian.stdout)
@@ -176,16 +177,16 @@ def test_digest_and_baseline_in_russian_match_the_english_run(
     assert names(english.stdout) == names(russian.stdout)
     assert FRAME.findall(english.stdout) == FRAME.findall(russian.stdout)
     assert "--- baseline, not sent (4) ---" in russian.stdout
-    for kept in ("security", "acme/web-a", PROJECT_A):
+    for kept in ("security", PROJECT_A):
         assert kept in russian.stdout
     lines = [without_timing(o).count("\n") for o in (english.stdout, russian.stdout)]
     assert lines[0] == lines[1]
     assert russian.stdout.startswith(f"DRY RUN at {FIRST_NOW}: nothing is sent")
     digest = blocks(russian.stdout, "")[0]
-    assert digest[0] == "<b>Радар · дайджест · открыто: 8</b>"
-    assert digest[1] == "Последний опрос: 2026-11-18 06:00 UTC"
-    assert digest[-1] == "Возраст считается с первого появления в радаре."
-    assert sum(line.startswith(("🔴", "🟡")) for line in digest) == 8
+    assert digest[0] == "<b>Радар · недельная сводка</b>"
+    assert digest[1] == "Высоких проблем: 1 в 1 проекте, закрыто за неделю: 0."
+    assert digest[-1] == "⚠️ Не удалось прочитать 1 проект · опрос 2026-11-18 06:00 UTC"
+    assert sum(line.startswith(("🔴", "🟡")) for line in digest) == 4
     assert not (tmp_path / "state").exists()
 
 
@@ -214,14 +215,11 @@ def test_green_block_in_russian_dry_run(tmp_path: Path, ru_config: Path) -> None
     done = run_cli(tmp_path, FIRST_NOW, "--config", str(ru_config))
     assert done.returncode == 0
     lines = done.stdout.splitlines()
-    assert "Чисто · 1" in lines
-    assert lines[lines.index("Чисто · 1") + 1] == (
-        "🟢 <b>Project F (excluded in config)</b> · нет высоких проблем"
-    )
+    assert "🟢 <b>Project F (excluded in config)</b> — чисто" in lines
 
 
 def test_green_block_absent_when_no_project_is_clean(tmp_path: Path) -> None:
     done = run_cli(tmp_path, FIRST_NOW, "--config", str(FIXTURES / "radar.yaml"))
     assert done.returncode == 0
     assert "🟢" not in done.stdout
-    assert "Clean ·" not in done.stdout
+    assert "— clean" not in done.stdout

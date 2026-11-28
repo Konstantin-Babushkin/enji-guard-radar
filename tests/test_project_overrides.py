@@ -180,5 +180,7 @@ def test_the_digest_splits_low_priority_by_the_project_list(
     sim.poll(1)
     (message,) = sim.poll(WEDNESDAY).digest_messages
     lines = message.text.split("\n")
-    assert ("Low priority · 1" in lines) is is_low
-    assert any(line.startswith("🟡" if is_low else "🔴") and "High 3" in line for line in lines)
+    assert any(
+        line.startswith("🟡" if is_low else "🔴") and "3 high problems" in line for line in lines
+    )
+    assert any("low priority" in line for line in lines) is is_low
