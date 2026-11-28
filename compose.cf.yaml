@@ -1,0 +1,43 @@
+# Override for code-factory only: runs the radar offline, per task, with nothing real behind it.
+#   docker compose -f compose.yaml -f compose.cf.yaml -p <unique> up --wait
+#   docker compose -p <unique> logs radar
+#   docker compose -f compose.yaml -f compose.cf.yaml -p <unique> down -v
+# Reads Guard from fixtures/guard, prints instead of sending, writes no state, needs no .env, no
+# secret and no network. Healthy means: `serve` finished at least one poll with exit 0
+# (docs/deploy.md, "Offline run for code-factory").
+#
+# Relies on `!reset` and `!override` (Docker Compose v2.24 or newer).
+services:
+  radar:
+    # Back to Compose's per-project default image name, so concurrent projects never share a tag.
+    image: !reset null
+    # Only the config dir (from compose.yaml), the fixtures and the state volume: no .env bind.
+    volumes: !override
+      - type: bind
+        source: ./config
+        target: /config
+        read_only: true
+      - type: bind
+        source: ./fixtures/guard
+        target: /fixtures/guard
+        read_only: true
+      - type: volume
+        source: radar-state
+        target: /state
+    command:
+      - serve
+      - --config
+      - /config/radar.example.yaml
+      - --state-dir
+      - /state
+      - --fixtures
+      - /fixtures/guard
+      - --dry-run
+      - --ready-file
+      - /tmp/radar-ready
+    healthcheck:
+      test: ["CMD", "/app/.venv/bin/python", "-c", "import os, sys; sys.exit(not os.path.exists('/tmp/radar-ready'))"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+      start_period: 5s

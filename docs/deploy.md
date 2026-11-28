@@ -127,6 +127,30 @@ locked dependencies) and at run time (Guard, Telegram).
 - **Triage:** the image has no `claude` CLI, so keep `triage.enabled: false` in Docker; with it
   on, `doctor` reports `claude not found on PATH`.
 
+## Offline run for code-factory
+
+`compose.cf.yaml` is an override for `compose.yaml` that code-factory uses to start, observe and
+stop the radar per task. It is not for production. It runs
+`serve --fixtures /fixtures/guard --dry-run --config /config/radar.example.yaml`: Guard answers
+come from the recorded `fixtures/guard` (mounted read-only), nothing is sent to Telegram (the
+messages are printed to the log), and nothing is written to the state volume. It needs no `.env`,
+no secret, no network at run time and no host path outside the checkout. The image gets
+Compose's per-project name (`<project>-radar`), so concurrent projects do not share a tag.
+
+The healthcheck is true once `serve` has finished at least one poll with exit code 0: `serve`
+writes `/tmp/radar-ready` (`--ready-file`) after such a poll and the check tests that the file
+exists. A fresh state has no earlier poll, so the first poll runs at container start. A poll that
+needs attention (exit 1) or fails (exit 2) does not write the file.
+
+```
+docker compose -f compose.yaml -f compose.cf.yaml -p <unique> up --wait
+docker compose -p <unique> logs radar
+docker compose -f compose.yaml -f compose.cf.yaml -p <unique> down -v --rmi local
+```
+
+`down -v` removes the container, network and state volume; `--rmi local` also removes the image
+built for the project. Needs Docker Compose v2.24 or newer (`!reset` / `!override`).
+
 ## Install (no Docker)
 
 The rest of this runbook is the systemd/cron path for hosts without Docker. It uses
