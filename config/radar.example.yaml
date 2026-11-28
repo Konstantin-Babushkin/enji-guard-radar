@@ -65,7 +65,7 @@ digest:
   # A digest not acknowledged within this many hours of its planned moment is skipped for
   # that week (1..168).
   grace_hours: 24
-  # Items listed in one digest before the rest is summarised (3..50).
+  # Clean projects listed one by one in the digest before "and N more clean" (3..50).
   max_items: 10
 
 # Reminders (D-11): an unresolved finding is reminded about every this many days (1..90).
