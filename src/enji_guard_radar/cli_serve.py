@@ -55,6 +55,23 @@ def add_parser(commands: Any) -> None:
         default=argparse.SUPPRESS,
         help=f"dotenv file with Telegram settings (default: {DEFAULT_ENV_FILE}; may be missing)",
     )
+    parser.add_argument(
+        "--fixtures",
+        type=Path,
+        metavar="DIR",
+        help="replay recorded Guard answers from DIR on every poll (default: read real Guard)",
+    )
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="print instead of sending on every poll; write nothing to the state directory",
+    )
+    parser.add_argument(
+        "--ready-file",
+        type=Path,
+        metavar="PATH",
+        help="write this file after every poll that exits 0 (a healthcheck probes it)",
+    )
 
 
 class StopRequest:
@@ -163,6 +180,16 @@ def serve_loop(
     if stop.event.is_set():
         logger.info("serve: stop requested (%s)", stop.name)
     logger.info("serve: stopped")
+
+
+def mark_ready(path: Path) -> None:
+    """Record that a poll finished with exit 0. A failure to write is logged, never raised."""
+    try:
+        path.touch()
+    except OSError as error:
+        logger.warning("serve: cannot write ready file %s (%s)", path, type(error).__name__)
+        return
+    logger.info("serve: ready file written path=%s", path)
 
 
 def run_serve(
