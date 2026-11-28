@@ -7,6 +7,7 @@ from enji_guard_radar.texts import (
     CATALOGS,
     Entry,
     Language,
+    audit_name,
     counted,
     noun,
     parity_problems,
@@ -62,21 +63,38 @@ def test_every_counted_noun_in_russian_follows_the_rule(key: str, count: int) ->
 
 
 @pytest.mark.parametrize(
-    ("count", "day", "finding"),
+    ("count", "day", "problem"),
     [
-        (1, "день", "находка"),
-        (2, "дня", "находки"),
-        (5, "дней", "находок"),
-        (11, "дней", "находок"),
-        (12, "дней", "находок"),
-        (21, "день", "находка"),
-        (22, "дня", "находки"),
-        (25, "дней", "находок"),
+        (1, "день", "высокая проблема"),
+        (2, "дня", "высокие проблемы"),
+        (5, "дней", "высоких проблем"),
+        (11, "дней", "высоких проблем"),
+        (12, "дней", "высоких проблем"),
+        (21, "день", "высокая проблема"),
+        (22, "дня", "высокие проблемы"),
+        (25, "дней", "высоких проблем"),
     ],
 )
-def test_russian_days_and_findings(count: int, day: str, finding: str) -> None:
+def test_russian_days_and_high_problems(count: int, day: str, problem: str) -> None:
     assert counted("ru", "noun.day", count) == f"{count} {day}"
-    assert re.match(rf"{count} {finding}(\s|$)", counted("ru", "noun.finding", count))
+    assert counted("ru", "noun.high_problem", count) == f"{count} {problem}"
+
+
+@pytest.mark.parametrize(
+    ("language", "action_key", "expected"),
+    [
+        ("ru", "audit.dependency-hygiene", "зависимости"),
+        ("en", "audit.dependency-hygiene", "dependencies"),
+        ("ru", "audit.security", "безопасность"),
+        ("ru", "tests", "тесты"),
+        ("en", "audit.brand-new-audit", "brand-new-audit"),
+        ("ru", "audit.brand-new-audit", "brand-new-audit"),
+    ],
+)
+def test_audit_name_is_a_short_word_or_the_raw_key(
+    language: Language, action_key: str, expected: str
+) -> None:
+    assert audit_name(language, action_key) == expected
 
 
 def test_severity_words() -> None:

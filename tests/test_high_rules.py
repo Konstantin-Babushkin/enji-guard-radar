@@ -61,7 +61,8 @@ def test_config_to_high_rise_message() -> None:
         AlertKey(project_id="p1", repo_id="r1", action_key="audit.security", level="high"),
     )
     assert messages[0].text == (
-        '🔴 <b>Project A &lt;core&gt; &amp; "tools"</b> · High 1→3 in 1 audit · 11d'
+        '🔴 <b>Project A &lt;core&gt; &amp; "tools"</b>: high problems 3 (was 1), '
+        "in audit security · open for 11 days"
     )
     assert config.high.clear_after_clean_runs == 3
 
@@ -69,27 +70,31 @@ def test_config_to_high_rise_message() -> None:
 @pytest.mark.parametrize(
     ("high_now", "previous", "expected"),
     [
-        (3, None, "High 0→3"),
-        (2, 0, "High 0→2"),
-        (1, 1, "High 1→1"),
-        (4, 4, "High 4→4"),
-        (1, 3, "High 3→1"),
-        (0, 2, "High 2→0"),
-        (0, None, "High 0→0"),
+        (3, None, "high problems 3"),
+        (2, 0, "high problems 2"),
+        (1, 1, "high problems 1 (was 1)"),
+        (4, 4, "high problems 4 (was 4)"),
+        (1, 3, "high problems 1 (was 3)"),
+        (0, 2, "high problems 0 (was 2)"),
+        (0, None, "high problems 0"),
     ],
 )
 def test_count_line(high_now: int, previous: int | None, expected: str) -> None:
     alert = high_alert(
         series(high_now=high_now, previous_high=previous), aged_after_days=14, now=NOW
     )
-    assert lines(alert) == [f"🔴 <b>Project A</b> · security {expected} · 11d"]
+    assert lines(alert) == [
+        f"🔴 <b>Project A</b>: {expected}, in audit security · open for 11 days"
+    ]
 
 
 def test_aged_boundary_exactly_threshold_is_not_aged() -> None:
     alert = high_alert(series(opened_at=NOW - timedelta(days=14)), aged_after_days=14, now=NOW)
     assert alert.aged is False
     assert alert.age_days == 14
-    assert lines(alert) == ["🔴 <b>Project A</b> · security High 1→3 · 14d"]
+    assert lines(alert) == [
+        "🔴 <b>Project A</b>: high problems 3 (was 1), in audit security · open for 14 days"
+    ]
 
 
 def test_aged_boundary_one_second_over_is_aged() -> None:
@@ -99,7 +104,9 @@ def test_aged_boundary_one_second_over_is_aged() -> None:
     assert alert.aged is True
     assert alert.age_days == 14
     # an aged series reads like any other: the flag does not change the text
-    assert lines(alert) == ["🔴 <b>Project A</b> · security High 1→3 · 14d"]
+    assert lines(alert) == [
+        "🔴 <b>Project A</b>: high problems 3 (was 1), in audit security · open for 14 days"
+    ]
     assert render_alert(alert) == render_alert(alert.model_copy(update={"aged": False}))
 
 
@@ -108,7 +115,7 @@ def test_age_in_whole_days() -> None:
         series(opened_at=NOW - timedelta(days=1, hours=5)), aged_after_days=14, now=NOW
     )
     assert alert.age_days == 1
-    assert lines(alert)[0].endswith("· 1d")
+    assert lines(alert)[0].endswith("· open for 1 day")
 
 
 def test_opened_after_now_is_age_zero_and_not_aged() -> None:
@@ -189,9 +196,9 @@ def test_dynamic_text_is_escaped_and_cleaned() -> None:
         aged_after_days=14,
         now=NOW,
     )
-    text = render_alert(alert, show_repo=True)
+    text = render_alert(alert)
     assert "<script>" not in text
-    assert "(acme/&lt;script&gt;)" in text
+    assert "acme" not in text
     assert "x&amp;y" in text
     assert "\nline two" not in text
     assert "...</b>" in text
@@ -212,10 +219,10 @@ def test_project_line_first_sight_and_rise() -> None:
     first = high_alert(series(previous_high=None), aged_after_days=14, now=NOW)
     rise = high_alert(series(), aged_after_days=14, now=NOW)
     assert render_messages([first], collapse_above=3)[0].text == (
-        "🔴 <b>Project A</b> · High 3 in 1 audit · 11d"
+        "🔴 <b>Project A</b>: high problems 3, in audit security · open for 11 days"
     )
     assert render_messages([rise], collapse_above=3)[0].text == (
-        "🔴 <b>Project A</b> · High 1→3 in 1 audit · 11d"
+        "🔴 <b>Project A</b>: high problems 3 (was 1), in audit security · open for 11 days"
     )
 
 
@@ -237,15 +244,17 @@ def test_collapse_puts_high_first() -> None:
     assert len(messages) == 1
     body = messages[0].text.splitlines()
     assert body[0] == "Radar · problems: 4 projects"
-    assert body[1] == "🔴 <b>Project A</b> · High 1→3 in 1 audit · 11d"
+    assert (
+        body[1]
+        == "🔴 <b>Project A</b>: high problems 3 (was 1), in audit security · open for 11 days"
+    )
     assert messages[0].keys[0] == high.key
 
 
 def test_high_alert_without_repo_name_is_rejected_in_a_single_line() -> None:
     alert = high_alert(series(), aged_after_days=14, now=NOW).model_copy(update={"repo_name": None})
-    with pytest.raises(ValueError, match="repo_name"):
-        render_alert(alert)
-    # The group line never shows a repo, so it does not need the name.
+    # No line shows a repo, so no line needs the name.
+    assert render_alert(alert).startswith("🔴 <b>Project A</b>")
     assert render_messages([alert], collapse_above=3)[0].text.startswith("🔴 <b>Project A</b>")
 
 

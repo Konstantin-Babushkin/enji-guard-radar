@@ -40,8 +40,12 @@ def test_project_line_sums_counts_counts_audit_types_and_takes_the_oldest_age() 
         high("P", pid="p", repo="r2", audit="audit.security", count=2, age=9),
         high("P", pid="p", repo="r1", audit="audit.tests", count=1, age=4),
     ]
-    assert texts(alerts) == ["🔴 <b>P</b> · High 6 in 2 audits · 15d"]
-    assert texts(alerts, language="ru") == ["🔴 <b>P</b> · высокие 6 в 2 аудитах · 15 д"]
+    assert texts(alerts) == [
+        "🔴 <b>P</b>: high problems 6, in 2 audits, mostly security · open for 15 days"
+    ]
+    assert texts(alerts, language="ru") == [
+        "🔴 <b>P</b>: высоких проблем 6, в 2 аудитах, больше всего security · держится 15 дней"
+    ]
 
 
 def test_one_message_carries_the_keys_of_every_series_of_the_project() -> None:
@@ -50,25 +54,25 @@ def test_one_message_carries_the_keys_of_every_series_of_the_project() -> None:
     assert sorted(k.as_text() for k in message.keys) == sorted(a.key.as_text() for a in alerts)
 
 
-def test_no_repo_and_no_audit_name_in_the_group_line() -> None:
+def test_the_group_line_never_shows_the_repo() -> None:
     line = texts([high(repo="r1", repo_name="acme/secret-repo", audit="audit.security")])[0]
     assert "acme" not in line
-    assert "security" not in line
+    assert "secret-repo" not in line
 
 
 @pytest.mark.parametrize(
     ("count", "english", "russian"),
     [
-        (1, "High 1 in 1 audit", "высокие 1 в 1 аудите"),
-        (2, "High 2 in 2 audits", "высокие 2 в 2 аудитах"),
-        (5, "High 5 in 5 audits", "высокие 5 в 5 аудитах"),
-        (21, "High 21 in 21 audits", "высокие 21 в 21 аудите"),
+        (1, "in audit a00 ·", "в аудите a00 ·"),
+        (2, "in 2 audits, mostly a00 ·", "в 2 аудитах, больше всего a00 ·"),
+        (5, "in 5 audits, mostly a00 ·", "в 5 аудитах, больше всего a00 ·"),
+        (21, "in 21 audits, mostly a00 ·", "в 21 аудите, больше всего a00 ·"),
     ],
 )
 def test_audit_plural_forms(count: int, english: str, russian: str) -> None:
     alerts = [a.model_copy(update={"count": 1}) for a in audits(count)]
-    assert texts(alerts)[0].split(" · ")[1] == english
-    assert texts(alerts, language="ru")[0].split(" · ")[1] == russian
+    assert english in texts(alerts)[0]
+    assert russian in texts(alerts, language="ru")[0]
 
 
 # --- first alert and rise ---
@@ -77,15 +81,23 @@ def test_audit_plural_forms(count: int, english: str, russian: str) -> None:
 @pytest.mark.parametrize("previous", [None, 0])
 def test_a_first_alert_shows_the_count(previous: int | None) -> None:
     assert texts([high(count=4, previous=previous)]) == [
-        "🔴 <b>Project A</b> · High 4 in 1 audit · 8d"
+        "🔴 <b>Project A</b>: high problems 4, in audit security · open for 8 days"
     ]
 
 
 def test_a_rise_shows_previous_to_total_and_a_mixed_project_sums_both() -> None:
-    assert texts([high(count=3, previous=1)]) == ["🔴 <b>Project A</b> · High 1→3 in 1 audit · 8d"]
+    assert texts([high(count=3, previous=1)]) == [
+        "🔴 <b>Project A</b>: high problems 3 (was 1), in audit security · open for 8 days"
+    ]
     mixed = [high(count=3, previous=1), high(audit="audit.tests", count=2)]
-    assert texts(mixed) == ["🔴 <b>Project A</b> · High 1→5 in 2 audits · 8d"]
-    assert texts(mixed, language="ru") == ["🔴 <b>Project A</b> · высокие 1→5 в 2 аудитах · 8 д"]
+    assert texts(mixed) == [
+        "🔴 <b>Project A</b>: high problems 5 (was 1), in 2 audits, mostly security"
+        " · open for 8 days"
+    ]
+    assert texts(mixed, language="ru") == [
+        "🔴 <b>Project A</b>: высоких проблем 5 (было 1), в 2 аудитах, больше всего security"
+        " · держится 8 дней"
+    ]
 
 
 # --- stale and never ran ---
@@ -93,8 +105,8 @@ def test_a_rise_shows_previous_to_total_and_a_mixed_project_sums_both() -> None:
 
 def test_stale_and_never_ran_stay_their_own_lines() -> None:
     assert texts([stale("B", pid="b", age=28), never_ran("C", pid="c")]) == [
-        "🟡 <b>B</b> · no scan 28d",
-        "🟡 <b>C</b> · no scan yet",
+        "🟡 <b>B</b>: no scan for 28 days",
+        "🟡 <b>C</b>: no scan yet",
     ]
 
 
@@ -102,8 +114,8 @@ def test_a_project_with_high_and_stale_has_two_lines_and_counts_once_in_the_head
     (message,) = render_messages([stale("Project A"), *audits(2)], collapse_above=1)
     assert message.text.split("\n") == [
         "Radar · problems: 1 project",
-        "🔴 <b>Project A</b> · High 2 in 2 audits · 8d",
-        "🟡 <b>Project A</b> · no scan 27d",
+        "🔴 <b>Project A</b>: high problems 2, in 2 audits, mostly a00 · open for 8 days",
+        "🟡 <b>Project A</b>: no scan for 27 days",
     ]
     assert len(message.keys) == 3
 
@@ -119,7 +131,7 @@ def test_lines_are_ordered_worst_first_then_oldest_then_name() -> None:
         high("Old", pid="o", audit="audit.tests", age=3),
         never_ran("N", pid="n"),
     ]
-    assert [t.split(" · ")[0] for t in texts(alerts)] == [
+    assert [t.split(":")[0] for t in texts(alerts)] == [
         "🔴 <b>Old</b>",
         "🔴 <b>Young</b>",
         "🟡 <b>S</b>",
@@ -157,7 +169,7 @@ def test_many_series_of_one_project_never_collapse() -> None:
 def test_collapse_at_and_above_the_threshold_counts_lines() -> None:
     at = render_messages(projects(3), collapse_above=3)
     assert len(at) == 3
-    assert all(len(m.keys) == 1 and "problems" not in m.text for m in at)
+    assert all(len(m.keys) == 1 and not m.text.startswith("Radar") for m in at)
     (above,) = render_messages(projects(4), collapse_above=3)
     assert above.text.split("\n")[0] == "Radar · problems: 4 projects"
     assert len(above.keys) == 4
@@ -222,7 +234,10 @@ def test_the_most_urgent_claude_line_goes_under_the_project_line() -> None:
     first, second = pair()
     triage = {first.key: claude("p3", "Old dependency"), second.key: claude("p1", "SQL injection")}
     (message,) = render_messages([first, second], collapse_above=3, triage=triage)
-    assert message.text == "🔴 <b>Project A</b> · High 5 in 2 audits · 15d\n   P1 · SQL injection"
+    assert message.text == (
+        "🔴 <b>Project A</b>: high problems 5, in 2 audits, mostly security · open for 15 days\n"
+        "   P1 · SQL injection"
+    )
 
 
 def test_a_tie_takes_the_oldest_audit() -> None:

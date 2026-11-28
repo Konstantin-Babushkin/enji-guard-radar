@@ -21,6 +21,8 @@ DEFAULT_MAX_CHARS = 4000
 # near 550 units, far below this.
 MIN_MAX_CHARS = 1000
 MAX_NAME_CHARS = 80
+# An alert line names its worst audit only while the whole line stays at most this long.
+ALERT_LINE_FIT_CHARS = 120
 # The English texts other modules and tests name; the catalog holds them for every language.
 UNNAMED_PROJECT = text("en", "name.unnamed")
 
@@ -58,25 +60,6 @@ def days_text(count: int, *, language: Language = DEFAULT_LANGUAGE) -> str:
     return counted(language, "noun.day", count)
 
 
-def high_where(alert: Alert) -> str:
-    """The shared "<audit type> (<repo>)" part; a High alert is meaningless without its repo."""
-    if alert.repo_name is None:
-        message = "a High alert needs repo_name"
-        raise ValueError(message)
-    return f"{escape(alert.key.action_key)} ({escape(clean_name(alert.repo_name))})"
-
-
-def _high_count(alert: Alert) -> int:
-    if alert.count is None:
-        message = "a High alert needs count"
-        raise ValueError(message)
-    return alert.count
-
-
-def high_findings_text(count: int, *, language: Language = DEFAULT_LANGUAGE) -> str:
-    return counted(language, "noun.finding", count)
-
-
 def marker(kind: AlertKind, language: Language = DEFAULT_LANGUAGE) -> str:
     """The colour marker, chosen by code from the alert kind only."""
     key = "marker.high" if kind is AlertKind.HIGH_FINDINGS else "marker.other"
@@ -89,51 +72,81 @@ def audit_short(action_key: str) -> str:
 
 
 def age_text(days: int, language: Language = DEFAULT_LANGUAGE) -> str:
-    return text(language, "alert.age", days=days)
+    """`today` for 0, else the counted days: every number carries its word."""
+    if days == 0:
+        return text(language, "alert.age.today")
+    return days_text(days, language=language)
 
 
-def ambiguous_series(alerts: Sequence[Alert]) -> frozenset[tuple[str, str]]:
-    """(project_id, action_key) pairs that more than one repo holds in this set of alerts."""
-    repos: dict[tuple[str, str], set[str]] = {}
+def held_text(days: int, language: Language = DEFAULT_LANGUAGE) -> str:
+    """How long a problem has been open: `today` for 0, else `open for 3 days`."""
+    if days == 0:
+        return age_text(0, language)
+    return text(language, "alert.age.held", days=days_text(days, language=language))
+
+
+def project_groups(alerts: Sequence[Alert]) -> list[list[Alert]]:
+    """The High alerts grouped by project, in the order each project first appears."""
+    groups: dict[str, list[Alert]] = {}
     for alert in alerts:
-        if alert.kind is AlertKind.HIGH_FINDINGS:
-            repos.setdefault((alert.key.project_id, alert.key.action_key), set()).add(
-                alert.key.repo_id
-            )
-    return frozenset(pair for pair, ids in repos.items() if len(ids) > 1)
+        groups.setdefault(alert.key.project_id, []).append(alert)
+    return list(groups.values())
 
 
-def high_line(
-    alert: Alert, *, language: Language = DEFAULT_LANGUAGE, show_repo: bool, arrow: bool
-) -> str:
-    """One High line. `arrow` shows `High <previous or 0>→<count>`, else `High <count>`."""
-    if alert.age_days is None:
-        message = "a High alert needs age_days"
-        raise ValueError(message)
-    if alert.repo_name is None:
-        message = "a High alert needs repo_name"
-        raise ValueError(message)
-    count = _high_count(alert)
-    audit = audit_short(alert.key.action_key)
-    if show_repo:
-        repo = escape(clean_name(alert.repo_name))
-        audit = text(language, "alert.where_repo", audit=audit, repo=repo)
-    params = {
-        "marker": marker(alert.kind, language),
-        "name": escape(clean_name(alert.project_name, language=language)),
-        "audit": audit,
-        "count": count,
-        "age": age_text(alert.age_days, language),
-    }
-    if arrow:
-        previous = alert.previous_count or 0
-        return text(language, "alert.high.line", previous=previous, **params)
-    return text(language, "alert.high.line_count", **params)
+def _worst_audit(totals: Mapping[str, int]) -> str:
+    return min(totals, key=lambda action_key: (-totals[action_key], action_key))
 
 
-def render_alert(
-    alert: Alert, *, language: Language = DEFAULT_LANGUAGE, show_repo: bool = False
-) -> str:
+def _where(totals: Mapping[str, int], language: Language, *, name_worst: bool) -> str:
+    if len(totals) == 1:
+        return text(language, "alert.where.one", audit=audit_short(next(iter(totals))))
+    audits = counted(language, "noun.audit_in", len(totals))
+    if name_worst:
+        audit = audit_short(_worst_audit(totals))
+        return text(language, "alert.where.worst", audits=audits, audit=audit)
+    return text(language, "alert.where.many", audits=audits)
+
+
+def project_high_line(group: Sequence[Alert], language: Language = DEFAULT_LANGUAGE) -> str:
+    """One line for all High alerts of one project: count (and rise), audits, how long it lasts.
+
+    The worst audit is named only when the line still fits `ALERT_LINE_FIT_CHARS`.
+    """
+    first = group[0]
+    ages: list[int] = []
+    totals: dict[str, int] = {}
+    total = previous = 0
+    for alert in group:
+        if alert.age_days is None or alert.count is None:
+            message = "a High alert needs age_days and count"
+            raise ValueError(message)
+        ages.append(alert.age_days)
+        totals[alert.key.action_key] = totals.get(alert.key.action_key, 0) + alert.count
+        total += alert.count
+        previous += alert.previous_count or 0
+    problems = text(language, "alert.problems", count=total)
+    if previous > 0:
+        problems += text(language, "alert.rise", previous=previous)
+    age = held_text(max(ages), language)
+
+    def build(*, name_worst: bool) -> str:
+        return text(
+            language,
+            "alert.project.line",
+            marker=marker(first.kind, language),
+            name=escape(clean_name(first.project_name, language=language)),
+            problems=problems,
+            where=_where(totals, language, name_worst=name_worst),
+            age=age,
+        )
+
+    line = build(name_worst=True)
+    if len(totals) > 1 and len(line) > ALERT_LINE_FIT_CHARS:
+        return build(name_worst=False)
+    return line
+
+
+def render_alert(alert: Alert, *, language: Language = DEFAULT_LANGUAGE) -> str:
     """Exactly one line."""
     name = escape(clean_name(alert.project_name, language=language))
     if alert.kind is AlertKind.STALE:
@@ -145,7 +158,7 @@ def render_alert(
             "alert.stale.line",
             marker=marker(alert.kind, language),
             name=name,
-            age=age_text(alert.age_days, language),
+            days=days_text(alert.age_days, language=language),
         )
     if alert.kind is AlertKind.NEVER_RAN:
         return text(
@@ -155,7 +168,7 @@ def render_alert(
         if alert.seen_since is None:
             message = "a High alert needs seen_since"
             raise ValueError(message)
-        return high_line(alert, language=language, show_repo=show_repo, arrow=True)
+        return project_high_line([alert], language)
     message = f"unsupported alert kind {alert.kind}"  # type: ignore[unreachable]
     raise ValueError(message)
 
@@ -220,30 +233,6 @@ class _Line:
     keys: tuple[AlertKey, ...]
 
 
-def _project_line(group: Sequence[Alert], language: Language) -> str:
-    """The High line of one project: total count, audit types, oldest age. No repo, no audit."""
-    first = group[0]
-    ages: list[int] = []
-    total = previous = 0
-    for alert in group:
-        if alert.age_days is None or alert.count is None:
-            message = "a High alert needs age_days and count"
-            raise ValueError(message)
-        ages.append(alert.age_days)
-        total += alert.count
-        previous += alert.previous_count or 0
-    params = {
-        "marker": marker(first.kind, language),
-        "name": escape(clean_name(first.project_name, language=language)),
-        "count": total,
-        "audits": counted(language, "noun.audit_in", len({a.key.action_key for a in group})),
-        "age": age_text(max(ages), language),
-    }
-    if previous > 0:
-        return text(language, "alert.project.line_rise", previous=previous, **params)
-    return text(language, "alert.project.line", **params)
-
-
 def _best_triage(
     group: Sequence[Alert], triage: Mapping[AlertKey, ItemTriage]
 ) -> ItemTriage | None:
@@ -288,7 +277,7 @@ def _lines(
             lines.append(None)
         groups.setdefault(project_id, []).append(alert)
     for project_id, group in groups.items():
-        line = _project_line(group, language)
+        line = project_high_line(group, language)
         best = _best_triage(group, triage)
         if best is not None:
             line = f"{line}\n{triage_line(best, language=language)}"

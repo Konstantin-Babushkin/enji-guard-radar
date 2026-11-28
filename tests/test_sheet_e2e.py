@@ -24,7 +24,7 @@ from sheet_fakes import (
     sheet,
 )
 from telegram_fakes import FAKE_TOKEN, FakeTime, FakeTransport, ok_response
-from test_priority_e2e import DIGEST_AT, SECURITY_LINE
+from test_priority_e2e import DIGEST_AT, LOW_SECURITY_LINE, SECURITY_LINE
 from test_serve_e2e import Harness
 from test_sheet_client import KEY_JSON, FakeSheetsHttp
 
@@ -456,15 +456,15 @@ def types_row(project_id: str, types: str) -> SheetData:
 def test_without_the_sheet_the_fixture_security_series_alerts(tmp_path: Path) -> None:
     lines = priority_run(tmp_path, FakeSheetReader(sheet()))
     assert f"🔴 {SECURITY_LINE}" in lines
-    assert "Low priority · 1" not in lines
+    assert not any("low priority" in line for line in lines)
 
 
 def test_a_project_list_in_the_sheet_makes_its_security_series_low_priority(
     tmp_path: Path,
 ) -> None:
     lines = priority_run(tmp_path, FakeSheetReader(types_row(PROJECT_A, "audit.tech-health")))
-    assert f"🟡 {SECURITY_LINE}" in lines
-    assert "Low priority · 1" in lines
+    assert f"🟡 {LOW_SECURITY_LINE}" in lines
+    assert any("low priority" in line for line in lines)
     assert not any(line.startswith("🔴") for line in lines)
     state = deserialize_state((tmp_path / "state" / "state.json").read_bytes())
     assert [c for c in state.conditions if c.key.action_key == "audit.security"] == []
@@ -481,4 +481,4 @@ def test_a_list_that_names_the_type_or_belongs_to_another_project_keeps_it_high(
     other = priority_run(tmp_path / "other", FakeSheetReader(types_row(PROJECT_B, "audit.tests")))
     for lines in (named, other):
         assert f"🔴 {SECURITY_LINE}" in lines
-        assert "Low priority · 1" not in lines
+        assert not any("low priority" in line for line in lines)

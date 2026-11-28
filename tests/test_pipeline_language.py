@@ -94,16 +94,24 @@ def test_alerts_and_reminders_are_the_same_set_in_both_languages(tmp_path: Path)
     assert [m.audience for m in english] == [m.audience for m in russian]
     assert russian_state == english_state  # the language is not part of the state
 
-    assert english[0].text == "🔴 <b>Proj</b> · High 2 in 1 audit · 0d"
-    assert english[1].text == "🔴 <b>Proj</b> · High 2→4 in 1 audit · 1d"
+    assert english[0].text == "🔴 <b>Proj</b>: high problems 2, in audit security · today"
+    assert (
+        english[1].text
+        == "🔴 <b>Proj</b>: high problems 4 (was 2), in audit security · open for 1 day"
+    )
     assert english[2].text == (
-        "<b>Radar reminder · 1 open</b>\n🔴 <b>Proj</b> · security High 4 · 8d"
+        "<b>Radar reminder · open: 1 project</b>\n"
+        "🔴 <b>Proj</b>: high problems 4 (was 2), in audit security · open for 8 days"
     )
 
-    assert russian[0].text == "🔴 <b>Proj</b> · высокие 2 в 1 аудите · 0 д"
-    assert russian[1].text == "🔴 <b>Proj</b> · высокие 2→4 в 1 аудите · 1 д"
+    assert russian[0].text == "🔴 <b>Proj</b>: высоких проблем 2, в аудите security · сегодня"
+    assert (
+        russian[1].text
+        == "🔴 <b>Proj</b>: высоких проблем 4 (было 2), в аудите security · держится 1 день"
+    )
     assert russian[2].text == (
-        "<b>Радар · напоминание · открыто: 1</b>\n🔴 <b>Proj</b> · security высокие 4 · 8 д"
+        "<b>Радар · напоминание · открыто: 1 проект</b>\n"
+        "🔴 <b>Proj</b>: высоких проблем 4 (было 2), в аудите security · держится 8 дней"
     )
     assert not any(CYRILLIC.search(m.text) for m in english)
 
@@ -164,11 +172,11 @@ def test_digest_is_sent_in_the_configured_language_with_the_same_state(tmp_path:
 
     (english,) = sent["en"].requests
     (russian,) = sent["ru"].requests
-    assert re.match(r"<b>Radar weekly · \d+ open</b>\nLast poll: ", text_of(english))
-    assert re.match(r"<b>Радар · дайджест · открыто: \d+</b>\nПоследний опрос: ", text_of(russian))
+    assert re.match(r"<b>Radar · weekly digest</b>\nHigh problems: ", text_of(english))
+    assert re.match(r"<b>Радар · недельная сводка</b>\nВысоких проблем: ", text_of(russian))
     assert english[1]["chat_id"] == russian[1]["chat_id"] == GROUP_CHAT
     assert 'Project A &lt;core&gt; &amp; "tools"' in text_of(russian)
-    assert "· security высокие 1 · 8 д" in text_of(russian)
+    assert "— 1 высокая проблема; больше всего: безопасность; 8 дней" in text_of(russian)
     assert (tmp_path / "state-en" / "state.json").read_bytes() == (
         tmp_path / "state-ru" / "state.json"
     ).read_bytes()
@@ -210,7 +218,10 @@ def test_dry_run_prints_the_same_russian_text_and_writes_nothing(tmp_path: Path)
     live = FakeTransport([ok_response(1)])
     assert run_live(tmp_path, "live-state", "2026-11-18T06:00:00Z", "ru", live) == 0
     assert text_of(live.requests[0]) in printed  # dry-run shows exactly what a live send sends
-    assert '🔴 <b>Project A &lt;core&gt; &amp; "tools"</b> · security высокие 0→1 · 8 д' in printed
+    assert (
+        '🔴 <b>Project A &lt;core&gt; &amp; "tools"</b>: высоких проблем 1, в аудите security'
+        " · держится 8 дней"
+    ) in printed
     assert "--- would send to group ---" in printed
     assert "baseline, not sent (3)" in printed
     assert not (tmp_path / "state").exists()

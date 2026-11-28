@@ -85,7 +85,6 @@ from enji_guard_radar.ports import (
     SendOutcome,
     Triager,
 )
-from enji_guard_radar.recurring_rules import is_recurring, trailing_high_runs
 from enji_guard_radar.reminders import mark_reminded, reminders_due, render_reminders
 from enji_guard_radar.score_rules import SCORE_ACTION_KEYS, LowScore, evaluate_scores
 from enji_guard_radar.sheet_sync import (
@@ -564,22 +563,12 @@ def _digest_input(deps: Deps, polled: "PollData", state: State, now: datetime) -
     alerts = [alert for evaluation in polled.evaluations for alert in evaluation.alerts]
     high = tuple(alert for alert in alerts if alert.kind is AlertKind.HIGH_FINDINGS and alert.count)
     stale = tuple(alert for alert in alerts if alert.kind in (AlertKind.STALE, AlertKind.NEVER_RAN))
-    after_runs = deps.config.recurring.after_runs
-    recurring: dict[SeriesKey, int] = {}
-    for alert in high:
-        series = (alert.key.project_id, alert.key.repo_id, alert.key.action_key)
-        history = polled.histories.get(series)
-        if is_recurring(history, after_runs=after_runs):
-            recurring[series] = trailing_high_runs(history)
     return DigestInput(
         last_poll_at=now,
         max_items=deps.config.digest.max_items,
         high=high,
         low_priority=polled.low_series,
-        recurring_runs=recurring,
         stale=stale,
-        low_scores=polled.low_scores,
-        tooling_gaps=polled.tooling_gaps,
         resolved=state.resolved,
         project_names={r.project_id: r.project_name for r in polled.results},
         unread_projects=sum(1 for r in polled.results if r.status is ProjectStatus.UNKNOWN),
@@ -624,11 +613,11 @@ def _digest_step(
     digest = build_digest(_digest_input(deps, polled, state, now), language=language)
     messages = render_digest(digest)
     logger.info(
-        "digest due: planned %s, %d open item(s), %d low priority, %d resolved, %d message(s)",
+        "digest due: planned %s, %d open High in %d project(s), %d resolved, %d message(s)",
         decision.planned_for,
-        digest.total_items,
-        digest.low_total,
-        digest.resolved_total,
+        digest.open_high,
+        digest.projects_with_high,
+        digest.resolved_high,
         len(messages),
     )
     return _send_digest(deps, state, now, actions, decision.planned_for, messages)

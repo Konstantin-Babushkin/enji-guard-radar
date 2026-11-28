@@ -151,7 +151,7 @@ def test_dry_run_with_triage_shows_cause(tmp_path: Path) -> None:
 
     assert done.returncode == 0, done.stderr
     block = alert_block(done.stdout)
-    assert "High 1 in 1 audit" in block[0]
+    assert "high problems 1, in audit security" in block[0]
     assert block[1] == P1_LINE
     assert "triage call: items 1, outcome ok" in done.stderr
     assert "triage today (UTC):" in done.stderr
@@ -169,7 +169,7 @@ def test_triage_off_prints_the_rule_only_alert_and_never_calls_claude(tmp_path: 
 
     assert done.returncode == 0, done.stderr
     block = alert_block(done.stdout)
-    assert "High 1 in 1 audit" in block[0]
+    assert "high problems 1, in audit security" in block[0]
     assert "P1" not in done.stdout
     assert "triage call" not in done.stderr
     assert "triage today" not in done.stderr

@@ -388,13 +388,14 @@ wait for the next timer run. Alerts already in `state.json` are not re-sent to t
 ## Reminders
 
 An open High finding that nobody has dealt with is sent again as a reminder: a separate
-message with the title `Radar reminder · N open` and one line per open High series: name,
-audit type, finding count and age, for example:
+message with the title `Radar reminder · open: N projects` and one line per project, worded
+like an alert: number of high problems, audits, and how long the oldest has been open, for
+example:
 
 ```
-<b>Radar reminder · 2 open</b>
-🔴 <b>Project A</b> · security High 1 · 8d
-🔴 <b>Project B</b> · tests High 5 · 22d
+<b>Radar reminder · open: 2 projects</b>
+🔴 <b>Project A</b>: high problems 1, in audit security · open for 8 days
+🔴 <b>Project B</b>: high problems 5, in 2 audits, mostly tests · open for 22 days
 ```
 
 The age counts from the radar's first sight of the series, not from when Guard found it. A
@@ -434,34 +435,38 @@ the timer interval can skip a week without a single attempt; `doctor` warns abou
 While Guard is unavailable (the project listing failed, or every active project could not be
 read) a due digest is deferred and logged, never built from a failed poll. The first
 successful run inside the window sends it. A project that could not be read in an otherwise
-successful poll does not defer it: the digest counts such projects in its text ("N projects
-could not be read in that poll").
+successful poll does not defer it: the digest counts such projects in its last line ("Could not read N
+projects").
 
-What it contains, worst first by type and then by age: open High series, stale or never-ran
-projects, low scores, tooling gaps, one line per item. A High series that was open in each of
-the last `recurring.after_runs` runs ends with `recurring N runs`. At most `digest.max_items`
-items are listed, then "+N more open items not shown." Items resolved since the previous digest
-follow under `Resolved · N`, each shown once. Every digest shows the time of the last
-successful Guard poll and ends with the footer "Ages count from the radar's first sight." For
-example:
+What it contains: a title, one overview sentence (open High problems, in how many projects,
+closed since the previous digest) and one line per project, worst first: 🔴 when the project
+has open High findings in a high-priority audit type, 🟡 when it has them only in low-priority
+types (or is stale or never ran), 🟢 when it has none. A project line gives the number of open
+High problems, the one or two audit types with the most of them (short words from the text
+catalog; an unknown audit type shows its raw name) and how long the oldest has been open.
+A red project with extra High findings in low-priority types adds "N more in low-priority
+audits". Clean projects get one line each, up to `digest.max_items`, then "and N more projects
+clean". The last line is the time of the last successful Guard poll, with a warning when some
+projects could not be read. Resolved items are only counted, in the overview. Low scores and
+tooling gaps are not part of the digest. For example:
 
 ```
-<b>Radar weekly · 3 open</b>
-Last poll: 2026-11-18 06:00 UTC
-🔴 <b>Project A</b> · security High 2 · 16d · recurring 3 runs
-🟡 <b>Project B</b> · no scan 21d
-🟡 <b>Project C</b> · tests 40/100 · 8d
-Resolved · 1
-<b>Project D</b> · security closed
-Ages count from the radar's first sight.
+<b>Radar · weekly digest</b>
+High problems: 6 in 2 projects, closed this week: 1.
+🔴 <b>Project A</b> — 2 high problems; most in: security; 16 days
+🟡 <b>Project C</b> — 4 high problems, low priority; most in: tests; 8 days
+🟡 <b>Project B</b> — no scan for 21 days
+🟢 <b>Project D</b> — clean
+⚠️ Could not read 1 project · poll 2026-11-18 06:00 UTC
 ```
 
 When nothing is open it is a single all-clear line:
-`Radar weekly · nothing open · last poll 2026-11-18 06:00 UTC`. The digest counts only: it shows names, counts, scores,
-dates and audit types, no finding titles. It includes items the group already saw as alerts
-and items that were only baselined.
+`Radar · weekly digest · nothing open · last poll 2026-11-18 06:00 UTC`, followed by the clean
+projects. The digest counts only: it shows names, counts, dates and audit types, no finding
+titles or repository names. It includes items the group already saw as alerts and items that
+were only baselined.
 
-`run --dry-run` prints the digest in the same way and writes nothing.
+
 
 ## Triage
 
@@ -492,7 +497,7 @@ alert being sent; nothing from Guard is stored.
    under it, for example:
 
    ```
-   🔴 <b>Project A</b> · High 4 in 2 audits · 16d
+   🔴 <b>Project A</b>: high problems 4, in 2 audits, mostly security · open for 16 days
       p1 · Injection flaw in order search
    ```
 

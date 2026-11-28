@@ -45,7 +45,7 @@ from enji_guard_radar.secret_guard import SecretGatedNotifier
 from enji_guard_radar.state_store import DryRunStateStore, FileStateStore
 from enji_guard_radar.telegram import HttpTransport
 
-DIGEST_MARK = "<b>Radar weekly"  # starts both the titled digest and the all-clear line
+DIGEST_MARK = "<b>Radar · weekly digest"  # starts both the full digest and the all-clear line
 FIXTURES = Path(__file__).resolve().parents[1] / "fixtures" / "guard"
 ENVIRON = {"TELEGRAM_BOT_TOKEN": FAKE_TOKEN, "TELEGRAM_CHAT_ID": "-1001234567890"}
 
@@ -93,7 +93,7 @@ def load_state(tmp_path: Path) -> State:
 
 def digest_texts(transport: FakeTransport) -> list[str]:
     texts = [str(payload["text"]) for _, payload in transport.requests]
-    return [text for text in texts if text.startswith("<b>Radar weekly")]
+    return [text for text in texts if text.startswith(DIGEST_MARK)]
 
 
 def state_digests(tmp_path: Path) -> dict[str, str]:
@@ -112,10 +112,10 @@ def test_weekly_digest_is_sent_once_on_the_first_run_at_or_after_the_planned_mom
 
     assert len(transport.requests) == 1
     text = str(transport.requests[0][1]["text"])
-    assert text.startswith("<b>Radar weekly · ")
-    assert "Last poll: 2026-11-18 06:00 UTC" in text
-    assert " open</b>" in text.split("\n")[0]
-    assert "· security High 1 · 8d" in text
+    assert text.startswith("<b>Radar · weekly digest</b>\n")
+    assert text.endswith("Poll 2026-11-18 06:00 UTC") or "· poll 2026-11-18 06:00 UTC" in text
+    assert text.split("\n")[1].startswith("High problems: 1 in 1 project")
+    assert "— 1 high problem; most in: security; 8 days" in text
     digest = load_state(tmp_path).digest
     assert digest.outcome == "sent"
     assert digest.planned_for == datetime(2026, 11, 18, 5, tzinfo=UTC)
@@ -141,7 +141,7 @@ def test_weekly_digest_is_sent_once_on_the_first_run_at_or_after_the_planned_mom
     assert dry.requests == []
     lines = out.splitlines()
     assert lines.count("--- would send to group ---") == 1
-    assert "<b>Radar weekly · " in out
+    assert "<b>Radar · weekly digest</b>" in out
     assert "follow-ups: 0 reminder message(s), digest printed" in out
     assert state_digests(tmp_path) == before
 
@@ -330,7 +330,7 @@ def test_partial_poll_counts_the_unreadable_project_in_the_text(tmp_path: Path) 
     assert report.digest is DigestStatus.SENT
     assert not report.poll_failed
     text = only_digest(report)
-    assert "1 project could not be read in that poll." in text
+    assert "⚠️ Could not read 1 project" in text
     assert "<b>Proj</b>" in text
     assert "Other" not in text
 
@@ -361,7 +361,7 @@ def test_ack_before_mark_the_record_appears_only_after_the_acknowledgement(
     assert state.resolved == ()
 
 
-def test_resolved_items_are_listed_once_in_the_next_digest(tmp_path: Path) -> None:
+def test_resolved_items_are_counted_once_in_the_next_digest(tmp_path: Path) -> None:
     sim = with_open_series(tmp_path)
     assert sim.poll(WED).digest is DigestStatus.SENT
     sim.add_run(high=0, day=3)
@@ -370,16 +370,15 @@ def test_resolved_items_are_listed_once_in_the_next_digest(tmp_path: Path) -> No
     sim.poll(4)
 
     week2 = only_digest(sim.poll(9))
-    assert "Resolved · 1" in week2.split("\n")
-    assert "<b>Proj</b> · security closed" in week2.split("\n")
-    assert week2.startswith("<b>Radar weekly</b> · nothing open · last poll ")
+    assert week2.startswith("<b>Radar · weekly digest</b> · nothing open · last poll ")
+    assert "No open high problems, closed this week: 1." in week2.split("\n")
 
     week3 = only_digest(sim.poll(16))
-    assert "Resolved" not in week3
     assert "closed" not in week3
+    assert "Resolved" not in week3
 
 
-def test_resolved_stale_project_is_listed_once(tmp_path: Path) -> None:
+def test_a_resolved_stale_project_is_not_a_closed_high_problem(tmp_path: Path) -> None:
     sim = digest_sim(tmp_path, base="defaults:\n  stale_after_days: 4\n")
     sim.poll(0)
     sim.poll(5)  # stale alert on Saturday
@@ -387,10 +386,8 @@ def test_resolved_stale_project_is_listed_once(tmp_path: Path) -> None:
     assert sim.poll(6).resolved != ()
 
     week2 = only_digest(sim.poll(9))
-    assert "Resolved · 1" in week2.split("\n")
-    assert "<b>Proj</b> · no scan closed" in week2.split("\n")
-    week3 = only_digest(sim.poll(16))
-    assert "no scan closed" not in week3
+    assert "closed" not in week2
+    assert "Resolved" not in week2
 
 
 def test_resolved_items_of_a_skipped_week_stay_pending(tmp_path: Path) -> None:
@@ -405,39 +402,38 @@ def test_resolved_items_of_a_skipped_week_stay_pending(tmp_path: Path) -> None:
     assert len(sim.state().resolved) == 1
 
     text = only_digest(sim.poll(16))
-    assert "Resolved · 1" in text.split("\n")
+    assert "No open high problems, closed this week: 1." in text.split("\n")
     assert sim.state().resolved == ()
 
 
-def test_open_items_show_alerted_and_baselined_series_with_the_recurring_marker(
+def test_open_items_sum_alerted_and_baselined_series_of_one_project_without_repo_names(
     tmp_path: Path,
 ) -> None:
-    sim = digest_sim(tmp_path, "recurring:\n  after_runs: 2\n")
+    sim = digest_sim(tmp_path)
     add_repo(sim, "repo_r-2", "acme/other", high=1)  # present at the first poll: baselined
     sim.poll(0)
     sim.add_run(high=2, day=1)
     sim.poll(1)  # alerted
-    sim.add_run(high=2, day=2)  # the second run in a row with High findings
     text = only_digest(sim.poll(WED))
 
-    assert text.split("\n")[0] == "<b>Radar weekly · 2 open</b>"
-    assert "security (acme/svc) High 2" in text
-    assert "security (acme/other) High 1" in text
-    marked = [line for line in text.splitlines() if "recurring" in line]
-    assert len(marked) == 1
-    assert "(acme/svc)" in marked[0]
-    assert marked[0].endswith("recurring 2 runs")
+    lines = text.split("\n")
+    assert lines[1].startswith("High problems: 3 in 1 project")
+    assert [line for line in lines if line.startswith("🔴")] == [
+        "🔴 <b>Proj</b> — 3 high problems; most in: security; oldest 2 days"
+    ]
+    assert "acme/" not in text
+    assert "recurring" not in text
 
 
 def test_open_items_show_a_stale_project(tmp_path: Path) -> None:
     sim = digest_sim(tmp_path, base="defaults:\n  stale_after_days: 1\n")
     sim.poll(0)
     text = only_digest(sim.poll(WED))
-    assert text.split("\n")[0] == "<b>Radar weekly · 1 open</b>"
-    assert "🟡 <b>Proj</b> · no scan 2d" in text.split("\n")
+    assert text.split("\n")[0] == "<b>Radar · weekly digest</b>"
+    assert "🟡 <b>Proj</b> — no scan for 2 days" in text.split("\n")
 
 
-def test_open_items_show_a_low_score_and_a_tooling_gap(tmp_path: Path) -> None:
+def test_low_scores_and_tooling_gaps_are_not_in_the_digest(tmp_path: Path) -> None:
     config = (
         CALM_CONFIG
         + SCOPED_TO_SECURITY
@@ -448,11 +444,9 @@ def test_open_items_show_a_low_score_and_a_tooling_gap(tmp_path: Path) -> None:
     sim.poll(0)
     add_scored_run(sim, AI_READINESS, 40, day=1)
     text = only_digest(sim.poll(WED))
-    assert text.split("\n")[0] == "<b>Radar weekly · 2 open</b>"
-    assert "🟡 <b>Proj</b> · ai-readiness 40/100 · " in text
-    assert "· ai-readiness 40/100 · 1d" in text
-    assert "🟡 <b>Proj</b> · acme/svc · no runs 60d: dead-code" in text.split("\n")
-    assert text.index("ai-readiness") < text.index("no runs")  # worst first
+    assert "ai-readiness" not in text
+    assert "no runs" not in text
+    assert "<b>Proj</b> — clean" in text
 
 
 def test_open_items_leave_out_a_paused_project(tmp_path: Path) -> None:
@@ -463,18 +457,19 @@ def test_open_items_leave_out_a_paused_project(tmp_path: Path) -> None:
     assert "nothing open" in text
 
 
-def test_cap_shows_max_items_and_an_exact_remainder(tmp_path: Path) -> None:
-    sim = digest_sim(tmp_path, "digest:\n  max_items: 3\n")
+def test_digest_has_one_line_per_project_however_many_repos_and_series(tmp_path: Path) -> None:
+    sim = digest_sim(tmp_path)
     sim.add_run(SECURITY, high=1, day=0)
     for number in range(2, 7):
         add_repo(sim, f"repo_r-{number}", f"acme/r{number}", high=number)
     text = only_digest(sim.poll(WED))
-    assert text.split("\n")[0] == "<b>Radar weekly · 6 open</b>"
-    assert len([line for line in text.splitlines() if line.startswith("🔴")]) == 3
-    assert "+3 more open items not shown." in text
+    assert text.split("\n")[1].startswith("High problems: 21 in 1 project")
+    assert len([line for line in text.splitlines() if line.startswith("🔴")]) == 1
+    assert len(text.split("\n")) == 4  # title, overview, the project, the poll time
+    assert "not shown" not in text
 
 
-def test_all_clear_is_one_line_with_the_poll_time_then_the_green_block(tmp_path: Path) -> None:
+def test_all_clear_is_one_line_with_the_poll_time_then_the_clean_projects(tmp_path: Path) -> None:
     sim = digest_sim(tmp_path)
     notifier = Scripted()
     report = sim.poll(WED, notifier=notifier)
@@ -482,9 +477,8 @@ def test_all_clear_is_one_line_with_the_poll_time_then_the_green_block(tmp_path:
     (message,) = digests_sent(notifier)
     assert message.audience is Audience.GROUP
     assert message.text.split("\n") == [
-        "<b>Radar weekly</b> · nothing open · last poll 2026-11-04 12:00 UTC",
-        "Clean · 1",
-        "🟢 <b>Proj</b> · no high issues",
+        "<b>Radar · weekly digest</b> · nothing open · last poll 2026-11-04 12:00 UTC",
+        "🟢 <b>Proj</b> — clean",
     ]
 
 
@@ -573,11 +567,11 @@ def test_dry_run_builds_the_digest_and_writes_nothing(tmp_path: Path) -> None:
         )
     )
     assert report.digest is DigestStatus.PRINTED
-    assert "· security High 2 · 1d" in only_digest(report)
+    assert "— 2 high problems; most in: security; 1 day" in only_digest(report)
     assert (store.state_path.read_bytes(), store.backup_path.read_bytes()) == before
 
 
-def test_low_priority_series_is_in_the_digest_block_and_never_an_alert(tmp_path: Path) -> None:
+def test_low_priority_series_is_a_yellow_digest_line_and_never_an_alert(tmp_path: Path) -> None:
     low = "high:\n  high_priority_audit_types:\n    - audit.tech-health\n"
     sim = digest_sim(tmp_path, low)
     sim.poll(0)
@@ -589,21 +583,18 @@ def test_low_priority_series_is_in_the_digest_block_and_never_an_alert(tmp_path:
     wednesday = sim.poll(WED, notifier=notifier)
     assert wednesday.messages == ()
     text = only_digest(wednesday)
-    # A low-priority series does not stop the project from being green.
-    assert text.split("\n")[2:7] == [
-        "Low priority · 1",
-        "🟡 <b>Proj</b> · security High 2 · 1d",
-        "Clean · 1",
-        "🟢 <b>Proj</b> · no high issues",
-        "Ages count from the radar's first sight.",
+    assert text.split("\n") == [
+        "<b>Radar · weekly digest</b>",
+        "High problems: 2 in 1 project, closed this week: 0.",
+        "🟡 <b>Proj</b> — 2 high problems, low priority; most in: security; 1 day",
+        "Poll 2026-11-04 12:00 UTC",
     ]
-    assert text.startswith("<b>Radar weekly · 1 open</b>")
     assert "🔴" not in text
 
 
-# --- the green block: clean projects in the digest ---
+# --- clean projects in the digest ---
 
-GREEN_PROJ = "🟢 <b>Proj</b> · no high issues"
+GREEN_PROJ = "🟢 <b>Proj</b> — clean"
 
 
 def green_lines(text: str) -> list[str]:
@@ -615,32 +606,32 @@ def test_green_clean_project_is_listed(tmp_path: Path, caplog: pytest.LogCapture
     sim.poll(0)
     with caplog.at_level(logging.INFO):
         text = only_digest(sim.poll(WED))
-    assert text.split("\n")[-2:] == ["Clean · 1", GREEN_PROJ]
+    assert text.split("\n")[-1] == GREEN_PROJ
     assert green_lines(text) == [GREEN_PROJ]
-    assert "clean digest block: 1 project(s)" in caplog.text
+    assert "1 clean" in caplog.text
 
 
 def test_green_not_for_a_project_with_a_high_priority_high_series(tmp_path: Path) -> None:
     text = only_digest(with_open_series(tmp_path).poll(WED))
-    assert "security High 2" in text
+    assert "2 high problems" in text
     assert green_lines(text) == []
-    assert "Clean" not in text
+    assert "clean" not in text
 
 
-def test_green_low_priority_only_project_is_still_green(tmp_path: Path) -> None:
+def test_a_low_priority_only_project_is_yellow_not_green(tmp_path: Path) -> None:
     sim = digest_sim(tmp_path, "high:\n  high_priority_audit_types:\n    - audit.tech-health\n")
     sim.poll(0)
     sim.add_run(high=2, day=1)
     text = only_digest(sim.poll(WED))
-    assert "Low priority · 1" in text
-    assert green_lines(text) == [GREEN_PROJ]
+    assert "low priority" in text
+    assert green_lines(text) == []
 
 
 def test_green_not_for_a_stale_project(tmp_path: Path) -> None:
     sim = digest_sim(tmp_path, base="defaults:\n  stale_after_days: 1\n")
     sim.poll(0)
     text = only_digest(sim.poll(WED))
-    assert "no scan 2d" in text
+    assert "no scan for 2 days" in text
     assert green_lines(text) == []
 
 
@@ -657,7 +648,7 @@ def test_green_not_for_a_paused_project(tmp_path: Path) -> None:
     sim.paused = True
     text = only_digest(sim.poll(WED))
     assert green_lines(text) == []
-    assert "Clean" not in text
+    assert "clean" not in text
 
 
 def test_green_not_for_an_unreadable_project_but_for_the_readable_one(tmp_path: Path) -> None:
@@ -685,7 +676,7 @@ def test_green_not_for_an_unreadable_project_but_for_the_readable_one(tmp_path: 
         )
     )
     text = only_digest(report)
-    assert "1 project could not be read in that poll." in text
+    assert "⚠️ Could not read 1 project" in text
     assert green_lines(text) == [GREEN_PROJ]
 
 
@@ -697,7 +688,7 @@ def test_green_not_while_a_high_priority_series_is_open_with_zero_high(tmp_path:
     sim.add_run(high=0, day=2)  # one clean run of the two needed: the series is still open
     text = only_digest(sim.poll(WED))
     assert green_lines(text) == []
-    assert "Clean" not in text
+    assert "clean" not in text
 
 
 def test_green_returns_once_the_series_has_closed(tmp_path: Path) -> None:
@@ -721,14 +712,12 @@ def test_green_is_never_in_an_alert_message(tmp_path: Path) -> None:
     assert not any("🟢" in text for text in alerts)
 
 
-def test_green_block_goes_out_through_cli_main_with_state_still_schema_3(tmp_path: Path) -> None:
+def test_clean_projects_go_out_through_cli_main_with_state_still_schema_3(tmp_path: Path) -> None:
     transport = FakeTransport([ok_response(1)])
     run_at(tmp_path, "2026-11-18T06:00:00Z", transport, use_config=False)
     (text,) = digest_texts(transport)
     lines = text.split("\n")
-    assert "Clean · 1" in lines
-    assert lines[lines.index("Clean · 1") + 1] == (
-        "🟢 <b>Project F (excluded in config)</b> · no high issues"
-    )
-    assert lines[0].endswith("8 open</b>")
+    assert "🟢 <b>Project F (excluded in config)</b> — clean" in lines
+    assert len([line for line in lines if line.startswith(("🔴", "🟡", "🟢"))]) == 5
+    assert len(lines) <= 15
     assert load_state(tmp_path).schema_version == 3

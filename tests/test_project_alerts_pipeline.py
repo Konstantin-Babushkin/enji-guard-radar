@@ -44,7 +44,9 @@ def test_three_series_of_one_project_are_one_message_and_three_marked_conditions
 ) -> None:
     sim = three_series_sim(tmp_path)
     report = sim.poll(1)
-    assert [m.text for m in report.messages] == ["🔴 <b>Proj</b> · High 4 in 2 audits · 0d"]
+    assert [m.text for m in report.messages] == [
+        "🔴 <b>Proj</b>: high problems 4, in 2 audits, mostly security · today"
+    ]
     assert len(report.messages[0].keys) == 3
     assert (report.delivered, report.not_delivered) == (1, 0)
 
@@ -71,7 +73,9 @@ def test_a_failed_send_marks_nothing_and_the_next_run_sends_the_same_line(tmp_pa
     assert all(c.alerted_at is None for c in conditions(sim))
 
     retry = sim.poll(2)
-    assert texts(retry) == ["🔴 <b>Proj</b> · High 4 in 2 audits · 1d"]
+    assert texts(retry) == [
+        "🔴 <b>Proj</b>: high problems 4, in 2 audits, mostly security · open for 1 day"
+    ]
     assert len(retry.messages[0].keys) == 3
     assert all(c.alerted_at is not None for c in conditions(sim))
     assert texts(sim.poll(3)) == []
@@ -86,7 +90,9 @@ def test_a_rise_of_one_audit_resends_the_line_and_rearms_only_that_condition(
     sim.add_run(TESTS, high=5, day=2)
     report = sim.poll(2)
 
-    assert texts(report) == ["🔴 <b>Proj</b> · High 2→5 in 1 audit · 1d"]
+    assert texts(report) == [
+        "🔴 <b>Proj</b>: high problems 5 (was 2), in audit tests · open for 1 day"
+    ]
     assert [(k.repo_id, k.action_key) for k in report.messages[0].keys] == [(RID, TESTS)]
     after = {(c.key.repo_id, c.key.action_key): c for c in conditions(sim)}
     assert len(after) == 3
@@ -110,7 +116,7 @@ def test_triage_gives_one_claude_line_for_a_project_with_two_audits(tmp_path: Pa
     assert len(triager.requests[0].items) == 2
     (message,) = report.messages
     lines = message.text.split("\n")
-    assert lines[0] == "🔴 <b>Proj</b> · High 2 in 2 audits · 0d"
+    assert lines[0] == "🔴 <b>Proj</b>: high problems 2, in 2 audits, mostly security · today"
     assert len(lines) == 2
     assert lines[1].startswith("   P1 · ")
     assert len(message.keys) == 2

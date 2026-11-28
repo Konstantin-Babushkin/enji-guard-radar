@@ -100,8 +100,8 @@ def test_default_config_keeps_every_type_high(tmp_path: Path) -> None:
     assert (
         sorted(texts(report))
         == [
-            "🔴 <b>Proj</b> · security High 0→2 · 0d",
-            "🔴 <b>Proj</b> · tests High 0→1 · 0d",
+            "🔴 <b>Proj</b>: high problems 2, in audit security · today",
+            "🔴 <b>Proj</b>: high problems 1, in audit tests · today",
         ]
         or len(report.messages) == 1
     )
@@ -134,7 +134,7 @@ def test_reclassified_low_to_high_alerts_once(tmp_path: Path) -> None:
 
     sim.config_text = CALM_CONFIG
     (message,) = sim.poll(3).messages
-    assert "High 2 in 1 audit" in message.text
+    assert "high problems 2, in audit security" in message.text
     assert [key.action_key for key in message.keys] == [SECURITY]
     assert sim.poll(4).messages == ()
     assert len(conditions_for(sim, SECURITY)) == 1

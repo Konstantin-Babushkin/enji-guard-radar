@@ -30,7 +30,13 @@ NINE_HIGH_KEYS = (
     "audit.secrets-handling",
     "audit.public-api-access-safety",
 )
-SECURITY_LINE = '<b>Project A &lt;core&gt; &amp; "tools"</b> · security High 1 · 8d'
+SECURITY_LINE = (
+    '<b>Project A &lt;core&gt; &amp; "tools"</b> — 1 high problem; most in: security; 8 days'
+)
+LOW_SECURITY_LINE = (
+    '<b>Project A &lt;core&gt; &amp; "tools"</b> — 1 high problem, low priority; '
+    "most in: security; 8 days"
+)
 
 
 @pytest.fixture(autouse=True)
@@ -88,9 +94,8 @@ def saved_state(tmp_path: Path) -> State:
 
 def assert_security_is_low_only_in_the_digest(tmp_path: Path, transport: FakeTransport) -> None:
     (digest,) = sent_texts(transport)  # one message: the digest; nothing was alerted
-    assert digest.startswith("<b>Radar weekly")
-    assert "Low priority · 1" in digest.split("\n")
-    assert f"🟡 {SECURITY_LINE}" in digest.split("\n")
+    assert digest.startswith("<b>Radar · weekly digest")
+    assert f"🟡 {LOW_SECURITY_LINE}" in digest.split("\n")
     assert "🔴" not in digest
     state = saved_state(tmp_path)
     assert state.schema_version == 3
@@ -117,13 +122,13 @@ def test_legacy_audit_types_key_gives_the_same_split(
     config = config_with(tmp_path / "b", "audit_types", NINE_HIGH_KEYS)
     (digest,) = sent_texts(live_run(tmp_path / "b", config))
     assert f"🔴 {SECURITY_LINE}" in digest.split("\n")
-    assert "Low priority" not in digest
+    assert "low priority" not in digest
 
 
 def test_default_config_digest_has_no_low_block(tmp_path: Path) -> None:
     config = config_with(tmp_path, "high_priority_audit_types", None)
     (digest,) = sent_texts(live_run(tmp_path, config))
     assert f"🔴 {SECURITY_LINE}" in digest.split("\n")
-    assert "Low priority" not in digest
+    assert "low priority" not in digest
     state = saved_state(tmp_path)
     assert [c.key.action_key for c in state.conditions if c.key.level == "high"] == [SECURITY]

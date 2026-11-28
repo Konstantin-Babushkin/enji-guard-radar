@@ -19,7 +19,10 @@ def test_single_alert_with_cause() -> None:
     alert = high()
     messages = render_messages([alert], collapse_above=3, triage={alert.key: item()})
     assert [m.text for m in messages] == [
-        "🔴 <b>Project A</b> · High 1 in 1 audit · 8d\n   P1 · SQL injection in order search"
+        (
+            "🔴 <b>Project A</b>: high problems 1, in audit security · open for 8 days\n"
+            "   P1 · SQL injection in order search"
+        )
     ]
     assert messages[0].keys == (alert.key,)
 
